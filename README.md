@@ -131,18 +131,20 @@ frameforge/
 │   ├── Program.cs         # 入口、单实例、--selftest
 │   ├── Settings.cs        # 配置读写
 │   ├── Theme.cs / I18n.cs # 配色与中英文案
-│   ├── Util.cs            # 日志、P/Invoke、格式化的公共件
+│   ├── Util.cs / Native.cs# 日志、P/Invoke 声明
+│   ├── Overlay.cs         # 分层窗口叠加层
 │   ├── Sys/
 │   │   ├── Monitor.cs     # CPU / 内存 / GPU 采样
-│   │   ├── Fps.cs         # PresentMon 下载与 ETW 读取
+│   │   ├── Pdh.cs / Nvml.cs   # 性能计数器与显卡传感器
+│   │   ├── Fps.cs         # PresentMon 下载与帧率读取
 │   │   ├── Boost.cs       # 加速项与回滚
-│   │   ├── Overlay.cs     # 分层窗口叠加层
+│   │   ├── MemEngine.cs   # 内存整理与提权
 │   │   └── Filter.cs      # 全屏颜色矩阵滤镜
 │   └── UI/
 │       ├── MainForm.cs        # 外壳：标题栏、导航、托盘
 │       ├── MainForm.Actions.cs# 业务动作：加速、叠加层、热键
 │       ├── Pages.cs           # 五个页面
-│       └── Controls.cs        # 自绘控件库
+│       ├── Controls.cs / Widgets.cs # 自绘控件库
 └── docs/
     ├── FEASIBILITY.md     # 技术选型与取舍
     └── screenshots/
