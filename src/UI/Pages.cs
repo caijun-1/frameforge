@@ -500,6 +500,8 @@ namespace FrameForge.UI
             double fps = Host.Fps.Fps;
             double low = Host.Fps.Low1;
             fpsBig.Text = fps > 0 ? fps.ToString("0") : "—";
+            // 没有帧率数据时用弱化色,避免那条占位横杠看起来像一道突兀的白线。
+            fpsBig.ForeColor = fps > 0 ? Theme.Text : Theme.Faint;
             fpsLow.Text = fps > 0 ? I18n.T("mon.low", low > 0 ? low.ToString("0") : "—") : FpsHint();
             if (fps > 0) fpsSpark.Push((float)fps);
 

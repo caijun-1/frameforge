@@ -72,7 +72,7 @@ namespace FrameForge.UI
             Ui.S = DpiScale();
 
             MinimumSize = new Size(Ui.Px(840), Ui.Px(600));
-            appIcon = MakeIcon();
+            appIcon = LoadIcon(32);
             Icon = appIcon;
 
             // CenterScreen 在设置 ClientSize 之前就定好了位置,高分屏上会偏出屏幕;
@@ -429,6 +429,23 @@ namespace FrameForge.UI
             base.OnFormClosing(e);
         }
 
+        /// <summary>
+        /// 优先用编译进 exe 的多尺寸 app.ico,任务栏/标题栏在任意 DPI 下都能拿到清晰尺寸;
+        /// 资源缺失时才退回运行时绘制的图标。
+        /// </summary>
+        private static Icon LoadIcon(int size)
+        {
+            try
+            {
+                using (var s = typeof(MainForm).Assembly.GetManifestResourceStream("app.ico"))
+                {
+                    if (s != null) return new Icon(s, size, size);
+                }
+            }
+            catch { }
+            return MakeIcon();
+        }
+
         private static Icon MakeIcon()
         {
             using (var bmp = new Bitmap(32, 32))
@@ -437,21 +454,17 @@ namespace FrameForge.UI
                 {
                     g.SmoothingMode = SmoothingMode.AntiAlias;
                     g.Clear(Color.Transparent);
-                    using (GraphicsPath p = Ui.Round(new RectangleF(1, 1, 30, 30), 8f))
-                    using (var b = new SolidBrush(Theme.Accent))
+                    using (GraphicsPath p = Ui.Round(new RectangleF(0.5f, 0.5f, 31, 31), 7.5f))
+                    using (var b = new LinearGradientBrush(new RectangleF(0, 0, 32, 32),
+                        Theme.Hex("#5C9BFF"), Theme.Hex("#2B62D9"), 55f))
                         g.FillPath(b, p);
-                    // 一支向上的箭头,呼应「加速」
-                    using (var pen = new Pen(Color.White, 2.4f))
+                    // 闪电:与 app.ico 保持同一套视觉
+                    var bolt = new PointF[]
                     {
-                        pen.StartCap = LineCap.Round;
-                        pen.EndCap = LineCap.Round;
-                        pen.LineJoin = LineJoin.Round;
-                        g.DrawLines(pen, new PointF[]
-                        {
-                            new PointF(8, 20), new PointF(16, 11), new PointF(24, 20)
-                        });
-                        g.DrawLine(pen, 16f, 11f, 16f, 24f);
-                    }
+                        new PointF(18.1f, 2.4f), new PointF(7.8f, 17.8f), new PointF(14.6f, 17.8f),
+                        new PointF(13.0f, 29.6f), new PointF(24.2f, 14.2f), new PointF(17.1f, 14.2f)
+                    };
+                    using (var b = new SolidBrush(Color.White)) g.FillPolygon(b, bolt);
                 }
                 IntPtr h = bmp.GetHicon();
                 try

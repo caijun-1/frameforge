@@ -108,17 +108,6 @@ namespace FrameForge.UI
             // 卡片用纯色:子控件是按自身 BackColor 铺底的,卡片一旦用渐变,
             // 文字标签就会在渐变上露出一个个色块。
             Ui.Fill(g, r, Ui.Fp(Radius), Theme.Card);
-            if (Theme.Dark)
-            {
-                // 夜间模式卡片顶部加一道极淡的高光边,让纯色块有"玻璃边缘"的层次感。
-                using (GraphicsPath p = Ui.Round(r, Ui.Fp(Radius)))
-                using (var pen = new Pen(Theme.Alpha(Color.White, 12), 1f))
-                {
-                    g.SetClip(p);
-                    g.DrawLine(pen, 0f, 0.5f, Width, 0.5f);
-                    g.ResetClip();
-                }
-            }
             if (ShowBorder) Ui.Stroke(g, r, Ui.Fp(Radius), Theme.Border, 1f);
         }
     }
@@ -592,7 +581,20 @@ namespace FrameForge.UI
         {
             Graphics g = e.Graphics;
             Prep(g);
-            if (vals.Count < 2) return;
+            if (vals.Count < 2)
+            {
+                // 还没有采样时画几条极淡的参考虚线,卡片不会空得像没加载出来。
+                using (var pen = new Pen(Theme.Track, 1f))
+                {
+                    pen.DashStyle = DashStyle.Dash;
+                    for (int i = 1; i <= 3; i++)
+                    {
+                        float y = Ui.Fp(6) + (Height - Ui.Fp(8)) * i / 4f;
+                        g.DrawLine(pen, 0f, y, Width - 1f, y);
+                    }
+                }
+                return;
+            }
 
             float min = float.MaxValue, max = float.MinValue;
             for (int i = 0; i < vals.Count; i++)
