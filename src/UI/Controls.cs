@@ -274,11 +274,27 @@ namespace FrameForge.UI
                 {
                     if (Theme.Dark)
                     {
-                        // 月亮:实心圆挖掉一块
-                        using (var b = new SolidBrush(fg))
-                            g.FillEllipse(b, cx - r, cy - r, r * 2, r * 2);
-                        using (var b2 = new SolidBrush(BackColor))
-                            g.FillEllipse(b2, cx - r * 0.35f, cy - r * 1.25f, r * 2.0f, r * 2.0f);
+                        // 月亮:拿两个圆的交点拼出一条双圆弧路径再填充。
+                        // 早先是"画个实心圆,再用 BackColor 盖掉一块"——底色一变(悬停高亮、换页)
+                        // 盖子就会在图标上留下一块补丁,而且盖出来的边没有抗锯齿。
+                        float bx = cx + r * 0.65f, by = cy - r * 0.25f;
+                        double dx = bx - cx, dy = by - cy;
+                        double d2 = Math.Sqrt(dx * dx + dy * dy);
+                        if (d2 < r * 0.1) d2 = r * 0.1;
+                        double proj = d2 / 2.0;                       // 两圆等径,交点连线正好在中间
+                        double half = Math.Sqrt(Math.Max(0.0, (double)r * r - proj * proj));
+                        double baseAng = Math.Atan2(dy, dx) * 180.0 / Math.PI;
+                        double off = Math.Atan2(half, proj) * 180.0 / Math.PI;
+
+                        var ob = new RectangleF(cx - r, cy - r, r * 2, r * 2);
+                        var ib = new RectangleF(bx - r, by - r, r * 2, r * 2);
+                        using (var mp = new GraphicsPath())
+                        {
+                            mp.AddArc(ob, (float)(baseAng + off), (float)(360.0 - off * 2.0));
+                            mp.AddArc(ib, (float)(baseAng + 180.0 + off), (float)(-off * 2.0));
+                            mp.CloseFigure();
+                            using (var b = new SolidBrush(fg)) g.FillPath(b, mp);
+                        }
                     }
                     else
                     {

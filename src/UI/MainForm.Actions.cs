@@ -59,6 +59,7 @@ namespace FrameForge.UI
             Theme.Set(St.Dark);
             Theme.ResetFonts();
             BackColor = Theme.Bg;
+            ApplyWindowFrame();
 
             int idx = activePage;
             if (pages != null)
