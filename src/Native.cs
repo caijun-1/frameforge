@@ -359,6 +359,15 @@ namespace FrameForge
         [DllImport("user32.dll")]
         public static extern bool DestroyIcon(IntPtr icon);
 
+        public const int RDW_INVALIDATE = 0x0001;
+        public const int RDW_ERASE = 0x0004;
+        public const int RDW_FRAME = 0x0400;
+        public const int RDW_ALLCHILDREN = 0x0080;
+        public const int RDW_UPDATENOW = 0x0100;
+
+        [DllImport("user32.dll")]
+        public static extern bool RedrawWindow(IntPtr hWnd, IntPtr rect, IntPtr region, int flags);
+
         // ---------------- dwmapi ----------------
 
         [DllImport("dwmapi.dll")]

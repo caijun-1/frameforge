@@ -67,6 +67,9 @@ namespace FrameForge.UI
             BackColor = Theme.Bg;
             Text = "FrameForge";
 
+            // 自绘窗口也开双缓冲:重建页面、拖动改大小时不会闪出一块没画过的底色。
+            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
+
             // 先创建句柄,再由窗口句柄读取实际 DPI:Form.DeviceDpi 在部分系统上恒为 96,
             // 会导致文字按 DPI 放大而布局仍按 1x 计算,控件互相压盖。
             IntPtr forceHandle = Handle;
@@ -266,6 +269,11 @@ namespace FrameForge.UI
                 Color bg = Theme.Bg;
                 int colorRef = bg.R | (bg.G << 8) | (bg.B << 16);
                 Native.DwmSetWindowAttribute(Handle, 34, ref colorRef, 4);
+
+                // 客户区铺满后窗口是直角,配上系统阴影看着像一张硬纸板。
+                // Win11 让 DWM 按系统圆角裁剪(属性 33,1=直角 2=圆角),最大化时系统会自动改回直角。
+                int corner = 2;
+                Native.DwmSetWindowAttribute(Handle, 33, ref corner, 4);
             }
             catch { }
         }

@@ -368,15 +368,18 @@ namespace FrameForge.UI
         {
             Graphics g = e.Graphics;
             Prep(g);
+            // 轨道按控件实际尺寸收缩,旋钮四周留 3 的内边距:
+            // 之前旋钮直径只比轨道矮 4,右侧蓝色只剩 2 的边,看起来像被裁掉半个。
             float h = Math.Min(Height, Ui.Fp(24));
-            float w = Ui.Fp(44);
+            float w = Math.Min(Width, Ui.Fp(44));
             var track = new RectangleF((Width - w) / 2f, (Height - h) / 2f, w, h);
             Color on = Theme.Accent, off = Theme.Dark ? Theme.Track : Theme.Mix(Theme.Track, Theme.Sub, 0.25);
             Ui.Fill(g, track, h / 2f, Theme.Mix(off, on, anim));
-            float knob = h - Ui.Fp(4);
-            float x = track.X + Ui.Fp(2) + (track.Width - knob - Ui.Fp(4)) * anim;
+            float inset = Ui.Fp(3);
+            float knob = h - inset * 2;
+            float x = track.X + inset + (track.Width - knob - inset * 2) * anim;
             using (var b = new SolidBrush(Color.White))
-                g.FillEllipse(b, x, track.Y + Ui.Fp(2), knob, knob);
+                g.FillEllipse(b, x, track.Y + inset, knob, knob);
         }
     }
 
