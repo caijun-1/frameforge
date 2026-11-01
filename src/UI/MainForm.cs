@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using FrameForge.Sys;
 
@@ -19,6 +20,7 @@ namespace FrameForge.UI
         public BoostEngine Boost;
 
         private const int WM_NCHITTEST = 0x0084;
+        private const int WM_NCCALCSIZE = 0x0083;
         private const int WS_THICKFRAME = 0x00040000;
         private const int WS_MINIMIZEBOX = 0x00020000;
         private const int WS_MAXIMIZEBOX = 0x00010000;
@@ -244,6 +246,28 @@ namespace FrameForge.UI
         {
             base.OnHandleCreated(e);
             RegisterHotkeys();
+            ApplyWindowFrame();
+        }
+
+        /// <summary>
+        /// 无边框窗口仍然保留了一圈 WS_THICKFRAME 的系统边框(拖边缘改大小要用),
+        /// DWM 会给这圈边框描一条 1px 的浅色线——在深色界面上就是标题栏上方那道白边。
+        /// 这里把边框色改成与背景一致(Win11 22000+),更老的系统退化为深色沉浸模式。
+        /// </summary>
+        private void ApplyWindowFrame()
+        {
+            if (!IsHandleCreated) return;
+            try
+            {
+                int dark = Theme.Dark ? 1 : 0;
+                if (Native.DwmSetWindowAttribute(Handle, 20, ref dark, 4) != 0)
+                    Native.DwmSetWindowAttribute(Handle, 19, ref dark, 4);
+
+                Color bg = Theme.Bg;
+                int colorRef = bg.R | (bg.G << 8) | (bg.B << 16);
+                Native.DwmSetWindowAttribute(Handle, 34, ref colorRef, 4);
+            }
+            catch { }
         }
 
         private void OnTick()
@@ -369,15 +393,50 @@ namespace FrameForge.UI
             if (m.Msg == Native.WM_HOTKEY) { HandleHotkey(m.WParam.ToInt32()); return; }
             if (m.Msg == Native.WM_SHOWME) { RestoreFromTray(); return; }
 
+            if (m.Msg == WM_NCCALCSIZE)
+            {
+                if (m.WParam != IntPtr.Zero)
+                {
+                    // 让客户区铺满整个窗口矩形。WS_THICKFRAME 留下的那一圈边框会被 DWM 填成
+                    // 系统边框色:浅色主题下是 #F3F3F3,在深色界面上就是标题栏上方那道白标。
+                    if (WindowState == FormWindowState.Maximized)
+                    {
+                        Native.RECT r = (Native.RECT)Marshal.PtrToStructure(m.LParam, typeof(Native.RECT));
+                        Rectangle wa = Screen.FromHandle(Handle).WorkingArea;
+                        r.Left = wa.Left; r.Top = wa.Top; r.Right = wa.Right; r.Bottom = wa.Bottom;
+                        Marshal.StructureToPtr(r, m.LParam, false);
+                    }
+                    m.Result = IntPtr.Zero;
+                    return;
+                }
+            }
+
             if (m.Msg == WM_NCHITTEST)
             {
                 base.WndProc(ref m);
+                int lp = m.LParam.ToInt32();
+                short sx = unchecked((short)(lp & 0xFFFF));
+                short sy = unchecked((short)((lp >> 16) & 0xFFFF));
+                Point p = PointToClient(new Point(sx, sy));
+
+                // 边框被吃掉后系统不再返回 HTLEFT/HTRIGHT…,四边改大小的热区得自己算。
+                if (WindowState == FormWindowState.Normal)
+                {
+                    int b = Ui.Px(5);
+                    bool left = p.X < b, right = p.X >= ClientSize.Width - b;
+                    bool top = p.Y < b, bottom = p.Y >= ClientSize.Height - b;
+                    if (top && left) { m.Result = (IntPtr)Native.HTTOPLEFT; return; }
+                    if (top && right) { m.Result = (IntPtr)Native.HTTOPRIGHT; return; }
+                    if (bottom && left) { m.Result = (IntPtr)Native.HTBOTTOMLEFT; return; }
+                    if (bottom && right) { m.Result = (IntPtr)Native.HTBOTTOMRIGHT; return; }
+                    if (left) { m.Result = (IntPtr)Native.HTLEFT; return; }
+                    if (right) { m.Result = (IntPtr)Native.HTRIGHT; return; }
+                    if (top) { m.Result = (IntPtr)Native.HTTOP; return; }
+                    if (bottom) { m.Result = (IntPtr)Native.HTBOTTOM; return; }
+                }
+
                 if ((int)m.Result == Native.HTCLIENT)
                 {
-                    int lp = m.LParam.ToInt32();
-                    short sx = unchecked((short)(lp & 0xFFFF));
-                    short sy = unchecked((short)((lp >> 16) & 0xFFFF));
-                    Point p = PointToClient(new Point(sx, sy));
                     if (p.Y >= 0 && p.Y < TitleH()) m.Result = (IntPtr)Native.HTCAPTION;
                 }
                 return;

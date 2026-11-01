@@ -1,10 +1,10 @@
 # FrameForge
 
 **一个绿色免安装的 FPS 游戏增效工具：一键加速、实时帧率监测、游戏内叠加层与画面滤镜。**
-单文件 exe 约 145 KB，常驻内存约 20 MB，不注入游戏进程、不安装驱动。
+单文件 exe 约 200 KB，常驻内存约 20 MB，不注入游戏进程、不安装驱动。
 
 **A portable FPS toolkit for Windows: one-click boost, live frame-time monitoring, in-game overlay and screen filters.**
-Single 145 KB executable, ~20 MB resident, no game injection, no kernel driver.
+Single 200 KB executable, ~20 MB resident, no game injection, no kernel driver.
 
 ---
 
