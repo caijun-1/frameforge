@@ -103,12 +103,21 @@ namespace FrameForge.UI
         protected override void OnPaint(PaintEventArgs e)
         {
             Graphics g = e.Graphics;
-            Prep(g);
-            var r = new RectangleF(0, 0, Width - 1, Height - 1);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
+
+            // 圆角外侧不能铺卡片色:控件本身是矩形,而 BackColor 又被子控件继承成卡片色,
+            // 整块铺底就会在四个圆角外面留下四个直角(浅色主题下就是四个白角)。
+            // 这里改用父容器的背景铺底,圆角以外真正"透"出页面底色。
+            using (var b = new SolidBrush(Parent != null ? Parent.BackColor : Theme.Bg))
+                g.FillRectangle(b, ClientRectangle);
+
             // 卡片用纯色:子控件是按自身 BackColor 铺底的,卡片一旦用渐变,
             // 文字标签就会在渐变上露出一个个色块。
-            Ui.Fill(g, r, Ui.Fp(Radius), Theme.Card);
-            if (ShowBorder) Ui.Stroke(g, r, Ui.Fp(Radius), Theme.Border, 1f);
+            Ui.Fill(g, new RectangleF(0, 0, Width, Height), Ui.Fp(Radius), Theme.Card);
+            if (ShowBorder)
+                Ui.Stroke(g, new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f), Ui.Fp(Radius), Theme.Border, 1f);
         }
     }
 
@@ -313,9 +322,16 @@ namespace FrameForge.UI
         }
     }
 
-    /// <summary>开关。</summary>
+    /// <summary>
+    /// 开关:胶囊轨道 + 白色旋钮,开合带动画。
+    /// 轨道比控件小一圈并用整数坐标绘制——圆角一旦贴着控件边界,
+    /// 父容器裁剪或 DPI 取整只要吃掉 1 像素,下沿就会被削成直线,看着像开关缺了一条边。
+    /// </summary>
     public class Toggle : Ctl
     {
+        private const float TrackW = 44f;
+        private const float TrackH = 24f;
+
         private bool check;
         private float anim;
         private Timer t;
@@ -368,18 +384,44 @@ namespace FrameForge.UI
         {
             Graphics g = e.Graphics;
             Prep(g);
-            // 轨道按控件实际尺寸收缩,旋钮四周留 3 的内边距:
-            // 之前旋钮直径只比轨道矮 4,右侧蓝色只剩 2 的边,看起来像被裁掉半个。
-            float h = Math.Min(Height, Ui.Fp(24));
-            float w = Math.Min(Width, Ui.Fp(44));
-            var track = new RectangleF((Width - w) / 2f, (Height - h) / 2f, w, h);
-            Color on = Theme.Accent, off = Theme.Dark ? Theme.Track : Theme.Mix(Theme.Track, Theme.Sub, 0.25);
-            Ui.Fill(g, track, h / 2f, Theme.Mix(off, on, anim));
-            float inset = Ui.Fp(3);
-            float knob = h - inset * 2;
-            float x = track.X + inset + (track.Width - knob - inset * 2) * anim;
+
+            // 轨道用整数像素计算:控件尺寸经过 DPI 取整后常带小数(如 125% 下 55x30),
+            // 按浮点居中会让上下两条边各落在半个像素上,抗锯齿一重一轻,下沿看着比上沿"扁",
+            // 像被父容器裁掉了一条。这里先取整宽高,再用整数坐标居中。
+            int m = Math.Max(1, (int)Math.Round(Ui.Fp(1)));
+            int tw = Math.Min(Width - m * 2, (int)Math.Round(Ui.Fp(TrackW)));
+            int th = Math.Min(Height - m * 2, (int)Math.Round(Ui.Fp(TrackH)));
+            int cap = (int)Math.Round(tw * 0.62f);
+            if (th > cap) th = cap;
+            if (tw < 12 || th < 8) return;
+
+            var track = new RectangleF((Width - tw) / 2, (Height - th) / 2, tw, th);
+            float rad = track.Height * 0.5f;
+
+            Color on = Theme.Accent;
+            Color off = Theme.Dark
+                ? Theme.Mix(Theme.Track, Theme.Text, 0.12f)
+                : Theme.Mix(Theme.Track, Theme.Sub, 0.32f);
+            Color fill = Theme.Mix(off, on, anim);
+            Color edge = Theme.Mix(fill, Color.Black, Theme.Dark ? 0.22f : 0.08f);
+
+            // 描边画成"外圈填边色 + 内圈填底色"的环,而不是拿 1px 画笔去描路径:
+            // 画笔是骑在路径上的,一半会溢出到轨道外面,再叠上父容器裁剪,
+            // 下沿那一半就没了。环永远完整落在轨道矩形内,四边一样粗。
+            Ui.Fill(g, track, rad, edge);
+            var inner = new RectangleF(track.X + 1f, track.Y + 1f, track.Width - 2f, track.Height - 2f);
+            Ui.Fill(g, inner, Math.Max(0f, rad - 1f), fill);
+
+            // 旋钮:四周留出内边距,滑到两端也不会贴死圆弧。
+            float inset = Math.Max(2f, (float)Math.Round(track.Height * 0.145f));
+            float knob = track.Height - inset * 2f;
+            if (knob <= 3f) return;
+            float from = track.X + inset;
+            float to = track.Right - inset - knob;
+            float kx = (float)Math.Round(from + (to - from) * anim);
+            float ky = (float)Math.Round(track.Y + inset);
             using (var b = new SolidBrush(Color.White))
-                g.FillEllipse(b, x, track.Y + inset, knob, knob);
+                g.FillEllipse(b, kx, ky, knob, knob);
         }
     }
 

@@ -30,8 +30,11 @@ namespace FrameForge.Sys
         private static readonly object Gate = new object();
         private Process proc;
         private Thread reader;
+        private Thread errReader;
         private int trackedPid = -1;
+        private DateTime lastTry = DateTime.MinValue;
         private volatile bool stopping;
+        private volatile bool gotRow;
         private readonly Queue<Frame> window = new Queue<Frame>();
 
         public volatile FpsStatus Status = FpsStatus.Idle;
@@ -107,26 +110,36 @@ namespace FrameForge.Sys
         public void Track(int pid)
         {
             if (pid == trackedPid && proc != null && !proc.HasExited) return;
+            if (pid <= 0) { Stop(); return; }
+            if (!Installed) { trackedPid = pid; Status = FpsStatus.NotInstalled; return; }
+
+            // PresentMon 2.x 在普通权限下也能采集同账户进程的帧事件(只有跨账户/短命进程
+            // 才需要提权),以前在这里直接因"不是管理员"返回,叠加层就永远只显示 --。
+            // 但它异常退出后会占着 ETW 会话名,失败后先等 3 秒再重启,避免每秒开一次进程。
+            if (pid == trackedPid && Status == FpsStatus.NeedAdmin) return;
+            if (pid == trackedPid && Status == FpsStatus.Failed
+                && (DateTime.UtcNow - lastTry).TotalSeconds < 3) return;
+
             Stop();
             trackedPid = pid;
-            if (pid <= 0) return;
-            if (!Installed) { Status = FpsStatus.NotInstalled; return; }
-            if (!MemEngine.IsAdmin) { Status = FpsStatus.NeedAdmin; return; }
+            lastTry = DateTime.UtcNow;
             Start(pid);
         }
 
         private void Start(int pid)
         {
+            if (pid != trackedPid) return;
             try
             {
                 lock (Gate) { window.Clear(); }
                 Fps = -1;
                 Low1 = -1;
                 stopping = false;
+                gotRow = false;
 
                 var psi = new ProcessStartInfo();
                 psi.FileName = ExePath;
-                psi.Arguments = "--output_stdout --no_console_stats --v1_metrics --no_track_input"
+                psi.Arguments = "--output_stdout --no_console_stats --v1_metrics --no_track_input --stop_existing_session"
                               + " --process_id " + pid.ToString(CultureInfo.InvariantCulture)
                               + " --session_name FrameForge";
                 psi.UseShellExecute = false;
@@ -141,9 +154,18 @@ namespace FrameForge.Sys
                 reader.IsBackground = true;
                 reader.Name = "FrameForge.Fps";
                 reader.Start(proc);
+
+                // stderr 必须有人读走。PresentMon 会刷大量 "ETW events were lost",
+                // 管道写满后它会阻塞在 stderr 上,stdout 的帧数据也跟着停,
+                // 表现就是帧率只出一下、之后再也不更新。
+                errReader = new Thread(ErrLoop);
+                errReader.IsBackground = true;
+                errReader.Name = "FrameForge.FpsErr";
+                errReader.Start(proc);
                 Status = FpsStatus.Running;
                 Message = "";
                 Log.Write("presentmon start pid=" + pid);
+                StartWatchdog(pid);
             }
             catch (Exception ex)
             {
@@ -164,12 +186,104 @@ namespace FrameForge.Sys
                 catch { }
                 try { p.Dispose(); }
                 catch { }
+                // 被 Kill 掉的 PresentMon 会把实时会话名一直占着,下次启动虽然带了
+                // --stop_existing_session,但残留会话会干扰采集,这里顺手停干净。
+                Logman("stop \"FrameForge\" -ets", false);
             }
             reader = null;
+            errReader = null;
             trackedPid = -1;
             Fps = -1;
             Low1 = -1;
-            if (Status == FpsStatus.Running) Status = FpsStatus.Idle;
+            if (Status == FpsStatus.Running || Status == FpsStatus.NeedAdmin) Status = FpsStatus.Idle;
+        }
+
+        /// <summary>
+        /// 启动后 6 秒还一行数据都没有,说明 PresentMon 的 ETW 会话抢不到事件
+        /// (本机实测:系统诊断会话把实时缓冲占满时,它只会刷 "ETW events were lost")。
+        /// 这时清理一次噪声会话并重启,而不是一直空转。
+        /// </summary>
+        private void StartWatchdog(int pid)
+        {
+            Thread t = new Thread(delegate()
+            {
+                for (int i = 0; i < 12; i++)
+                {
+                    Thread.Sleep(500);
+                    if (stopping || gotRow || proc == null || trackedPid != pid) return;
+                }
+                if (stopping || gotRow || proc == null || trackedPid != pid) return;
+                if (Status == FpsStatus.NeedAdmin) return;
+
+                Log.Write("presentmon watchdog: no rows in 6s, resetting etw");
+                Process p = proc;
+                proc = null;
+                try { if (!p.HasExited) p.Kill(); }
+                catch { }
+                try { p.Dispose(); }
+                catch { }
+
+                ResetEtw();
+                if (!stopping && trackedPid == pid) Start(pid);
+            });
+            t.IsBackground = true;
+            t.Name = "FrameForge.FpsWatch";
+            t.Start();
+        }
+
+        /// <summary>
+        /// 只停"诊断/记录"这一类高噪声实时会话,系统其它会话不动。
+        /// 依据:本机 ETWSessionRecorder + WinDiag-* + SHS-* 同时运行时,
+        /// PresentMon 5 秒收到 0 行;停掉后立刻变成 1900+ 行。
+        /// </summary>
+        private static void ResetEtw()
+        {
+            Logman("stop \"FrameForge\" -ets", false);
+            Logman("stop ETWSessionRecorder -ets", false);
+
+            string q = Logman("query -ets", true);
+            if (q.Length == 0) return;
+            string[] lines = q.Split('\n');
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string[] cols = lines[i].Trim().Split(new char[] { ' ', '\t' },
+                    StringSplitOptions.RemoveEmptyEntries);
+                if (cols.Length < 2) continue;
+                string name = cols[0];
+                if (name.IndexOf("WinDiag", StringComparison.OrdinalIgnoreCase) != 0
+                    && name.IndexOf("SHS-", StringComparison.OrdinalIgnoreCase) != 0
+                    && name.IndexOf("DiagLog", StringComparison.OrdinalIgnoreCase) != 0) continue;
+
+                Logman("stop \"" + name + "\" -ets", false);
+                Log.Write("etw stop noisy session " + name);
+            }
+        }
+
+        /// <summary>跑一次 logman(不弹窗)。capture=true 时返回输出,否则返回空串。</summary>
+        private static string Logman(string args, bool capture)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo("logman", args);
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.RedirectStandardOutput = capture;
+                psi.RedirectStandardError = !capture;
+                using (Process p = Process.Start(psi))
+                {
+                    if (p == null) return "";
+                    if (!capture)
+                    {
+                        p.StandardError.ReadToEnd();
+                        p.WaitForExit(800);
+                        return "";
+                    }
+                    string o = p.StandardOutput.ReadToEnd();
+                    p.WaitForExit(2000);
+                    return o;
+                }
+            }
+            catch { return ""; }
         }
 
         private void ReadLoop(object state)
@@ -183,7 +297,9 @@ namespace FrameForge.Sys
                 {
                     if (stopping) break;
                     if (line.Length == 0) continue;
-                    if (line[0] == 'A' && line.StartsWith("Application", StringComparison.Ordinal))
+                    // 表头判定不能依赖首列叫 "Application":不同版本的 PresentMon 可能带 BOM、
+                    // 引号或改了首列名,只要这一行含 TimeInSeconds 就说明是 CSV 表头。
+                    if (line.IndexOf("TimeInSeconds", StringComparison.OrdinalIgnoreCase) >= 0)
                     {
                         string[] head = SplitCsv(line);
                         tCol = IndexOf(head, "TimeInSeconds");
@@ -204,16 +320,52 @@ namespace FrameForge.Sys
             catch { }
             finally
             {
-                if (!stopping)
+                if (!stopping && Status != FpsStatus.NeedAdmin)
                 {
                     Status = FpsStatus.Failed;
                     Message = "presentmon exited";
+                    string code = "";
+                    try { if (p.HasExited) code = " code=" + p.ExitCode; } catch { }
+                    Log.Write("presentmon exited" + code + " rows=" + (gotRow ? "yes" : "no"));
                 }
             }
         }
 
+        /// <summary>把 stderr 读空(只记首行和行数),避免它把管道堵住。</summary>
+        private void ErrLoop(object state)
+        {
+            Process p = (Process)state;
+            int lines = 0;
+            string first = "";
+            try
+            {
+                string line;
+                while ((line = p.StandardError.ReadLine()) != null)
+                {
+                    lines++;
+                    if (first.Length == 0 && line.Trim().Length > 0) first = line.Trim();
+                    // PresentMon 没提权时会直接拒绝采集,界面要提示"需要管理员权限",
+                    // 而不是一直显示 -- 让人以为工具坏了。
+                    if (Status == FpsStatus.Running
+                        && line.IndexOf("elevated privilege", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        Status = FpsStatus.NeedAdmin;
+                        Message = "presentmon needs admin";
+                        Log.Write("presentmon needs admin privilege");
+                    }
+                }
+            }
+            catch { }
+            if (lines > 0) Log.Write("presentmon stderr " + lines + " line(s): " + first);
+        }
+
         private void Push(double t, double ms)
         {
+            if (!gotRow)
+            {
+                gotRow = true;
+                Log.Write("presentmon first row t=" + t.ToString("0.00", CultureInfo.InvariantCulture));
+            }
             lock (Gate)
             {
                 window.Enqueue(new Frame { T = t, Ms = ms });
@@ -253,8 +405,11 @@ namespace FrameForge.Sys
 
         private static string[] SplitCsv(string line)
         {
-            // PresentMon 输出不含引号字段,直接按逗号切分
-            return line.Split(',');
+            // PresentMon 输出不含带逗号的引号字段,直接按逗号切分;字段可能带引号或空格
+            string[] parts = line.Split(',');
+            for (int i = 0; i < parts.Length; i++)
+                parts[i] = parts[i].Trim().Trim('"');
+            return parts;
         }
 
         private static int IndexOf(string[] arr, string name)

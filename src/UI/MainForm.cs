@@ -51,6 +51,7 @@ namespace FrameForge.UI
         private bool trimming;
         private bool downloading;
         private DateTime lastAutoTrim = DateTime.MinValue;
+        private DateTime lastPageRefresh = DateTime.MinValue;
 
         public MainForm(Settings st, bool minimized)
         {
@@ -92,7 +93,8 @@ namespace FrameForge.UI
 
             Log.Write("ui: dpi=" + (int)Math.Round(Ui.S * 96) + " scale=" + Ui.S.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
                 + " client=" + ClientSize.Width + "x" + ClientSize.Height
-                + " screen=" + wa.Width + "x" + wa.Height);
+                + " screen=" + wa.Width + "x" + wa.Height
+                + " admin=" + (MemEngine.IsAdmin ? 1 : 0));
 
             BuildTitle();
             BuildPages();
@@ -213,7 +215,8 @@ namespace FrameForge.UI
         private void BuildTimers()
         {
             ui = new Timer();
-            ui.Interval = 1000;
+            // 200ms 一跳:叠加层与监测页的帧率要跟得上,页面刷新在 OnTick 里按 1 秒节流。
+            ui.Interval = 200;
             ui.Tick += delegate { OnTick(); };
 
             saveTimer = new Timer();
@@ -268,7 +271,11 @@ namespace FrameForge.UI
 
                 Color bg = Theme.Bg;
                 int colorRef = bg.R | (bg.G << 8) | (bg.B << 16);
-                Native.DwmSetWindowAttribute(Handle, 34, ref colorRef, 4);
+                // 系统边框直接关掉:DWMWA_COLOR_NONE 比"把边框涂成背景色"更彻底,
+                // 不会在圆角外侧留一道由系统强调色描出来的细线。
+                int none = unchecked((int)0xFFFFFFFE);
+                if (Native.DwmSetWindowAttribute(Handle, 34, ref none, 4) != 0)
+                    Native.DwmSetWindowAttribute(Handle, 34, ref colorRef, 4);
 
                 // 客户区铺满后窗口是直角,配上系统阴影看着像一张硬纸板。
                 // Win11 让 DWM 按系统圆角裁剪(属性 33,1=直角 2=圆角),最大化时系统会自动改回直角。
@@ -283,8 +290,6 @@ namespace FrameForge.UI
             SysSample s = Mon.Current;
             if (s == null) return;
 
-            RefreshActive();
-
             if (s.Fullscreen != lastFullscreen)
             {
                 lastFullscreen = s.Fullscreen;
@@ -292,13 +297,24 @@ namespace FrameForge.UI
                 ApplyFilter();
             }
 
-            if (s.Fullscreen && s.ForegroundPid > 0) Fps.Track(s.ForegroundPid);
+            // 切出游戏(看状态/看网页)的短时间内继续跟踪,否则一看数据帧率就被清零。
+            if (s.GameRecent && s.GamePid > 0) Fps.Track(s.GamePid);
             else Fps.Stop();
 
             Ov.Feed(s, Fps.Fps, Fps.Low1);
 
             CheckBoostAlive();
             AutoTrim(s);
+
+            // 帧率每秒在变,监测页跟着 200ms 刷新;其它页面没有实时数据,1 秒一次就够,
+            // 免得整窗高频重绘白占 CPU。
+            DateTime now = DateTime.UtcNow;
+            double gap = activePage == 1 ? 0.2 : 1.0;
+            if ((now - lastPageRefresh).TotalSeconds >= gap)
+            {
+                lastPageRefresh = now;
+                RefreshActive();
+            }
         }
 
         private void RefreshActive()
@@ -366,9 +382,9 @@ namespace FrameForge.UI
             int th = TitleH();
             int nameW = Math.Max(Ui.Px(120), nav.Left - Ui.Px(44));
             TextRenderer.DrawText(g, "FrameForge", Theme.Bold(14f),
-                new Rectangle(Ui.Px(22), Ui.Px(7), nameW, Ui.Px(24)), Theme.Text, LeftLine());
+                new Rectangle(Ui.Px(22), Ui.Px(4), nameW, Ui.Px(26)), Theme.Text, LeftLine());
             TextRenderer.DrawText(g, I18n.T("app.sub"), Theme.Regular(8.3f),
-                new Rectangle(Ui.Px(23), Ui.Px(29), nameW, Ui.Px(16)), Theme.Sub, LeftLine());
+                new Rectangle(Ui.Px(23), Ui.Px(30), nameW, Ui.Px(18)), Theme.Sub, LeftLine());
 
             using (var pen = new Pen(Theme.Border, 1f))
                 g.DrawLine(pen, 0, th - 1, Width, th - 1);
@@ -397,16 +413,23 @@ namespace FrameForge.UI
 
         protected override void WndProc(ref Message m)
         {
+            // 这层窗口带着 WS_THICKFRAME(为了系统阴影和边缘缩放),DefWindowProc 收到
+            // WM_NCPAINT / WM_NCACTIVATE 时会按"标准窗口"去画系统标题栏和边框。
+            // 切主题时整窗重绘偶尔会把那条蓝灰标题栏画到内容上面,而且再也不会消失。
+            // 非客户区已经被 WM_NCCALCSIZE 收成 0,这两个消息直接吞掉,系统就没机会画。
+            if (m.Msg == 0x0085) { m.Result = IntPtr.Zero; return; }   // WM_NCPAINT
+            if (m.Msg == 0x0086) { m.Result = (IntPtr)1; return; }     // WM_NCACTIVATE
+
             if (m.Msg == 0x02E0) { OnDpiChangedMsg(m); return; }
             if (m.Msg == Native.WM_HOTKEY) { HandleHotkey(m.WParam.ToInt32()); return; }
             if (m.Msg == Native.WM_SHOWME) { RestoreFromTray(); return; }
 
             if (m.Msg == WM_NCCALCSIZE)
             {
+                // wParam != 0:客户区铺满整个窗口矩形。WS_THICKFRAME 留下的那一圈边框会被 DWM
+                // 填成系统边框色:浅色主题下是 #F3F3F3,在深色界面上就是标题栏上方那道白标。
                 if (m.WParam != IntPtr.Zero)
                 {
-                    // 让客户区铺满整个窗口矩形。WS_THICKFRAME 留下的那一圈边框会被 DWM 填成
-                    // 系统边框色:浅色主题下是 #F3F3F3,在深色界面上就是标题栏上方那道白标。
                     if (WindowState == FormWindowState.Maximized)
                     {
                         Native.RECT r = (Native.RECT)Marshal.PtrToStructure(m.LParam, typeof(Native.RECT));
@@ -417,6 +440,13 @@ namespace FrameForge.UI
                     m.Result = IntPtr.Zero;
                     return;
                 }
+
+                // wParam == 0:系统在问"客户区应该是多少"。原样放给 DefWindowProc 的话,
+                // 它会按标准窗口算出一圈非客户区(标题栏高度 + 边框),那 29px 的系统标题栏
+                // 就会盖到自绘标题上——只有切成别的窗口再切回来才会重算出来,所以表现为
+                // "切几次主题就冒出一条系统标题栏"。这里让客户区仍然等于整个窗口。
+                m.Result = IntPtr.Zero;
+                return;
             }
 
             if (m.Msg == WM_NCHITTEST)

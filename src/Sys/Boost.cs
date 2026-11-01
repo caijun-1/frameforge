@@ -101,11 +101,7 @@ namespace FrameForge.Sys
             if (n.Length == 0) return -1;
             if (IsShell(n)) return -1;
 
-            Native.RECT r;
-            if (!Native.GetWindowRect(hwnd, out r)) return -1;
-            System.Drawing.Rectangle b = System.Windows.Forms.Screen.FromHandle(hwnd).Bounds;
-            if (Math.Abs(r.Left - b.Left) > 2 || Math.Abs(r.Top - b.Top) > 2 ||
-                Math.Abs(r.Right - b.Right) > 2 || Math.Abs(r.Bottom - b.Bottom) > 2) return -1;
+            if (!Monitor.IsGameWindow(hwnd, pid)) return -1;
 
             name = n;
             return pid;
@@ -115,7 +111,7 @@ namespace FrameForge.Sys
         {
             switch (name.ToLowerInvariant())
             {
-                case "explorer": case "dwm": case "frameForge": case "taskmgr":
+                case "explorer": case "dwm": case "frameforge": case "taskmgr":
                 case "searchapp": case "shellexperiencehost": case "startmenuexperiencehost":
                 case "applicationframehost": case "lockapp": case "textinputhost":
                     return true;

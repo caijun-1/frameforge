@@ -42,6 +42,22 @@ namespace FrameForge
             public int ThreadCount;
         }
 
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct PROCESSENTRY32
+        {
+            public uint dwSize;
+            public uint cntUsage;
+            public uint th32ProcessID;
+            public IntPtr th32DefaultHeapID;
+            public uint th32ModuleID;
+            public uint cntThreads;
+            public uint th32ParentProcessID;
+            public int pcPriClassBase;
+            public uint dwFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+            public string szExeFile;
+        }
+
         [StructLayout(LayoutKind.Sequential)]
         public struct LUID
         {
@@ -152,6 +168,7 @@ namespace FrameForge
 
         // ---------------- 常量 ----------------
 
+        public const uint TH32CS_SNAPPROCESS = 0x00000002;
         public const uint PROCESS_QUERY_INFORMATION = 0x0400;
         public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
         public const uint PROCESS_SET_QUOTA = 0x0100;
@@ -245,6 +262,15 @@ namespace FrameForge
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         public static extern bool QueryFullProcessImageName(IntPtr hProcess, int flags, StringBuilder exeName, ref int size);
 
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint processId);
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern bool Process32First(IntPtr snapshot, ref PROCESSENTRY32 entry);
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern bool Process32Next(IntPtr snapshot, ref PROCESSENTRY32 entry);
+
         [DllImport("kernel32.dll")]
         public static extern void GetSystemTimes(out long idle, out long kernel, out long user);
 
@@ -313,6 +339,21 @@ namespace FrameForge
 
         [DllImport("user32.dll")]
         public static extern bool IsWindowVisible(IntPtr hWnd);
+
+        public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        public static extern bool IsIconic(IntPtr hWnd);
+
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+        // DWMWA_CLOAKED(14):UWP 挂起的窗口仍然"可见"但被系统隐藏,要排除掉。
+        [DllImport("dwmapi.dll")]
+        public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out int value, int size);
 
         [DllImport("user32.dll")]
         public static extern int GetWindowLong(IntPtr hWnd, int index);
@@ -476,12 +517,14 @@ namespace FrameForge
         {
             if (pid <= 0) return "";
             IntPtr h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
-            if (h == IntPtr.Zero) return "";
+            // 权限不够打开进程时(比如以管理员运行、带反作弊的游戏)退回到进程快照:
+            // 快照只要有 SESSION 权限就能枚举,拿不到名字的话游戏会被当成"未检测到"。
+            if (h == IntPtr.Zero) return NameBySnapshot(pid);
             try
             {
                 var sb = new StringBuilder(520);
                 int size = sb.Capacity;
-                if (!QueryFullProcessImageName(h, 0, sb, ref size)) return "";
+                if (!QueryFullProcessImageName(h, 0, sb, ref size)) return NameBySnapshot(pid);
                 string full = sb.ToString(0, size);
                 int cut = full.LastIndexOf('\\');
                 string name = cut >= 0 ? full.Substring(cut + 1) : full;
@@ -491,6 +534,29 @@ namespace FrameForge
             }
             catch { return ""; }
             finally { CloseHandle(h); }
+        }
+
+        private static string NameBySnapshot(int pid)
+        {
+            IntPtr snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if (snap == IntPtr.Zero || snap == new IntPtr(-1)) return "";
+            try
+            {
+                var e = new PROCESSENTRY32();
+                e.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32));
+                if (!Process32First(snap, ref e)) return "";
+                do
+                {
+                    if (e.th32ProcessID != (uint)pid) continue;
+                    string n = e.szExeFile ?? "";
+                    if (n.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                        n = n.Substring(0, n.Length - 4);
+                    return n;
+                } while (Process32Next(snap, ref e));
+                return "";
+            }
+            catch { return ""; }
+            finally { CloseHandle(snap); }
         }
     }
 }

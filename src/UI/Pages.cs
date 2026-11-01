@@ -113,6 +113,9 @@ namespace FrameForge.UI
                 optCard.Controls.Add(names[i]);
                 optCard.Controls.Add(subs[i]);
                 optCard.Controls.Add(sw[i]);
+                // 开关要压在最上层:标签是不透明绘制(整块铺卡片色),
+                // 只要它和开关有任何重叠,开关被盖住的那几行就会被抹平,底部圆角就没了。
+                sw[i].BringToFront();
             }
 
             resTitle = Title(I18n.T("boost.result.title"));
@@ -209,9 +212,12 @@ namespace FrameForge.UI
             bool active = Host.Boost != null && Host.Boost.Active;
             if (active != lastBoosted) { SyncState(); return; }
 
+            // 取不到进程名(管理员/反作弊游戏)时也要显示成"已检测到游戏",
+            // 否则明明认出了全屏游戏,界面还在说"未检测到游戏"。
             string game = "";
-            if (active) game = Host.Boost.GameName;
-            else if (s != null && s.Fullscreen && s.ForegroundName.Length > 0) game = s.ForegroundName;
+            if (active) game = Host.Boost.GameName.Length > 0 ? Host.Boost.GameName : I18n.T("mon.game.generic");
+            else if (s != null && s.GameRecent)
+                game = s.GameName.Length > 0 ? s.GameName : I18n.T("mon.game.generic");
 
             if (game == lastGame) return;
             lastGame = game;
@@ -285,7 +291,7 @@ namespace FrameForge.UI
                 int y = gridY + row * rh;
                 names[i].SetBounds(x, y, cw - Ui.Px(54), Ui.Px(20));
                 sw[i].SetBounds(x + cw - Ui.Px(48), y - Ui.Px(2), Ui.Px(44), Ui.Px(24));
-                subs[i].SetBounds(x, y + Ui.Px(20), cw, Ui.Px(18));
+                subs[i].SetBounds(x, y + Ui.Px(20), cw - Ui.Px(54), Ui.Px(18));
             }
 
             resTitle.SetBounds(pad, Ui.Px(12), Ui.Px(160), Ui.Px(20));
@@ -309,6 +315,8 @@ namespace FrameForge.UI
         private readonly TextLabel infoTitle;
         private readonly TextLabel[] infoCaption = new TextLabel[4];
         private readonly TextLabel[] infoValue = new TextLabel[4];
+        // 页面 200ms 刷一次让帧率跟得上,但曲线窗口是 60 个点,按 1 秒采样才是 60 秒历史。
+        private DateTime lastSpark = DateTime.MinValue;
 
         public MonitorPage(MainForm host) : base(host)
         {
@@ -503,7 +511,15 @@ namespace FrameForge.UI
             // 没有帧率数据时用弱化色,避免那条占位横杠看起来像一道突兀的白线。
             fpsBig.ForeColor = fps > 0 ? Theme.Text : Theme.Faint;
             fpsLow.Text = fps > 0 ? I18n.T("mon.low", low > 0 ? low.ToString("0") : "—") : FpsHint();
-            if (fps > 0) fpsSpark.Push((float)fps);
+            if (fps > 0)
+            {
+                DateTime now = DateTime.UtcNow;
+                if ((now - lastSpark).TotalSeconds >= 1)
+                {
+                    lastSpark = now;
+                    fpsSpark.Push((float)fps);
+                }
+            }
 
             ramPct.Text = s.RamPct >= 0 ? s.RamPct.ToString("0") + "%" : "—";
             ramSub.Text = Fmt.Pair(s.RamUsed, s.RamTotal);
@@ -518,8 +534,9 @@ namespace FrameForge.UI
                 ? (s.VramUsed / 1073741824.0).ToString("0.0") + " / " + (s.VramTotal / 1073741824.0).ToString("0.0") + " GB"
                 : "—";
 
-            if (s.Fullscreen && s.ForegroundName.Length > 0)
-                status.Text = I18n.T("mon.game") + ": " + s.ForegroundName
+            if (s.GameRecent)
+                status.Text = I18n.T("mon.game") + ": "
+                    + (s.GameName.Length > 0 ? s.GameName : I18n.T("mon.game.generic"))
                     + (Host.Boost != null && Host.Boost.Active ? "   ·   " + I18n.T("mon.boosted") : "");
             else
                 status.Text = I18n.T("mon.nogame") + "   ·   " + I18n.T("mon.hint");
@@ -528,6 +545,9 @@ namespace FrameForge.UI
         private string FpsHint()
         {
             if (Host.Fps.Status == FpsStatus.NotInstalled) return I18n.T("mon.fpsmiss");
+            // PresentMon 的 ETW 图形事件要管理员权限才收得到,普通权限下永远是空数据,
+            // 这里直说原因,免得看起来像坏了。
+            if (!MemEngine.IsAdmin) return I18n.T("mon.fpswait");
             if (Host.Fps.Status == FpsStatus.NeedAdmin) return I18n.T("mon.fpswait");
             return I18n.T("mon.fps") + " —";
         }
@@ -577,7 +597,12 @@ namespace FrameForge.UI
             style.SetSilent(StyleIndex(host.St.OverlayStyle));
             style.Changed += delegate
             {
-                Host.St.OverlayStyle = StyleKey(style.Selected);
+                string key = StyleKey(style.Selected);
+                bool changed = Host.St.OverlayStyle != key;
+                Host.St.OverlayStyle = key;
+                // 每一种样式的默认摆位不同(横向居中 / 竖向靠左 / 简洁居中),
+                // 换样式就把上次拖动保存的坐标清掉,让它按新样式重新摆放。
+                if (changed) { Host.St.OverlayX = -1; Host.St.OverlayY = -1; }
                 Host.St.Save();
                 if (Host.Ov != null) Host.Ov.ApplySettings();
             };
