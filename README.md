@@ -125,8 +125,9 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 
 ```
 frameforge/
-├── build.ps1              # 一键编译（csc + app.manifest）
+├── build.ps1              # 一键编译（csc + app.manifest + app.ico）
 ├── app.manifest           # DPI 感知、UAC 清单
+├── app.ico                # 多尺寸程序图标（16–256px）
 ├── src/
 │   ├── Program.cs         # 入口、单实例、--selftest
 │   ├── Settings.cs        # 配置读写

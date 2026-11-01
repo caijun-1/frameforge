@@ -22,6 +22,8 @@ $cscArgs = @(
     "/debug-",
     "/codepage:65001",
     ("/win32manifest:" + (Join-Path $root "app.manifest")),
+    ("/win32icon:" + (Join-Path $root "app.ico")),
+    ("/resource:" + (Join-Path $root "app.ico") + ",app.ico"),
     ("/out:" + $out)
 ) + $src
 
