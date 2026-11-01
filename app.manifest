@@ -4,9 +4,10 @@
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
     <security>
       <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
-        <!-- asInvoker: the app asks for elevation itself when a boost item needs it,
-             so portable use and autostart stay predictable. -->
-        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+        <!-- requireAdministrator: 帧率靠 PresentMon 读 ETW 图形事件,普通权限下
+             一条数据都收不到(实测全是 "ETW events were lost"),电源计划/计时器/
+             游戏进程优先级也需要管理员。 -->
+        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
       </requestedPrivileges>
     </security>
   </trustInfo>

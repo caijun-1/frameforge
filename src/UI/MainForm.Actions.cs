@@ -83,6 +83,9 @@ namespace FrameForge.UI
             {
                 for (int i = 0; i < pages.Length; i++)
                 {
+                    // 先隐藏再销毁:可见的子窗口被销毁时,系统会在它原来的位置留下一块
+                    // 没重绘的洞,叠在标题栏上就是半截图标或一条旧底色。
+                    pages[i].Visible = false;
                     Controls.Remove(pages[i]);
                     pages[i].Dispose();
                 }
@@ -104,11 +107,12 @@ namespace FrameForge.UI
             tips.SetToolTip(btnClose, I18n.T("title.close"));
             toast.BackColor = Theme.Bg;
 
-            // 页面销毁重建时,被盖住的区域不会自己消失:DWM 会把没重绘的地方留在上一帧,
-            // 切主题后标题栏就会残留一条旧底色和半截图标。这里整窗(含所有子控件)立即重绘。
+            // 页面销毁重建时,被盖住的区域不会自己消失:先把旧页面藏起来再重绘,
+            // 然后整窗(含所有子控件)立即刷新。这里只重绘客户区——
+            // 带上 RDW_FRAME 会让系统去画非客户区(标题栏/边框),正是那条蓝灰条的来源。
             if (IsHandleCreated)
                 Native.RedrawWindow(Handle, IntPtr.Zero, IntPtr.Zero,
-                    Native.RDW_INVALIDATE | Native.RDW_ERASE | Native.RDW_FRAME |
+                    Native.RDW_INVALIDATE | Native.RDW_ERASE |
                     Native.RDW_ALLCHILDREN | Native.RDW_UPDATENOW);
             else
                 Invalidate(true);
@@ -125,10 +129,10 @@ namespace FrameForge.UI
             string name;
             int pid = BoostEngine.DetectGamePid(out name);
             SysSample s = Mon.Current;
-            if (pid <= 0 && s != null && s.Fullscreen && s.ForegroundPid > 0)
+            if (pid <= 0 && s != null && s.GameRecent && s.GamePid > 0)
             {
-                pid = s.ForegroundPid;
-                name = s.ForegroundName;
+                pid = s.GamePid;
+                name = s.GameName.Length > 0 ? s.GameName : I18n.T("mon.game.generic");
             }
             if (pid <= 0)
             {
@@ -355,6 +359,26 @@ namespace FrameForge.UI
 
         public void SetAutostart(bool on)
         {
+            // 程序要求管理员权限,注册表 Run 项在登录时提不起权会被系统直接跳过,
+            // 所以自启改用计划任务(登录触发 + 最高权限);建不起来再退回 Run 项。
+            try
+            {
+                if (on)
+                {
+                    bool made = RunSchtasks("/Create /F /TN \"FrameForge\" /TR \"\\\""
+                        + Application.ExecutablePath + "\\\" --minimized\" /SC ONLOGON /RL HIGHEST");
+                    if (!made) WriteRunKey(true);
+                    return;
+                }
+                RunSchtasks("/Delete /F /TN \"FrameForge\"");
+                WriteRunKey(false);
+                return;
+            }
+            catch (Exception ex) { Log.Write("autostart task: " + ex.Message); }
+        }
+
+        private static void WriteRunKey(bool on)
+        {
             try
             {
                 using (RegistryKey k = Registry.CurrentUser.OpenSubKey(
@@ -366,6 +390,22 @@ namespace FrameForge.UI
                 }
             }
             catch (Exception ex) { Log.Write("autostart: " + ex.Message); }
+        }
+
+        private static bool RunSchtasks(string args)
+        {
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo("schtasks.exe", args);
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                using (System.Diagnostics.Process p = System.Diagnostics.Process.Start(psi))
+                {
+                    if (!p.WaitForExit(5000)) return false;
+                    return p.ExitCode == 0;
+                }
+            }
+            catch { return false; }
         }
 
         public void OpenLogFolder()

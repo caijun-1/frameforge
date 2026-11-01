@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.Globalization;
 using System.Drawing.Text;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
@@ -20,6 +22,13 @@ namespace FrameForge
         private SysSample last = new SysSample();
         private double fps = -1;
         private double low = -1;
+
+        private bool moving;
+
+        // 每 200ms 重画一次,字体不能每次都 new:Font 带 GDI+ 句柄,不释放会一直涨。
+        private readonly Dictionary<string, Font> fonts = new Dictionary<string, Font>();
+        // 排版用的是"无额外内边距"的格式,测出来多宽就画多宽,右对齐不会漂。
+        private static readonly StringFormat Typo = NewTypo();
 
         private IntPtr memDc = IntPtr.Zero;
         private IntPtr dib = IntPtr.Zero;
@@ -62,7 +71,6 @@ namespace FrameForge
         {
             if (!Visible) Show();
             ApplyInputMode();
-            PlaceIfNeeded();
             Render();
             timer.Start();
         }
@@ -77,7 +85,6 @@ namespace FrameForge
         public void ApplySettings()
         {
             ApplyInputMode();
-            PlaceIfNeeded();
             Render();
         }
 
@@ -97,15 +104,35 @@ namespace FrameForge
             Native.SetWindowLong(Handle, Native.GWL_EXSTYLE, ex);
         }
 
-        private void PlaceIfNeeded()
+        /// <summary>
+        /// 默认摆位:横向居中、竖向靠左(纵向居中)、简洁居中。
+        /// 用户拖动过(OverlayX/Y 已保存)就沿用他的位置;切换样式时设置页会清掉坐标,
+        /// 重新按新样式摆放。
+        /// </summary>
+        private void PlaceIfNeeded(int w, int h, float k)
         {
             if (st.OverlayX >= 0 && st.OverlayY >= 0)
             {
                 Location = new Point(st.OverlayX, st.OverlayY);
                 return;
             }
-            Screen sc = Screen.PrimaryScreen;
-            Location = new Point(sc.WorkingArea.Right - 380, sc.WorkingArea.Top + 24);
+
+            Rectangle wa = Screen.PrimaryScreen.WorkingArea;
+            int margin = (int)Math.Round(24 * k);
+            int x, y;
+            if (st.OverlayStyle == "v")
+            {
+                // 竖向:贴左侧,纵向居中
+                x = wa.Left + margin;
+                y = wa.Top + (wa.Height - h) / 2;
+            }
+            else
+            {
+                // 横向 / 简洁:水平居中,顶部留一点边距
+                x = wa.Left + (wa.Width - w) / 2;
+                y = wa.Top + margin;
+            }
+            Location = new Point(x, y);
         }
 
         protected override void WndProc(ref Message m)
@@ -115,8 +142,10 @@ namespace FrameForge
                 m.Result = (IntPtr)Native.HTCAPTION;
                 return;
             }
-            if (m.Msg == 0x0232 && !st.OverlayLocked) // WM_EXITSIZEMOVE
+            if (m.Msg == 0x0231 && !st.OverlayLocked) moving = true;  // WM_ENTERSIZEMOVE
+            if (m.Msg == 0x0232 && !st.OverlayLocked)                 // WM_EXITSIZEMOVE
             {
+                moving = false;
                 st.OverlayX = Left;
                 st.OverlayY = Top;
                 st.Save();
@@ -143,8 +172,13 @@ namespace FrameForge
 
                 string style = st.OverlayStyle;
                 int pad = (int)Math.Round(12 * k);
-                float labelPt = 8.2f * k;
-                float valuePt = 10.5f * k;
+                float labelPt = 9.2f * k;
+                float valuePt = 12f * k;
+
+                // 横向样式:每块占的宽度必须和绘制时的推进量一字不差地对应,
+                // 否则误差会随列数累加,最后一两列被挤出画布,看起来就是"后面的字显示不全"。
+                float gap1 = 4 * k;    // 标签与数值之间
+                float gap2 = 12 * k;   // 两组数据之间
 
                 int w = 0, h = 0;
                 int[] colW = new int[labels.Length];
@@ -154,17 +188,17 @@ namespace FrameForge
                     pg.TextRenderingHint = TextRenderingHint.AntiAlias;
                     for (int i = 0; i < labels.Length; i++)
                     {
-                        SizeF a = pg.MeasureString(labels[i], OverlayFont(labelPt, FontStyle.Regular));
-                        SizeF b = pg.MeasureString(values[i], OverlayFont(valuePt, FontStyle.Bold));
-                        colW[i] = (int)Math.Ceiling(a.Width + b.Width + 10 * k);
+                        SizeF a = pg.MeasureString(labels[i], OverlayFont(labelPt, FontStyle.Regular), int.MaxValue, Typo);
+                        SizeF b = pg.MeasureString(values[i], OverlayFont(valuePt, FontStyle.Bold), int.MaxValue, Typo);
+                        colW[i] = (int)Math.Ceiling(a.Width + gap1 + b.Width + gap2);
                     }
                     if (style == "v")
                     {
                         int labelMax = 0, valueMax = 0;
                         for (int i = 0; i < labels.Length; i++)
                         {
-                            int lw = (int)Math.Ceiling(pg.MeasureString(labels[i], OverlayFont(labelPt, FontStyle.Regular)).Width);
-                            int vw = (int)Math.Ceiling(pg.MeasureString(values[i], OverlayFont(valuePt, FontStyle.Bold)).Width);
+                            int lw = (int)Math.Ceiling(pg.MeasureString(labels[i], OverlayFont(labelPt, FontStyle.Regular), int.MaxValue, Typo).Width);
+                            int vw = (int)Math.Ceiling(pg.MeasureString(values[i], OverlayFont(valuePt, FontStyle.Bold), int.MaxValue, Typo).Width);
                             if (lw > labelMax) labelMax = lw;
                             if (vw > valueMax) valueMax = vw;
                         }
@@ -173,7 +207,7 @@ namespace FrameForge
                     }
                     else if (style == "mini")
                     {
-                        w = (int)Math.Ceiling(pg.MeasureString(values[0], OverlayFont(valuePt * 1.35f, FontStyle.Bold)).Width) + pad * 2;
+                        w = (int)Math.Ceiling(pg.MeasureString(values[0], OverlayFont(valuePt * 1.35f, FontStyle.Bold), int.MaxValue, Typo).Width) + pad * 2;
                         h = (int)Math.Round(34 * k) + pad;
                     }
                     else
@@ -186,6 +220,10 @@ namespace FrameForge
                 if (w < 40) w = 40;
                 if (h < 24) h = 24;
 
+                // 尺寸算出来后再摆放:居中要按实际宽高算。
+                // 用户正在拖动时不能改 Location,否则每 200ms 会被拉回原位置。
+                if (!moving) PlaceIfNeeded(w, h, k);
+
                 using (Bitmap bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb))
                 {
                     using (Graphics g = Graphics.FromImage(bmp))
@@ -194,55 +232,48 @@ namespace FrameForge
                         g.TextRenderingHint = TextRenderingHint.AntiAlias;
                         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
 
-                        float rad = 9 * k;
-                        var rect = new RectangleF(0.5f, 0.5f, w - 1.5f, h - 1.5f);
-                        using (GraphicsPath p = Round(rect, rad))
-                        using (var b = new SolidBrush(Color.FromArgb(150, 10, 12, 16)))
-                            g.FillPath(b, p);
-                        using (GraphicsPath p = Round(rect, rad))
-                        using (var pen = new Pen(Color.FromArgb(70, 255, 255, 255), 1))
-                            g.DrawPath(pen, p);
-
+                        // 整块只留文字:不要圆角底,也不要描边(用户明确要求)。
+                        // 没有底色后白字在雪地/亮天空里会糊,所以先压一层深色阴影再画字,
+                        // 相当于数字自带描边,背景仍然完全透明。
                         if (style == "v")
                         {
                             int y = pad;
                             int rowH = (int)Math.Round(21 * k);
+                            Font lf = OverlayFont(labelPt, FontStyle.Regular);
+                            Font vf = OverlayFont(valuePt, FontStyle.Bold);
                             for (int i = 0; i < labels.Length; i++)
                             {
-                                using (var b = new SolidBrush(Color.FromArgb(190, 200, 208, 220)))
-                                    g.DrawString(labels[i], OverlayFont(labelPt, FontStyle.Regular), b, pad, y + 2 * k);
+                                using (var b = new SolidBrush(Color.FromArgb(225, 206, 214, 226)))
+                                    ShadowString(g, labels[i], lf, b, pad, y + 2 * k, k);
+                                float vw = g.MeasureString(values[i], vf, int.MaxValue, Typo).Width;
                                 using (var b = new SolidBrush(Color.White))
-                                {
-                                    var fmt = new StringFormat();
-                                    fmt.Alignment = StringAlignment.Far;
-                                    g.DrawString(values[i], OverlayFont(valuePt, FontStyle.Bold), b,
-                                        new RectangleF(pad, y, w - pad * 2, rowH), fmt);
-                                }
+                                    ShadowString(g, values[i], vf, b, w - pad - vw, y + 1 * k, k);
                                 y += rowH;
                             }
                         }
                         else if (style == "mini")
                         {
+                            Font f = OverlayFont(valuePt * 1.35f, FontStyle.Bold);
+                            SizeF vs = g.MeasureString(values[0], f, int.MaxValue, Typo);
                             using (var b = new SolidBrush(Color.White))
-                                g.DrawString(values[0], OverlayFont(valuePt * 1.35f, FontStyle.Bold), b,
-                                    new RectangleF(0, 0, w, h), CenterFormat());
+                                ShadowString(g, values[0], f, b, (w - vs.Width) / 2f, (h - vs.Height) / 2f, k);
                         }
                         else
                         {
                             float x = pad;
                             float cy = h / 2f;
+                            Font lf = OverlayFont(labelPt, FontStyle.Regular);
+                            Font vf = OverlayFont(valuePt, FontStyle.Bold);
                             for (int i = 0; i < labels.Length; i++)
                             {
-                                SizeF ls = g.MeasureString(labels[i], OverlayFont(labelPt, FontStyle.Regular));
-                                using (var b = new SolidBrush(Color.FromArgb(180, 190, 200, 214)))
-                                    g.DrawString(labels[i], OverlayFont(labelPt, FontStyle.Regular), b,
-                                        x, cy - ls.Height / 2f - 1);
-                                x += ls.Width + 4 * k;
-                                SizeF vs = g.MeasureString(values[i], OverlayFont(valuePt, FontStyle.Bold));
+                                SizeF ls = g.MeasureString(labels[i], lf, int.MaxValue, Typo);
+                                using (var b = new SolidBrush(Color.FromArgb(220, 196, 206, 220)))
+                                    ShadowString(g, labels[i], lf, b, x, cy - ls.Height / 2f, k);
+                                x += ls.Width + gap1;
+                                SizeF vs = g.MeasureString(values[i], vf, int.MaxValue, Typo);
                                 using (var b = new SolidBrush(Color.White))
-                                    g.DrawString(values[i], OverlayFont(valuePt, FontStyle.Bold), b,
-                                        x, cy - vs.Height / 2f - 1);
-                                x += vs.Width + 12 * k;
+                                    ShadowString(g, values[i], vf, b, x, cy - vs.Height / 2f, k);
+                                x += vs.Width + gap2;
                             }
                         }
                     }
@@ -256,12 +287,26 @@ namespace FrameForge
             }
         }
 
-        private static StringFormat CenterFormat()
+        private static StringFormat NewTypo()
         {
-            var f = new StringFormat();
-            f.Alignment = StringAlignment.Center;
-            f.LineAlignment = StringAlignment.Center;
+            StringFormat f = StringFormat.GenericTypographic;
+            f.FormatFlags |= StringFormatFlags.MeasureTrailingSpaces;
             return f;
+        }
+
+        /// <summary>先压一圈深色阴影再画字:透明背景下在亮场景也能看清。</summary>
+        private static void ShadowString(Graphics g, string text, Font font, Brush brush, float x, float y, float k)
+        {
+            float o = k >= 1.4f ? 2f : 1f;
+            using (var sh = new SolidBrush(Color.FromArgb(195, 0, 0, 0)))
+            {
+                g.DrawString(text, font, sh, x + o, y, Typo);
+                g.DrawString(text, font, sh, x - o, y, Typo);
+                g.DrawString(text, font, sh, x, y - o, Typo);
+                g.DrawString(text, font, sh, x, y + o, Typo);
+                g.DrawString(text, font, sh, x + o, y + o * 2, Typo);
+            }
+            g.DrawString(text, font, brush, x, y, Typo);
         }
 
         private string[] BuildLabels()
@@ -297,21 +342,21 @@ namespace FrameForge
 
         private Font OverlayFont(float px, FontStyle style)
         {
-            string family = I18n.IsEn ? "Segoe UI" : "Microsoft YaHei UI";
-            try { return new Font(family, px, style, GraphicsUnit.Pixel); }
-            catch { return new Font(FontFamily.GenericSansSerif, px, style, GraphicsUnit.Pixel); }
-        }
+            string key = px.ToString("0.0", CultureInfo.InvariantCulture) + "/" + ((int)style).ToString();
+            Font f;
+            if (fonts.TryGetValue(key, out f)) return f;
 
-        private GraphicsPath Round(RectangleF r, float rad)
-        {
-            var p = new GraphicsPath();
-            float d = Math.Min(rad * 2, Math.Min(r.Width, r.Height));
-            p.AddArc(r.X, r.Y, d, d, 180, 90);
-            p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-            p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-            p.CloseFigure();
-            return p;
+            if (fonts.Count > 12)
+            {
+                foreach (Font old in fonts.Values) { try { old.Dispose(); } catch { } }
+                fonts.Clear();
+            }
+
+            string family = I18n.IsEn ? "Segoe UI" : "Microsoft YaHei UI";
+            try { f = new Font(family, px, style, GraphicsUnit.Pixel); }
+            catch { f = new Font(FontFamily.GenericSansSerif, px, style, GraphicsUnit.Pixel); }
+            fonts[key] = f;
+            return f;
         }
 
         /// <summary>把 GDI+ 绘制的 32bpp 位图预乘 alpha 后交给 UpdateLayeredWindow。</summary>
@@ -391,7 +436,12 @@ namespace FrameForge
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) ReleaseDib();
+            if (disposing)
+            {
+                ReleaseDib();
+                foreach (Font f in fonts.Values) { try { f.Dispose(); } catch { } }
+                fonts.Clear();
+            }
             base.Dispose(disposing);
         }
     }
