@@ -19,6 +19,7 @@ namespace FrameForge.UI
         private const uint MOD_NOREPEAT = 0x4000;
 
         private bool boosting;
+        private bool rebuildQueued;
 
         // ---------------- 页面可用 ----------------
 
@@ -37,12 +38,28 @@ namespace FrameForge.UI
         public void ApplyTheme()
         {
             Theme.Set(St.Dark);
-            Defer(RebuildUiCore);
+            RequestRebuild();
         }
 
         public void RebuildUi()
         {
-            Defer(RebuildUiCore);
+            RequestRebuild();
+        }
+
+        /// <summary>
+        /// 重建请求合并:连点语言/主题按钮时只排一次重建。
+        /// 以前每点一次就排一个 BeginInvoke,连点会连续重建,窗口有半帧停在"旧控件已销毁"
+        /// 的状态,标题栏上就会露出一条没重绘的底色和半截图标。
+        /// </summary>
+        private void RequestRebuild()
+        {
+            if (rebuildQueued) return;
+            rebuildQueued = true;
+            Defer(delegate
+            {
+                rebuildQueued = false;
+                RebuildUiCore();
+            });
         }
 
         private void Defer(MethodInvoker action)
@@ -87,7 +104,14 @@ namespace FrameForge.UI
             tips.SetToolTip(btnClose, I18n.T("title.close"));
             toast.BackColor = Theme.Bg;
 
-            Invalidate(true);
+            // 页面销毁重建时,被盖住的区域不会自己消失:DWM 会把没重绘的地方留在上一帧,
+            // 切主题后标题栏就会残留一条旧底色和半截图标。这里整窗(含所有子控件)立即重绘。
+            if (IsHandleCreated)
+                Native.RedrawWindow(Handle, IntPtr.Zero, IntPtr.Zero,
+                    Native.RDW_INVALIDATE | Native.RDW_ERASE | Native.RDW_FRAME |
+                    Native.RDW_ALLCHILDREN | Native.RDW_UPDATENOW);
+            else
+                Invalidate(true);
         }
 
         // ---------------- 加速 ----------------
