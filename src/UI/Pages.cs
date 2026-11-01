@@ -765,23 +765,26 @@ namespace FrameForge.UI
 
             ovTitle.SetBounds(pad, Ui.Px(12), Width - pad * 2, Ui.Px(20));
 
-            // 三行设置整块在卡片内垂直居中:窗口变高时空白在上下对称,
-            // 不会全部堆在卡片底部。
-            int off = Math.Max(0, (cardH - Ui.Px(252)) / 2);
+            // 卡片多出来的高度均摊进三段行距:行与行自然拉开,
+            // 而不是在标题下方留一块空、底部再留一块空。
+            int extra = Math.Max(0, cardH - Ui.Px(266));
+            int top = extra / 5;
+            int step = (extra - top) / 3;
+            int off1 = top, off2 = top + step, off3 = top + step * 2, off4 = top + step * 3;
 
-            onTitle.SetBounds(pad, Ui.Px(50) + off, Width - pad * 2 - toggleW - Ui.Px(12), Ui.Px(20));
-            onSub.SetBounds(pad, Ui.Px(70) + off, Width - pad * 2 - toggleW - Ui.Px(12), Ui.Px(18));
-            onToggle.SetBounds(right - toggleW, Ui.Px(52) + off, toggleW, Ui.Px(24));
+            onTitle.SetBounds(pad, Ui.Px(50) + off1, Width - pad * 2 - toggleW - Ui.Px(12), Ui.Px(20));
+            onSub.SetBounds(pad, Ui.Px(70) + off1, Width - pad * 2 - toggleW - Ui.Px(12), Ui.Px(18));
+            onToggle.SetBounds(right - toggleW, Ui.Px(52) + off1, toggleW, Ui.Px(24));
 
             int segW = Ui.Px(260);
-            styleTitle.SetBounds(pad, Ui.Px(108) + off, Ui.Px(90), Ui.Px(28));
-            style.SetBounds(right - segW, Ui.Px(104) + off, segW, Ui.Px(32));
+            styleTitle.SetBounds(pad, Ui.Px(108) + off2, Ui.Px(90), Ui.Px(28));
+            style.SetBounds(right - segW, Ui.Px(104) + off2, segW, Ui.Px(32));
 
-            scale.SetBounds(pad, Ui.Px(152) + off, Width - pad * 2, Ui.Px(44));
+            scale.SetBounds(pad, Ui.Px(152) + off3, Width - pad * 2, Ui.Px(44));
 
-            lockTitle.SetBounds(pad, Ui.Px(214) + off, Width - pad * 2 - toggleW - Ui.Px(12), Ui.Px(20));
-            lockSub.SetBounds(pad, Ui.Px(234) + off, Width - pad * 2 - toggleW - Ui.Px(12), Ui.Px(18));
-            lockToggle.SetBounds(right - toggleW, Ui.Px(216) + off, toggleW, Ui.Px(24));
+            lockTitle.SetBounds(pad, Ui.Px(214) + off4, Width - pad * 2 - toggleW - Ui.Px(12), Ui.Px(20));
+            lockSub.SetBounds(pad, Ui.Px(234) + off4, Width - pad * 2 - toggleW - Ui.Px(12), Ui.Px(18));
+            lockToggle.SetBounds(right - toggleW, Ui.Px(216) + off4, toggleW, Ui.Px(24));
 
             hintTitle.SetBounds(pad, Ui.Px(12), Width - pad * 2, Ui.Px(20));
             hotkey.SetBounds(pad, Ui.Px(46), Width - pad * 2, Ui.Px(40));
@@ -1176,13 +1179,13 @@ namespace FrameForge.UI
             int bw = Ui.Px(132), bh = Ui.Px(30);
             btnFps.SetBounds(rightW - pad - bw, fpsH - bh - Ui.Px(14), bw, bh);
 
-            // 管理员卡与关于卡通常吃掉剩余高度,内容整块垂直居中,
-            // 否则卡片中部会出现一大块空洞。
+            // 管理员卡与关于卡会吃掉窗口剩余的整块高度:把多出来的空白
+            // 均摊进各行之间的间距,内容铺满卡片,标题下方不会空一大截。
             PlaceHeader(adminCard, pad);
-            int adminOff = Math.Max(0, (adminH - Ui.Px(186)) / 2);
-            adminStatus.SetBounds(pad, Ui.Px(44) + adminOff, rightW - pad * 2, Ui.Px(22));
-            adminNote.SetBounds(pad, Ui.Px(70) + adminOff, rightW - pad * 2, Ui.Px(56));
-            btnAdmin.SetBounds(rightW - pad - bw, Ui.Px(140) + adminOff, bw, bh);
+            int adminExtra = Math.Max(0, adminH - Ui.Px(210));
+            adminStatus.SetBounds(pad, Ui.Px(44) + adminExtra / 8, rightW - pad * 2, Ui.Px(22));
+            adminNote.SetBounds(pad, Ui.Px(70) + adminExtra * 3 / 8, rightW - pad * 2, Ui.Px(56));
+            btnAdmin.SetBounds(rightW - pad - bw, Ui.Px(140) + adminExtra * 7 / 8, bw, bh);
 
             PlaceHeader(hotCard, pad);
             int keyW = Ui.Px(150);
@@ -1192,11 +1195,11 @@ namespace FrameForge.UI
             hotBoostKey.SetBounds(colW - pad - keyW, Ui.Px(76), keyW, Ui.Px(26));
 
             PlaceHeader(aboutCard, pad);
-            int aboutOff = Math.Max(0, (aboutH - Ui.Px(216)) / 2);
-            aboutName.SetBounds(pad, Ui.Px(44) + aboutOff, colW - pad * 2, Ui.Px(22));
-            aboutNotice.SetBounds(pad, Ui.Px(72) + aboutOff, colW - pad * 2, Ui.Px(44));
-            aboutEnv.SetBounds(pad, Ui.Px(122) + aboutOff, colW - pad * 2, Ui.Px(40));
-            btnLog.SetBounds(pad, Ui.Px(176) + aboutOff, bw, bh);
+            int aboutExtra = Math.Max(0, aboutH - Ui.Px(228));
+            aboutName.SetBounds(pad, Ui.Px(44) + aboutExtra / 8, colW - pad * 2, Ui.Px(22));
+            aboutNotice.SetBounds(pad, Ui.Px(72) + aboutExtra * 3 / 8, colW - pad * 2, Ui.Px(44));
+            aboutEnv.SetBounds(pad, Ui.Px(122) + aboutExtra * 5 / 8, colW - pad * 2, Ui.Px(40));
+            btnLog.SetBounds(pad, Ui.Px(176) + aboutExtra * 7 / 8, bw, bh);
         }
 
         private static void PlaceHeader(Card c, int pad)

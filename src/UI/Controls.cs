@@ -105,7 +105,20 @@ namespace FrameForge.UI
             Graphics g = e.Graphics;
             Prep(g);
             var r = new RectangleF(0, 0, Width - 1, Height - 1);
+            // 卡片用纯色:子控件是按自身 BackColor 铺底的,卡片一旦用渐变,
+            // 文字标签就会在渐变上露出一个个色块。
             Ui.Fill(g, r, Ui.Fp(Radius), Theme.Card);
+            if (Theme.Dark)
+            {
+                // 夜间模式卡片顶部加一道极淡的高光边,让纯色块有"玻璃边缘"的层次感。
+                using (GraphicsPath p = Ui.Round(r, Ui.Fp(Radius)))
+                using (var pen = new Pen(Theme.Alpha(Color.White, 12), 1f))
+                {
+                    g.SetClip(p);
+                    g.DrawLine(pen, 0f, 0.5f, Width, 0.5f);
+                    g.ResetClip();
+                }
+            }
             if (ShowBorder) Ui.Stroke(g, r, Ui.Fp(Radius), Theme.Border, 1f);
         }
     }
@@ -118,6 +131,12 @@ namespace FrameForge.UI
         public ContentAlignment Align = ContentAlignment.MiddleLeft;
         public bool Wrap = false;
         public bool Ellipsis = false;
+
+        public TextLabel()
+        {
+            // 控件默认前景色是黑色,夜间模式下会变成黑底黑字。
+            ForeColor = Theme.Text;
+        }
 
         protected override void OnPaint(PaintEventArgs e)
         {

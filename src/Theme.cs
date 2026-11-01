@@ -42,17 +42,18 @@ namespace FrameForge
             }
             else
             {
-                Bg = Hex("#14171C");
-                Card = Hex("#1C2027");
-                Text = Hex("#E8EBF0");
-                Sub = Hex("#9099A5");
-                Faint = Hex("#6B7280");
-                Border = Hex("#2A2F38");
-                Track = Hex("#252A33");
-                Hover = Hex("#23272F");
+                // 夜间模式不要纯黑堆叠:底色偏深蓝黑,卡片逐层提亮,靠层差而不是描边区分层次。
+                Bg = Hex("#0E1116");
+                Card = Hex("#191E26");
+                Text = Hex("#EAEEF5");
+                Sub = Hex("#9BA6B4");
+                Faint = Hex("#6F7A88");
+                Border = Hex("#2A3140");
+                Track = Hex("#2A313C");
+                Hover = Hex("#222933");
             }
-            Accent = Hex("#2F7BF5");
-            AccentHover = Hex("#2565D9");
+            Accent = dark ? Hex("#4C8DFF") : Hex("#2F7BF5");
+            AccentHover = dark ? Hex("#3A7BF0") : Hex("#2565D9");
             Warn = Hex("#F0A020");
             Danger = Hex("#EF5350");
         }

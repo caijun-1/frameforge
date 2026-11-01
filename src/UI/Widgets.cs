@@ -89,10 +89,12 @@ namespace FrameForge.UI
 
             float s = Ui.S;
             float labelH = Ui.Fp(18);
+            // 双极性滑杆(-100~100)正值补一个加号,数值方向一眼可辨。
+            string shown = val > 0 && Min < 0 ? "+" + val : val.ToString();
             TextRenderer.DrawText(g, Label, Theme.F(9f, FontStyle.Regular),
                 new Rectangle(0, 0, Width, (int)labelH), Theme.Sub,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
-            TextRenderer.DrawText(g, val + Unit, Theme.F(9.5f, FontStyle.Bold),
+            TextRenderer.DrawText(g, shown + Unit, Theme.F(9.5f, FontStyle.Bold),
                 new Rectangle(0, 0, Width, (int)labelH), Theme.Text,
                 TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
 
@@ -102,12 +104,20 @@ namespace FrameForge.UI
             Ui.Fill(g, track, track.Height / 2f, Theme.Track);
 
             double t = (val - Min) / (double)Math.Max(1, Max - Min);
-            var filled = new RectangleF(left, cy - Ui.Fp(2), (float)((right - left) * t), Ui.Fp(4));
+            // 双极性滑杆从中间零点向两侧填充:0 值不该显示成"半条蓝线"。
+            bool bipolar = Min < 0 && Max > 0;
+            float from = bipolar ? left + (right - left) * (float)((0 - Min) / (double)(Max - Min)) : left;
+            float to = left + (right - left) * (float)t;
+            var filled = new RectangleF(Math.Min(from, to), cy - Ui.Fp(2), Math.Abs(to - from), Ui.Fp(4));
             if (filled.Width > 0.5f)
                 Ui.Fill(g, filled, filled.Height / 2f, Theme.Accent);
 
             float knob = Ui.Fp(13);
-            var kr = new RectangleF(left + (float)((right - left) * t) - knob / 2f, cy - knob / 2f, knob, knob);
+            float kx = left + (float)((right - left) * t) - knob / 2f;
+            // 两端收进控件内,满值/零值时滑钮不会被裁掉半个。
+            if (kx < 0f) kx = 0f;
+            if (kx > Width - knob) kx = Width - knob;
+            var kr = new RectangleF(kx, cy - knob / 2f, knob, knob);
             using (var b = new SolidBrush(Theme.Card)) g.FillEllipse(b, kr);
             using (var pen = new Pen(hover || drag ? Theme.AccentHover : Theme.Accent, Math.Max(2f, Ui.Fp(2.6))))
                 g.DrawEllipse(pen, kr);
