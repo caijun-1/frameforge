@@ -1,10 +1,21 @@
-# FrameForge
+<p align="center"><img src="docs/icon.png" width="120" alt="FrameForge"></p>
 
-**一个绿色免安装的 FPS 游戏增效工具：一键加速、实时帧率监测、游戏内叠加层与画面滤镜。**
-单文件 exe 约 200 KB，常驻内存约 20 MB，不注入游戏进程、不安装驱动。
+<h1 align="center">FrameForge</h1>
 
-**A portable FPS toolkit for Windows: one-click boost, live frame-time monitoring, in-game overlay and screen filters.**
-Single 200 KB executable, ~20 MB resident, no game injection, no kernel driver.
+<p align="center"><b>轻量级 FPS 游戏增效工具 · A lightweight FPS toolkit for Windows</b><br>
+一键加速 + 实时帧率监测 + 游戏内叠加层 + 画面滤镜</p>
+
+<p align="center">单文件 · 免安装 · 208 KB · 不注入游戏 · 不装驱动</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue" alt="platform">
+  <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
+  <img src="https://img.shields.io/badge/size-208%20KB-brightgreen" alt="size 208 KB">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
+  <img src="https://img.shields.io/badge/version-1.0.0-orange" alt="1.0.0">
+</p>
+
+<p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
 
 ---
 
@@ -166,7 +177,7 @@ frameforge/
 
 ## English
 
-**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay and desktop-wide screen filters. It ships as a single ~145 KB executable with about 20 MB of resident memory, and it never injects into games or installs a driver.
+**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay and desktop-wide screen filters. It ships as a single 208 KB executable with about 20 MB of resident memory, and it never injects into games or installs a driver.
 
 ### Highlights
 
