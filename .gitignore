@@ -1,0 +1,19 @@
+# 构建产物
+FrameForge.exe
+*.pdb
+
+# 编译中间件
+obj/
+bin/
+
+# 本地截图与临时脚本
+tmp_shots/
+
+# IDE
+.vs/
+*.user
+*.suo
+
+# 运行期数据（不应提交）
+settings.json
+log.txt

@@ -1,0 +1,38 @@
+# NOTICE
+
+FrameForge 自身以 MIT 协议发布，详见 [LICENSE](LICENSE)。
+
+本项目**不包含**下列任何第三方二进制文件。它们在运行时按需获取或直接调用系统组件，
+各自遵循其原始许可。
+
+## Intel PresentMon
+
+- 用途：读取前台游戏进程的呈现事件，计算 FPS 与 1% Low。
+- 获取方式：仅在用户点击「设置 → 帧率引擎 → 下载 / 修复」时，从官方 GitHub Release 下载
+  `PresentMon-<version>-x64.exe`，保存到 `%LOCALAPPDATA%\FrameForge\`。
+- 版本：2.6.0
+- 许可：MIT License
+- 项目主页：https://github.com/GameTechDev/PresentMon
+
+## Windows Magnification API
+
+- 用途：画面滤镜的全屏颜色矩阵。
+- 调用方式：通过 P/Invoke 调用系统自带的 `Magnification.dll`（`MagInitialize` /
+  `MagSetFullscreenColorEffect` / `MagUninitialize`），不重新分发该库。
+- 许可：随 Windows 操作系统提供，受 Microsoft 软件许可条款约束。
+
+## NVIDIA Management Library (NVML)
+
+- 用途：读取 NVIDIA 显卡的占用、温度、频率、功耗与显存。
+- 调用方式：动态加载驱动自带的 `nvml.dll`，不存在时自动降级（传感器显示 `—`）。
+- 许可：随 NVIDIA 显示驱动提供，受 NVIDIA 软件许可条款约束。
+
+## .NET Framework
+
+- 用途：运行时与 WinForms。
+- 说明：本项目的 exe 以 .NET Framework 4.8 为目标框架编译，不打包运行时。
+- 许可：受 Microsoft .NET Framework 可再发行组件许可条款约束。
+
+## 字体
+
+界面使用系统中文字体（微软雅黑 / Segoe UI）与系统图标字符，不嵌入任何字体文件。

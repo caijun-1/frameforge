@@ -1,0 +1,465 @@
+using System;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Windows.Forms;
+using FrameForge.Sys;
+
+namespace FrameForge.UI
+{
+    /// <summary>
+    /// 无边框主窗口:自绘标题栏 + 四页导航 + 轻提示。
+    /// 外壳与布局在本文件,业务动作在 MainForm.Actions.cs,页面内容在 Pages.cs。
+    /// </summary>
+    public sealed partial class MainForm : Form
+    {
+        public Settings St;
+        public Monitor Mon;
+        public FpsEngine Fps;
+        public Overlay Ov;
+        public BoostEngine Boost;
+
+        private const int WM_NCHITTEST = 0x0084;
+        private const int WS_THICKFRAME = 0x00040000;
+        private const int WS_MINIMIZEBOX = 0x00020000;
+        private const int WS_MAXIMIZEBOX = 0x00010000;
+
+        private readonly bool startMinimized;
+
+        private Segmented nav;
+        private IconButton btnLang;
+        private IconButton btnTheme;
+        private IconButton btnMin;
+        private IconButton btnClose;
+        private FrameForge.UI.Toast toast;
+        private ToolTip tips;
+
+        private Page[] pages;
+        private int activePage;
+        private BoostPage boostPage;
+        private SettingsPage setPage;
+
+        private Timer ui;
+        private Timer saveTimer;
+        private NotifyIcon tray;
+        private Icon appIcon;
+        private bool trayHinted;
+
+        private bool ovShown;
+        private bool lastFullscreen;
+        private bool trimming;
+        private bool downloading;
+        private DateTime lastAutoTrim = DateTime.MinValue;
+
+        public MainForm(Settings st, bool minimized)
+        {
+            St = st;
+            startMinimized = minimized;
+
+            I18n.Lang = st.Language == "en" ? "en" : "zh";
+            Theme.Set(st.Dark);
+            Theme.ResetFonts();
+
+            FormBorderStyle = FormBorderStyle.None;
+            StartPosition = FormStartPosition.CenterScreen;
+            AutoScaleMode = AutoScaleMode.None;
+            BackColor = Theme.Bg;
+            Text = "FrameForge";
+
+            // 先创建句柄,再由窗口句柄读取实际 DPI:Form.DeviceDpi 在部分系统上恒为 96,
+            // 会导致文字按 DPI 放大而布局仍按 1x 计算,控件互相压盖。
+            IntPtr forceHandle = Handle;
+            GC.KeepAlive(forceHandle);
+            Ui.S = DpiScale();
+
+            MinimumSize = new Size(Ui.Px(840), Ui.Px(600));
+            appIcon = MakeIcon();
+            Icon = appIcon;
+
+            // CenterScreen 在设置 ClientSize 之前就定好了位置,高分屏上会偏出屏幕;
+            // 这里手动按工作区居中。
+            StartPosition = FormStartPosition.Manual;
+            Rectangle wa = Screen.PrimaryScreen.WorkingArea;
+            float maxW = wa.Width / Ui.S - 32;
+            float maxH = wa.Height / Ui.S - 32;
+            ClientSize = new Size(Ui.Px(Math.Min(1020f, maxW)), Ui.Px(Math.Min(720f, maxH)));
+            Location = new Point(wa.Left + Math.Max(0, (wa.Width - Width) / 2),
+                wa.Top + Math.Max(0, (wa.Height - Height) / 2));
+
+            Log.Write("ui: dpi=" + (int)Math.Round(Ui.S * 96) + " scale=" + Ui.S.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
+                + " client=" + ClientSize.Width + "x" + ClientSize.Height
+                + " screen=" + wa.Width + "x" + wa.Height);
+
+            BuildTitle();
+            BuildPages();
+            BuildToast();
+            BuildTray();
+            BuildTimers();
+
+            Mon = new Monitor();
+            Fps = new FpsEngine();
+            Ov = new Overlay(St);
+            Boost = new BoostEngine();
+            LayoutAll();
+        }
+
+        private int TitleH() { return Ui.Px(52); }
+
+        /// <summary>以句柄的真实 DPI 计算缩放系数,失败时退回 DeviceDpi。</summary>
+        private float DpiScale()
+        {
+            uint dpi = 0;
+            try { if (IsHandleCreated) dpi = Native.GetDpiForWindow(Handle); } catch { }
+            if (dpi < 96) dpi = (uint)DeviceDpi;
+            float s = dpi / 96f;
+            return s < 1f ? 1f : s;
+        }
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams cp = base.CreateParams;
+                // 细边框样式:无边框窗口也能拖动边缘改变大小,并带系统阴影
+                cp.Style |= WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+                return cp;
+            }
+        }
+
+        // ---------------- 构建 ----------------
+
+        private void BuildTitle()
+        {
+            tips = new ToolTip();
+
+            nav = new Segmented();
+            nav.Items = NavItems();
+            nav.SetSilent(0);
+            nav.Changed += delegate { ShowPage(nav.Selected); };
+
+            btnLang = new IconButton();
+            btnLang.Kind = Glyph.Lang;
+            btnLang.LangText = I18n.IsEn ? "中" : "EN";
+            btnLang.Click += delegate { ToggleLanguage(); };
+
+            btnTheme = new IconButton();
+            btnTheme.Kind = Glyph.Theme;
+            btnTheme.Click += delegate { ToggleTheme(); };
+
+            btnMin = new IconButton();
+            btnMin.Kind = Glyph.Minimize;
+            btnMin.Click += delegate { WindowState = FormWindowState.Minimized; };
+
+            btnClose = new IconButton();
+            btnClose.Kind = Glyph.Close;
+            btnClose.Click += delegate { CloseRequested(); };
+
+            Controls.Add(nav);
+            Controls.Add(btnLang);
+            Controls.Add(btnTheme);
+            Controls.Add(btnMin);
+            Controls.Add(btnClose);
+
+            tips.SetToolTip(btnLang, I18n.T("title.lang"));
+            tips.SetToolTip(btnTheme, I18n.T("title.theme"));
+            tips.SetToolTip(btnMin, I18n.T("title.min"));
+            tips.SetToolTip(btnClose, I18n.T("title.close"));
+        }
+
+        private void BuildPages()
+        {
+            boostPage = new BoostPage(this);
+            setPage = new SettingsPage(this);
+            pages = new Page[]
+            {
+                boostPage, new MonitorPage(this), new FilterPage(this), new OverlayPage(this), setPage
+            };
+            for (int i = 0; i < pages.Length; i++)
+            {
+                pages[i].Visible = false;
+                Controls.Add(pages[i]);
+            }
+            ShowPage(0);
+        }
+
+        private void BuildToast()
+        {
+            toast = new FrameForge.UI.Toast();
+            toast.BackColor = Theme.Bg;
+            toast.Visible = false;
+            Controls.Add(toast);
+            toast.BringToFront();
+        }
+
+        private void BuildTray()
+        {
+            var menu = new ContextMenuStrip();
+            menu.Items.Add(I18n.T("tray.open"), null, delegate { RestoreFromTray(); });
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(I18n.T("tray.exit"), null, delegate { Close(); });
+
+            tray = new NotifyIcon();
+            tray.Icon = appIcon;
+            tray.Text = "FrameForge";
+            tray.ContextMenuStrip = menu;
+            tray.DoubleClick += delegate { RestoreFromTray(); };
+            tray.Visible = true;
+        }
+
+        private void BuildTimers()
+        {
+            ui = new Timer();
+            ui.Interval = 1000;
+            ui.Tick += delegate { OnTick(); };
+
+            saveTimer = new Timer();
+            saveTimer.Interval = 700;
+            saveTimer.Tick += delegate { saveTimer.Stop(); St.Save(); };
+        }
+
+        private string[] NavItems()
+        {
+            return new string[]
+            {
+                I18n.T("nav.boost"), I18n.T("nav.monitor"), I18n.T("nav.filter"),
+                I18n.T("nav.overlay"), I18n.T("nav.settings")
+            };
+        }
+
+        // ---------------- 运行 ----------------
+
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            Mon.Start();
+            ui.Start();
+            if (setPage != null) setPage.UpdateStatus();
+            SyncOverlay();
+            Sys.Filter.Init();
+            ApplyFilter();
+            if (startMinimized) { HideToTray(false); return; }
+            if (!St.AskedElevation && !MemEngine.IsAdmin) AskElevationOnce();
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            RegisterHotkeys();
+        }
+
+        private void OnTick()
+        {
+            SysSample s = Mon.Current;
+            if (s == null) return;
+
+            RefreshActive();
+
+            if (s.Fullscreen != lastFullscreen)
+            {
+                lastFullscreen = s.Fullscreen;
+                SyncOverlay();
+                ApplyFilter();
+            }
+
+            if (s.Fullscreen && s.ForegroundPid > 0) Fps.Track(s.ForegroundPid);
+            else Fps.Stop();
+
+            Ov.Feed(s, Fps.Fps, Fps.Low1);
+
+            CheckBoostAlive();
+            AutoTrim(s);
+        }
+
+        private void RefreshActive()
+        {
+            if (pages == null || Mon == null) return;
+            try { pages[activePage].Refresh(Mon.Current); }
+            catch (Exception ex) { Log.Write("refresh: " + ex.Message); }
+        }
+
+        private void ShowPage(int i)
+        {
+            if (pages == null) return;
+            if (i < 0 || i >= pages.Length) i = 0;
+            activePage = i;
+            for (int k = 0; k < pages.Length; k++) pages[k].Visible = k == i;
+            if (toast != null) toast.BringToFront();
+            if (nav.Selected != i) nav.SetSilent(i);
+            RefreshActive();
+        }
+
+        // ---------------- 布局与绘制 ----------------
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            LayoutAll();
+        }
+
+        private void LayoutAll()
+        {
+            if (pages == null || toast == null) return;
+            int th = TitleH();
+            int bh = Ui.Px(34);
+            int by = (th - bh) / 2;
+            int gap = Ui.Px(2);
+            int x = Width - Ui.Px(12) - bh;
+
+            btnClose.SetBounds(x, by, bh, bh); x -= bh + gap;
+            btnMin.SetBounds(x, by, bh, bh); x -= bh + gap;
+            btnTheme.SetBounds(x, by, bh, bh); x -= bh + gap;
+            btnLang.SetBounds(x, by, bh, bh);
+
+            int navW = Ui.Px(I18n.IsEn ? 468 : 372);
+            int limit = Width - Ui.Px(480);
+            if (navW > limit) navW = limit;
+            if (navW < Ui.Px(220)) navW = Ui.Px(220);
+            nav.SetBounds((Width - navW) / 2, by, navW, bh);
+
+            int pad = Ui.Px(18);
+            int top = th + Ui.Px(10);
+            int pw = Width - pad * 2;
+            int ph = Height - top - Ui.Px(16);
+            for (int i = 0; i < pages.Length; i++) pages[i].SetBounds(pad, top, pw, ph);
+
+            int tw = Math.Min(Ui.Px(420), Width - Ui.Px(80));
+            toast.SetBounds((Width - tw) / 2, Height - Ui.Px(88), tw, Ui.Px(40));
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using (var b = new SolidBrush(Theme.Bg)) g.FillRectangle(b, ClientRectangle);
+
+            int th = TitleH();
+            int nameW = Math.Max(Ui.Px(120), nav.Left - Ui.Px(44));
+            TextRenderer.DrawText(g, "FrameForge", Theme.Bold(14f),
+                new Rectangle(Ui.Px(22), Ui.Px(7), nameW, Ui.Px(24)), Theme.Text, LeftLine());
+            TextRenderer.DrawText(g, I18n.T("app.sub"), Theme.Regular(8.3f),
+                new Rectangle(Ui.Px(23), Ui.Px(29), nameW, Ui.Px(16)), Theme.Sub, LeftLine());
+
+            using (var pen = new Pen(Theme.Border, 1f))
+                g.DrawLine(pen, 0, th - 1, Width, th - 1);
+        }
+
+        private static TextFormatFlags LeftLine()
+        {
+            return TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine
+                 | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix;
+        }
+
+        /// <summary>跨屏拖动后按新 DPI 重建界面,并按比例调整窗口尺寸。</summary>
+        private void OnDpiChangedMsg(Message m)
+        {
+            int dpi = (int)((m.WParam.ToInt64() >> 16) & 0xFFFF);
+            if (dpi < 96) return;
+            float s = dpi / 96f;
+            if (Math.Abs(s - Ui.S) < 0.01f) return;
+
+            int cw = (int)Math.Round(ClientSize.Width * s / Ui.S);
+            int ch = (int)Math.Round(ClientSize.Height * s / Ui.S);
+            Ui.S = s;
+            ClientSize = new Size(Math.Max(Ui.Px(840), cw), Math.Max(Ui.Px(600), ch));
+            Defer(RebuildUiCore);
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == 0x02E0) { OnDpiChangedMsg(m); return; }
+            if (m.Msg == Native.WM_HOTKEY) { HandleHotkey(m.WParam.ToInt32()); return; }
+            if (m.Msg == Native.WM_SHOWME) { RestoreFromTray(); return; }
+
+            if (m.Msg == WM_NCHITTEST)
+            {
+                base.WndProc(ref m);
+                if ((int)m.Result == Native.HTCLIENT)
+                {
+                    int lp = m.LParam.ToInt32();
+                    short sx = unchecked((short)(lp & 0xFFFF));
+                    short sy = unchecked((short)((lp >> 16) & 0xFFFF));
+                    Point p = PointToClient(new Point(sx, sy));
+                    if (p.Y >= 0 && p.Y < TitleH()) m.Result = (IntPtr)Native.HTCAPTION;
+                }
+                return;
+            }
+            base.WndProc(ref m);
+        }
+
+        // ---------------- 托盘与关闭 ----------------
+
+        private void CloseRequested()
+        {
+            if (St.CloseToTray) { HideToTray(true); return; }
+            Close();
+        }
+
+        private void HideToTray(bool hint)
+        {
+            Hide();
+            if (hint && !trayHinted && tray != null)
+            {
+                trayHinted = true;
+                try { tray.ShowBalloonTip(1600, "FrameForge", I18n.T("tray.hint"), ToolTipIcon.None); }
+                catch { }
+            }
+        }
+
+        private void RestoreFromTray()
+        {
+            if (!Visible) Show();
+            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            Activate();
+            BringToFront();
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (ui != null) ui.Stop();
+            if (saveTimer != null) saveTimer.Stop();
+            try { if (St != null) St.Save(); } catch { }
+
+            UnregisterHotkeys();
+            try { if (Fps != null) { Fps.Stop(); Fps.Dispose(); } } catch { }
+            try { if (Mon != null) Mon.Dispose(); } catch { }
+            try { if (Ov != null) { Ov.Stop(); Ov.Dispose(); } } catch { }
+            try { if (Boost != null) { Boost.Restore(); Boost.Dispose(); } } catch { }
+            try { Sys.Filter.Shutdown(); } catch { }
+
+            if (tray != null) { tray.Visible = false; tray.Dispose(); tray = null; }
+            base.OnFormClosing(e);
+        }
+
+        private static Icon MakeIcon()
+        {
+            using (var bmp = new Bitmap(32, 32))
+            {
+                using (Graphics g = Graphics.FromImage(bmp))
+                {
+                    g.SmoothingMode = SmoothingMode.AntiAlias;
+                    g.Clear(Color.Transparent);
+                    using (GraphicsPath p = Ui.Round(new RectangleF(1, 1, 30, 30), 8f))
+                    using (var b = new SolidBrush(Theme.Accent))
+                        g.FillPath(b, p);
+                    // 一支向上的箭头,呼应「加速」
+                    using (var pen = new Pen(Color.White, 2.4f))
+                    {
+                        pen.StartCap = LineCap.Round;
+                        pen.EndCap = LineCap.Round;
+                        pen.LineJoin = LineJoin.Round;
+                        g.DrawLines(pen, new PointF[]
+                        {
+                            new PointF(8, 20), new PointF(16, 11), new PointF(24, 20)
+                        });
+                        g.DrawLine(pen, 16f, 11f, 16f, 24f);
+                    }
+                }
+                IntPtr h = bmp.GetHicon();
+                try
+                {
+                    using (Icon tmp = Icon.FromHandle(h)) return (Icon)tmp.Clone();
+                }
+                finally { Native.DestroyIcon(h); }
+            }
+        }
+    }
+}
