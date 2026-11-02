@@ -37,6 +37,10 @@ namespace FrameForge
         public bool BoostDvr = true;
         public bool BoostMem = true;
         public bool BoostBackground = false;
+        public bool BoostAffinity = false;
+        public bool BoostIrq = false;
+        public bool BoostProfile = true;
+        public int AffinityCores = 0;         // 0 = 自动
 
         // 画面滤镜
         public int FilterMode = 0;            // 0 关 | 1 仅游戏 | 2 始终
@@ -100,6 +104,10 @@ namespace FrameForge
                 case "boostdvr": BoostDvr = Bool(v, true); break;
                 case "boostmem": BoostMem = Bool(v, true); break;
                 case "boostbackground": BoostBackground = Bool(v, false); break;
+                case "boostaffinity": BoostAffinity = Bool(v, false); break;
+                case "boostirq": BoostIrq = Bool(v, false); break;
+                case "boostprofile": BoostProfile = Bool(v, true); break;
+                case "affinitycores": AffinityCores = Int(v, 0); break;
                 case "filtermode": FilterMode = Int(v, 0); break;
                 case "filterpreset": FilterPreset = Int(v, 0); break;
                 case "filterintensity": FilterIntensity = Int(v, 100); break;
@@ -141,6 +149,10 @@ namespace FrameForge
                 sb.AppendLine("boostDvr=" + B(BoostDvr));
                 sb.AppendLine("boostMem=" + B(BoostMem));
                 sb.AppendLine("boostBackground=" + B(BoostBackground));
+                sb.AppendLine("boostAffinity=" + B(BoostAffinity));
+                sb.AppendLine("boostIrq=" + B(BoostIrq));
+                sb.AppendLine("boostProfile=" + B(BoostProfile));
+                sb.AppendLine("affinityCores=" + AffinityCores.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterMode=" + FilterMode.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterPreset=" + FilterPreset.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterIntensity=" + FilterIntensity.ToString(CultureInfo.InvariantCulture));
@@ -167,6 +179,9 @@ namespace FrameForge
             p.Dvr = BoostDvr;
             p.Memory = BoostMem;
             p.Background = BoostBackground;
+            p.Affinity = BoostAffinity;
+            p.Irq = BoostIrq;
+            p.Cores = AffinityCores;
             return p;
         }
 

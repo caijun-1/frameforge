@@ -18,6 +18,7 @@ namespace FrameForge.UI
         public FpsEngine Fps;
         public Overlay Ov;
         public BoostEngine Boost;
+        public ProfileStore Profiles;
 
         private const int WM_NCHITTEST = 0x0084;
         private const int WM_NCCALCSIZE = 0x0083;
@@ -106,6 +107,8 @@ namespace FrameForge.UI
             Fps = new FpsEngine();
             Ov = new Overlay(St);
             Boost = new BoostEngine();
+            Profiles = new ProfileStore();
+            Profiles.Load();
             LayoutAll();
         }
 
@@ -304,6 +307,7 @@ namespace FrameForge.UI
             Ov.Feed(s, Fps.Fps, Fps.Low1);
 
             CheckBoostAlive();
+            MaybeAutoBoost(s);
             AutoTrim(s);
 
             // 帧率每秒在变,监测页跟着 200ms 刷新;其它页面没有实时数据,1 秒一次就够,

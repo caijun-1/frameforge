@@ -5,12 +5,12 @@
 <p align="center"><b>轻量级 FPS 游戏增效工具 · A lightweight FPS toolkit for Windows</b><br>
 一键加速 + 实时帧率监测 + 游戏内叠加层 + 画面滤镜</p>
 
-<p align="center">单文件 · 免安装 · 208 KB · 不注入游戏 · 不装驱动</p>
+<p align="center">单文件 · 免安装 · 224 KB · 不注入游戏 · 不装驱动</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue" alt="platform">
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
-  <img src="https://img.shields.io/badge/size-208%20KB-brightgreen" alt="size 208 KB">
+  <img src="https://img.shields.io/badge/size-224%20KB-brightgreen" alt="size 224 KB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
   <img src="https://img.shields.io/badge/version-1.0.0-orange" alt="1.0.0">
 </p>
@@ -41,7 +41,7 @@
 
 | 模块 | 能力 |
 | --- | --- |
-| 一键加速 | 进程优先级、高性能电源计划、系统计时器 1 ms、关闭 Game DVR 与全屏优化、内存整理、进阶：暂停后台无窗口占用大户（二次确认） |
+| 一键加速 | 进程优先级、高性能电源计划、系统计时器 1 ms、关闭 Game DVR 与全屏优化、内存整理、进阶：暂停后台无窗口占用大户（二次确认）、独占物理核心、设备中断避让、按游戏记忆策略 |
 | 实时监测 | CPU / GPU 占用环形表、GPU 温度 / 频率 / 功耗 / 显存、内存水位、FPS 与 1% Low 折线 |
 | 画面滤镜 | 9 组预设 + 强度 / 亮度 / 对比度 / 饱和度 / 色温 五维微调，仅游戏或始终生效 |
 | 游戏内叠加层 | 置顶半透明小窗，横向 / 纵向 / 简洁三种样式，可缩放、可锁定位置 |
@@ -85,8 +85,12 @@
 | 关闭 Game DVR | 写入 `GameDVR_Enabled=0`、关闭全屏优化 | 恢复原注册表值 |
 | 内存整理 | 对空闲进程 `EmptyWorkingSet` + 清系统工作集 | 无需还原（缓存会自行重建） |
 | 暂停后台进程 | 挂起无窗口且占用靠前的后台进程 | 自动恢复线程 |
+| 独占物理核心 | 按 CPU 拓扑把游戏绑到一半完整物理核心，其他进程挪到剩余核心 | 恢复各进程原亲和性掩码 |
+| 设备中断避让 | 把网卡 / 显卡的 MSI 中断亲和性指向非游戏核心 | 恢复原注册表值，重启后生效 |
+| 按游戏记忆 | 每个游戏单独保存加速项，下次检测到该游戏时自动套用 | 仅写本地配置，无需还原 |
 
 > 进阶项「暂停后台进程」会先列出候选进程并要求二次确认，只挂起、不结束。
+> 自动套用只应用安全项（暂停后台进程与中断避让不自动执行）。
 
 ## 帧率从哪来
 
@@ -110,7 +114,7 @@ PresentMon 是在运行时按需下载的独立 exe（MIT 协议），不随本�
 
 ## 数据与隐私
 
-- 配置：`%LOCALAPPDATA%\FrameForge\settings.json`
+- 配置：`%LOCALAPPDATA%\FrameForge\settings.ini`，按游戏策略在同目录的 `profiles.ini`
 - 日志：`%LOCALAPPDATA%\FrameForge\log.txt`（超过 1 MB 轮转一份）
 - 不联网、不上传任何数据；唯一的网络请求是你主动触发的 PresentMon 下载。
 
@@ -128,7 +132,7 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 .\FrameForge.exe --selftest   # 结果写入 %TEMP%\frameforge_selftest.log
 ```
 
-自检覆盖：传感器采样、显卡识别、游戏检测、电源方案、后台进程候选、设置映射、PresentMon 状态、叠加层初始化。
+自检覆盖：传感器采样、显卡识别、游戏检测、电源方案、后台进程候选、设置映射、CPU 拓扑与核心掩码、按游戏策略读取、中断设备枚举、PresentMon 状态、叠加层初始化。
 
 > 代码保持 C# 5 语法（随系统分发的 `csc.exe` 只认 C# 5），请勿使用插值字符串、`?.`、表达式体成员等新语法。
 
@@ -150,6 +154,10 @@ frameforge/
 │   │   ├── Pdh.cs / Nvml.cs   # 性能计数器与显卡传感器
 │   │   ├── Fps.cs         # PresentMon 下载与帧率读取
 │   │   ├── Boost.cs       # 加速项与回滚
+│   │   ├── Topology.cs    # CPU 物理核心拓扑
+│   │   ├── Affinity.cs    # 核心独占与其他进程避让
+│   │   ├── Interrupts.cs  # 网卡 / 显卡中断亲和性
+│   │   ├── Profiles.cs    # 按游戏保存的加速策略
 │   │   ├── MemEngine.cs   # 内存整理与提权
 │   │   └── Filter.cs      # 全屏颜色矩阵滤镜
 │   └── UI/
@@ -177,11 +185,11 @@ frameforge/
 
 ## English
 
-**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay and desktop-wide screen filters. It ships as a single 208 KB executable with about 20 MB of resident memory, and it never injects into games or installs a driver.
+**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay and desktop-wide screen filters. It ships as a single 224 KB executable with about 20 MB of resident memory, and it never injects into games or installs a driver.
 
 ### Highlights
 
-- **One-click boost** — process priority, high-performance power plan, 1 ms timer resolution, Game DVR / fullscreen optimization off, working-set trim, plus an opt-in "suspend background hogs" step that asks for confirmation first. Every change is reversible.
+- **One-click boost** — process priority, high-performance power plan, 1 ms timer resolution, Game DVR / fullscreen optimization off, working-set trim, plus opt-in advanced steps: suspend background hogs (with confirmation), reserve physical cores for the game, move NIC/GPU interrupts off those cores, and remember options per game. Every change is reversible.
 - **Live monitoring** — CPU/GPU rings, GPU temperature, clock, power and VRAM, memory pressure, FPS and 1% low chart.
 - **Screen filters** — nine presets plus intensity, brightness, contrast, saturation and warmth sliders, applied through the Windows Magnification color matrix (game-only or always).
 - **In-game overlay** — top-most layered window with three layouts, scaling and position lock.

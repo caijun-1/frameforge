@@ -20,6 +20,9 @@ namespace FrameForge.UI
 
         private bool boosting;
         private bool rebuildQueued;
+        private int lastAutoPid = -1;
+        private int suppressAutoPid = -1;
+        private DateTime lastAutoTry = DateTime.MinValue;
 
         // ---------------- 页面可用 ----------------
 
@@ -182,6 +185,8 @@ namespace FrameForge.UI
                         return;
                     }
                     if (boostPage != null) boostPage.SetResult(ComposeResult(r));
+                    if (St.BoostProfile) SaveProfile(gameName, plan);
+                    lastAutoPid = gamePid;
                     Toast(I18n.T("toast.boosted"));
                 });
             });
@@ -189,6 +194,8 @@ namespace FrameForge.UI
 
         public void RestoreBoost(bool notify)
         {
+            // 手动还原后,同一个游戏不再自动套用,否则下一次采样又会把它加速回去。
+            suppressAutoPid = Boost != null ? Boost.GamePid : -1;
             try { if (Boost != null) Boost.Restore(); }
             catch (Exception ex) { Log.Write("restore: " + ex.Message); }
 
@@ -210,10 +217,78 @@ namespace FrameForge.UI
             Toast(I18n.T("toast.gameexit"));
         }
 
+        /// <summary>
+        /// 检测到游戏且存过策略时自动套用。只做安全项:暂停后台进程需要用户确认,
+        /// 中断避让要重启才生效,两项都不在自动范围内。
+        /// </summary>
+        private void MaybeAutoBoost(SysSample s)
+        {
+            if (!St.BoostProfile || s == null || s.GamePid <= 0 || s.GameName.Length == 0) return;
+            if (Boost == null || Boost.Active || boosting) return;
+            if (!s.GameRecent) return;
+            if (s.GamePid == lastAutoPid || s.GamePid == suppressAutoPid) return;
+            if ((DateTime.UtcNow - lastAutoTry).TotalSeconds < 3) return;
+            lastAutoTry = DateTime.UtcNow;
+
+            GameProfile prof = Profiles != null ? Profiles.Find(s.GameName) : null;
+            if (prof == null) return;
+
+            BoostPlan plan = prof.Plan();
+            plan.Background = false;
+            plan.Irq = false;
+            if (!plan.Any) return;
+
+            lastAutoPid = s.GamePid;
+            boosting = true;
+            if (boostPage != null) boostPage.SetBusy(true);
+
+            BoostResult[] box = new BoostResult[1];
+            int gamePid = s.GamePid;
+            string gameName = s.GameName;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try { box[0] = Boost.Apply(plan, gamePid, gameName); }
+                catch (Exception ex) { Log.Write("auto boost: " + ex.Message); }
+
+                Post(delegate
+                {
+                    boosting = false;
+                    BoostResult r = box[0];
+                    if (boostPage != null)
+                    {
+                        boostPage.SetBusy(false);
+                        boostPage.SyncState();
+                        if (r != null) boostPage.SetResult(ComposeResult(r));
+                    }
+                    if (r != null && r.Ok) Toast(I18n.T("toast.auto", gameName));
+                });
+            });
+        }
+
+        /// <summary>把本次加速项记到该游戏名下,下次启动自动套用。</summary>
+        private void SaveProfile(string game, BoostPlan plan)
+        {
+            if (Profiles == null || plan == null || game.Length == 0) return;
+            GameProfile p = Profiles.Find(game);
+            if (p == null) p = new GameProfile { Name = game };
+            p.Priority = plan.Priority;
+            p.PowerPlan = plan.PowerPlan;
+            p.Timer = plan.Timer;
+            p.Dvr = plan.Dvr;
+            p.Memory = plan.Memory;
+            p.Background = plan.Background;
+            p.Affinity = plan.Affinity;
+            p.Irq = plan.Irq;
+            p.Cores = plan.Cores;
+            Profiles.Save(p);
+        }
+
         private string ComposeResult(BoostResult r)
         {
             var parts = new List<string>();
             if (r.PriorityOk > 0) parts.Add(I18n.T("boost.item.priority"));
+            if (r.AffinityOk > 0) parts.Add(I18n.T("boost.item.affinity", r.AffinityCores));
+            if (r.IrqOk > 0) parts.Add(I18n.T("boost.item.irq", r.IrqDevices));
             if (r.PowerOk > 0) parts.Add(I18n.T("boost.item.power"));
             if (r.TimerOk > 0) parts.Add(I18n.T("boost.item.timer"));
             if (r.DvrOk > 0) parts.Add(I18n.T("boost.item.dvr"));

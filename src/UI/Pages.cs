@@ -25,7 +25,7 @@ namespace FrameForge.UI
     // =====================================================================
     public class BoostPage : Page
     {
-        private const int OptCount = 6;
+        private const int OptCount = 9;
 
         private readonly Card hero, optCard, resCard;
         private readonly TextLabel stateLbl, gameLbl, gameSub, hint;
@@ -81,7 +81,7 @@ namespace FrameForge.UI
             optTitle = Title(I18n.T("boost.opt.title"));
             optCard.Controls.Add(optTitle);
 
-            string[] keys = { "priority", "power", "timer", "dvr", "mem", "bg" };
+            string[] keys = { "priority", "power", "timer", "dvr", "mem", "bg", "affinity", "irq", "profile" };
             for (int i = 0; i < OptCount; i++)
             {
                 names[i] = new TextLabel();
@@ -106,7 +106,10 @@ namespace FrameForge.UI
                     else if (idx == 2) Host.St.BoostTimer = sw[2].Checked;
                     else if (idx == 3) Host.St.BoostDvr = sw[3].Checked;
                     else if (idx == 4) Host.St.BoostMem = sw[4].Checked;
-                    else Host.St.BoostBackground = sw[5].Checked;
+                    else if (idx == 5) Host.St.BoostBackground = sw[5].Checked;
+                    else if (idx == 6) Host.St.BoostAffinity = sw[6].Checked;
+                    else if (idx == 7) Host.St.BoostIrq = sw[7].Checked;
+                    else Host.St.BoostProfile = sw[8].Checked;
                     Host.SaveSettingsSoon();
                 };
 
@@ -153,7 +156,10 @@ namespace FrameForge.UI
                 case 2: return st.BoostTimer;
                 case 3: return st.BoostDvr;
                 case 4: return st.BoostMem;
-                default: return st.BoostBackground;
+                case 5: return st.BoostBackground;
+                case 6: return st.BoostAffinity;
+                case 7: return st.BoostIrq;
+                default: return st.BoostProfile;
             }
         }
 
@@ -280,13 +286,13 @@ namespace FrameForge.UI
 
             optTitle.SetBounds(pad, Ui.Px(12), Width - pad * 2, Ui.Px(20));
 
-            int cw = (Width - pad * 2 - gap * 2) / 2;
-            // 两列三行:行距设上限后整组垂直居中,窗口再高也不会把开关拉成大空洞。
+            int cw = (Width - pad * 2 - gap * 2) / 3;
+            // 三列三行:行距设上限后整组垂直居中,窗口再高也不会把开关拉成大空洞。
             int rh = Math.Min((optH - Ui.Px(44) - gap * 2) / 3, Ui.Px(84));
             int gridY = Ui.Px(40) + Math.Max(0, (optH - Ui.Px(44) - rh * 2 - Ui.Px(62)) / 2);
             for (int i = 0; i < OptCount; i++)
             {
-                int col = i % 2, row = i / 2;
+                int col = i % 3, row = i / 3;
                 int x = pad + col * (cw + gap);
                 int y = gridY + row * rh;
                 names[i].SetBounds(x, y, cw - Ui.Px(54), Ui.Px(20));

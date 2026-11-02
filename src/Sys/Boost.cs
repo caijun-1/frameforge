@@ -17,10 +17,13 @@ namespace FrameForge.Sys
         public bool Dvr = true;         // 关闭 Game DVR / 全屏优化
         public bool Memory = true;      // 内存整理
         public bool Background = false; // 进阶:暂停后台进程
+        public bool Affinity = false;   // 进阶:游戏独占核心
+        public bool Irq = false;        // 进阶:设备中断避让(重启生效)
+        public int Cores = 0;           // 0 = 自动(一半物理核心)
 
         public bool Any
         {
-            get { return Priority || PowerPlan || Timer || Dvr || Memory || Background; }
+            get { return Priority || PowerPlan || Timer || Dvr || Memory || Background || Affinity || Irq; }
         }
     }
 
@@ -45,6 +48,12 @@ namespace FrameForge.Sys
         public int TimerOk;
         public int DvrOk;
         public int MemoryOk;
+        public int AffinityOk;
+        public int AffinityCores;
+        public int AffinityMoved;
+        public int IrqOk;
+        public int IrqDevices;
+        public bool IrqNeedReboot;
     }
 
     /// <summary>
@@ -67,6 +76,8 @@ namespace FrameForge.Sys
 
         private readonly List<RegSaved> regSaved = new List<RegSaved>();
         private readonly List<Suspended> suspended = new List<Suspended>();
+        private readonly AffinityEngine affinity = new AffinityEngine();
+        private readonly InterruptEngine irq = new InterruptEngine();
 
         private string prevScheme = "";
         private uint prevPriority;
@@ -151,7 +162,7 @@ namespace FrameForge.Sys
             return list.ToArray();
         }
 
-        private static readonly HashSet<string> Protected = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        internal static readonly HashSet<string> Protected = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "Idle", "System", "Registry", "Memory Compression", "csrss", "wininit", "winlogon",
             "services", "lsass", "smss", "svchost", "MsMpEng", "MpDefenderCoreService",
@@ -175,6 +186,28 @@ namespace FrameForge.Sys
             StartedAt = DateTime.Now;
 
             if (plan.Priority && ApplyPriority(gamePid)) r.PriorityOk = 1;
+            if (plan.Affinity)
+            {
+                try
+                {
+                    AffinityResult a = affinity.Apply(gamePid, GameName, plan.Cores);
+                    r.AffinityOk = a.Ok ? 1 : 0;
+                    r.AffinityCores = a.Cores;
+                    r.AffinityMoved = a.Moved;
+                }
+                catch (Exception ex) { Log.Write("boost affinity: " + ex.Message); }
+            }
+            if (plan.Irq)
+            {
+                try
+                {
+                    IrqResult q = irq.Apply(plan.Cores);
+                    r.IrqOk = q.Ok ? 1 : 0;
+                    r.IrqDevices = q.Set;
+                    r.IrqNeedReboot = q.Ok;
+                }
+                catch (Exception ex) { Log.Write("boost irq: " + ex.Message); }
+            }
             if (plan.PowerPlan && ApplyPowerPlan()) r.PowerOk = 1;
             if (plan.Timer && ApplyTimer()) r.TimerOk = 1;
             if (plan.Dvr && ApplyDvr()) r.DvrOk = 1;
@@ -194,13 +227,16 @@ namespace FrameForge.Sys
                 catch (Exception ex) { Log.Write("boost suspend: " + ex.Message); }
             }
 
-            r.Ok = r.PriorityOk + r.PowerOk + r.TimerOk + r.DvrOk + r.MemoryOk > 0 || r.Suspended > 0;
+            r.Ok = r.PriorityOk + r.PowerOk + r.TimerOk + r.DvrOk + r.MemoryOk + r.AffinityOk + r.IrqOk > 0
+                || r.Suspended > 0;
             r.NeedAdmin = !IsAdmin && (r.PowerOk == 0 || r.TimerOk == 0);
             Active = true;
             Log.Write("boost apply pid=" + gamePid + " ok=" + (r.Ok ? "1" : "0")
                 + " prio=" + r.PriorityOk + " power=" + r.PowerOk + " timer=" + r.TimerOk
                 + " dvr=" + r.DvrOk + " mem=" + (r.MemReleased / 1048576L) + "MB"
-                + " suspended=" + r.Suspended);
+                + " suspended=" + r.Suspended
+                + " affinity=" + r.AffinityOk + "/" + r.AffinityCores + "c/" + r.AffinityMoved + "p"
+                + " irq=" + r.IrqOk + "/" + r.IrqDevices + "d");
             return r;
         }
 
@@ -284,6 +320,9 @@ namespace FrameForge.Sys
         public void Restore()
         {
             if (!Active) return;
+
+            try { irq.Restore(); } catch { }
+            try { affinity.Restore(); } catch { }
 
             for (int i = suspended.Count - 1; i >= 0; i--)
             {

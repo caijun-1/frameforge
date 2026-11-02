@@ -286,6 +286,9 @@ namespace FrameForge
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool SetProcessAffinityMask(IntPtr hProcess, IntPtr mask);
 
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool GetProcessAffinityMask(IntPtr hProcess, out IntPtr processMask, out IntPtr systemMask);
+
         [DllImport("ntdll.dll")]
         public static extern int NtSuspendProcess(IntPtr hProcess);
 

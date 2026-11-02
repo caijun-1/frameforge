@@ -163,12 +163,45 @@ namespace FrameForge
             {
                 var st = new Settings();
                 st.BoostBackground = true;
+                st.BoostAffinity = true;
+                st.BoostIrq = true;
                 BoostPlan p = st.Plan();
-                check("settings plan", p.Background && p.Priority && p.Any, "boost items mapped");
+                check("settings plan", p.Background && p.Affinity && p.Irq && p.Priority && p.Any,
+                    "boost items mapped");
             }
             catch (Exception ex) { check("settings plan", false, ex.Message); }
 
-            // 6. 帧率组件
+            // 6. CPU 拓扑与核心分配(只读)
+            try
+            {
+                CpuCore[] cores = CpuTopology.Cores();
+                check("cpu topology", cores.Length > 0, cores.Length + " physical core(s)");
+                int used;
+                long mask = CpuTopology.GameMask(0, out used);
+                check("core mask", mask != 0 && CpuTopology.PopCount(mask) >= used,
+                    "cores=" + used + " cpu=" + CpuTopology.PopCount(mask)
+                    + " mask=0x" + mask.ToString("X", CultureInfo.InvariantCulture));
+            }
+            catch (Exception ex) { check("cpu topology", false, ex.Message); }
+
+            // 7. 按游戏策略(只读)
+            try
+            {
+                var store = new ProfileStore();
+                store.Load();
+                check("profiles", true, store.All.Count + " saved profile(s)");
+            }
+            catch (Exception ex) { check("profiles", false, ex.Message); }
+
+            // 8. 中断设备枚举(只读)
+            try
+            {
+                IrqDevice[] devs = InterruptEngine.Enumerate();
+                check("irq devices", true, devs.Length + " MSI net/display device(s)");
+            }
+            catch (Exception ex) { check("irq devices", false, ex.Message); }
+
+            // 9. 帧率组件
             try
             {
                 bool ok = FpsEngine.Installed;
@@ -176,7 +209,7 @@ namespace FrameForge
             }
             catch (Exception ex) { check("presentmon", false, ex.Message); }
 
-            // 7. 叠加层可构造
+            // 10. 叠加层可构造
             try
             {
                 using (var ov = new Overlay(new Settings())) ov.ApplySettings();
@@ -184,7 +217,7 @@ namespace FrameForge
             }
             catch (Exception ex) { check("overlay init", false, ex.Message); }
 
-            // 8. 进程名
+            // 11. 进程名
             try
             {
                 string name = Native.ProcessName(Process.GetCurrentProcess().Id);
