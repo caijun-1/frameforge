@@ -4,6 +4,10 @@ FrameForge releases are code-signed, so Windows can show a verified publisher an
 users can confirm the file has not been modified after release. This page documents
 what is signed, how it is built, and how to verify a download.
 
+> Signing takes effect from the first release published after the certificate was
+> issued (v1.2.1 and later). Earlier assets, including v1.2.0, were built before the
+> certificate existed and show no publisher.
+
 ## Who signs
 
 | | |
