@@ -22,6 +22,7 @@ namespace FrameForge
         private SysSample last = new SysSample();
         private double fps = -1;
         private double low = -1;
+        private DateTime upFrom = DateTime.Now;
 
         private bool moving;
 
@@ -69,7 +70,7 @@ namespace FrameForge
 
         public void Start()
         {
-            if (!Visible) Show();
+            if (!Visible) { upFrom = DateTime.Now; Show(); }
             ApplyInputMode();
             Render();
             timer.Start();
@@ -313,10 +314,13 @@ namespace FrameForge
         {
             var l = new System.Collections.Generic.List<string>();
             if (st.ShowFps) l.Add("FPS");
+            if (st.ShowLow) l.Add("1% LOW");
             if (st.ShowCpu) l.Add("CPU");
             if (st.ShowGpu) l.Add("GPU");
             if (st.ShowTemp) l.Add(I18n.IsEn ? "TEMP" : "温度");
             if (st.ShowRam) l.Add(I18n.IsEn ? "RAM" : "内存");
+            if (st.ShowClock) l.Add(I18n.IsEn ? "TIME" : "时间");
+            if (st.ShowSession) l.Add(I18n.IsEn ? "UPTIME" : "时长");
             if (st.OverlayStyle == "mini") { l.Clear(); l.Add("FPS"); }
             return l.ToArray();
         }
@@ -326,10 +330,18 @@ namespace FrameForge
             var v = new System.Collections.Generic.List<string>();
             string fpsText = fps > 0 ? fps.ToString("0") : "--";
             if (st.ShowFps) v.Add(fpsText);
+            if (st.ShowLow) v.Add(low > 0 ? low.ToString("0") : "--");
             if (st.ShowCpu) v.Add(last.Cpu >= 0 ? last.Cpu.ToString("0") + "%" : "--");
             if (st.ShowGpu) v.Add(last.Gpu >= 0 ? last.Gpu.ToString("0") + "%" : "--");
             if (st.ShowTemp) v.Add(last.GpuTemp >= 0 ? last.GpuTemp.ToString("0") + "°" : "--");
             if (st.ShowRam) v.Add(last.RamUsed > 0 ? ((double)last.RamUsed / 1073741824.0).ToString("0.0") + "G" : "--");
+            if (st.ShowClock) v.Add(DateTime.Now.ToString("HH:mm"));
+            if (st.ShowSession)
+            {
+                TimeSpan t = DateTime.Now - upFrom;
+                if (t.TotalSeconds < 0) t = TimeSpan.Zero;
+                v.Add(((int)t.TotalMinutes).ToString() + ":" + t.Seconds.ToString("00"));
+            }
             if (st.OverlayStyle == "mini")
             {
                 v.Clear();

@@ -225,6 +225,114 @@ namespace FrameForge
             }
             catch (Exception ex) { check("process name", false, ex.Message); }
 
+            // 12. 游戏名识别
+            try
+            {
+                string gta = GameDb.Title("gta5_enhanced.exe");
+                string unreal = GameDb.Title("client-win64-shipping.exe");
+                check("game title db", gta.Length > 0 && gta != "gta5_enhanced",
+                    "gta5_enhanced.exe -> " + gta);
+                check("game title fallback", unreal.Length > 0,
+                    "client-win64-shipping.exe -> " + (unreal.Length == 0 ? "(empty!)" : unreal));
+                check("game title known", GameDb.Known("r5apex.exe"), "r5apex.exe");
+                string mc = GameDb.Title("minecraft.windows.exe");
+                check("game title minecraft", mc.IndexOf("我的世界") >= 0 || mc.IndexOf("Minecraft") >= 0,
+                    "minecraft.windows.exe -> " + mc);
+
+                // 进程扫描兜底不能把 FrameForge 自己当成游戏。
+                int spid;
+                bool scanned = Sys.Monitor.FindKnownGame(out spid);
+                check("game scan", spid != Process.GetCurrentProcess().Id,
+                    scanned ? "running game pid=" + spid : "no game running");
+            }
+            catch (Exception ex) { check("game title", false, ex.Message); }
+
+            // 13. 战绩记录序列化往返(不写入用户数据)
+            try
+            {
+                var r = new SessionRecord();
+                r.Id = "selftest";
+                r.Exe = "gta5_enhanced";
+                r.Title = "侠盗猎车手 V";
+                r.Start = DateTime.Now.AddMinutes(-35);
+                r.End = r.Start.AddSeconds(1800);
+                r.Seconds = 1800;
+                r.FpsAvg = 118.4;
+                r.FpsMax = 165;
+                r.FpsMin = 42;
+                r.Low1 = 86.2;
+                r.CpuAvg = 41; r.CpuMax = 70;
+                r.GpuAvg = 83; r.GpuMax = 96;
+                r.GpuTempAvg = 63; r.GpuTempMax = 71;
+                r.RamAvg = 11264; r.RamMax = 12800;
+                r.VramMax = 7168;
+                r.Power = 312;
+                r.FpsSeries = new double[] { 100, 118.4, 96, 140 };
+                r.FpsStep = 4;
+
+                SessionRecord back = SessionRecord.Parse(r.Serialize());
+                check("session roundtrip", back != null && back.Id == r.Id && back.Title == r.Title
+                    && Math.Abs(back.FpsAvg - r.FpsAvg) < 0.01 && back.Seconds == r.Seconds,
+                    back == null ? "null" : back.Duration + " avg=" + back.FpsAvg.ToString("0.0", CultureInfo.InvariantCulture));
+                check("session series", back != null && back.FpsSeries.Length == 4
+                    && back.FpsStep == 4 && Math.Abs(back.FpsSeries[3] - 140) < 0.1,
+                    back == null ? "null" : back.FpsSeries.Length + " points");
+                check("session energy", r.Wh > 0 && r.Co2 > 0,
+                    r.Wh.ToString("0.0", CultureInfo.InvariantCulture) + "Wh "
+                    + r.Co2.ToString("0", CultureInfo.InvariantCulture) + "g CO2");
+            }
+            catch (Exception ex) { check("session record", false, ex.Message); }
+
+            // 13. 报告卡绘制(含帧率曲线):不弹窗,直接画到位图上验证布局与绘图不抛异常
+            try
+            {
+                var rr = new SessionRecord();
+                rr.Exe = "Client-Win64-Shipping.exe";
+                rr.Title = "鸣潮";
+                rr.Seconds = 1800;
+                rr.FpsAvg = 118.4;
+                rr.FpsMax = 144;
+                rr.Low1 = 92;
+                rr.FpsSeries = new double[] { 100, 118.4, 96, 140, 132, 121 };
+                rr.FpsStep = 4;
+                using (var f = new UI.ReportForm(rr, null))
+                {
+                    f.CreateControl();
+                    using (var bmp = new System.Drawing.Bitmap(f.Width, f.Height))
+                        f.DrawToBitmap(bmp, new System.Drawing.Rectangle(0, 0, f.Width, f.Height));
+                }
+                check("report paint", true, "chart + stats");
+            }
+            catch (Exception ex) { check("report paint", false, ex.Message); }
+
+            // 14. 加速三模式(不落盘)
+            try
+            {
+                var ms = new Settings();
+                ms.ApplyMode("beast");
+                check("boost mode beast",
+                    ms.BoostMode == "beast" && ms.BoostPriority && ms.BoostPowerPlan && ms.BoostTimer
+                    && ms.BoostDvr && ms.BoostMem && ms.BoostBackground && ms.BoostAffinity && ms.BoostIrq
+                    && ms.MatchesBeast(), "all 8 items on");
+
+                ms.ApplyMode("balanced");
+                check("boost mode balanced",
+                    ms.BoostMode == "balanced" && ms.BoostPriority && ms.BoostPowerPlan && ms.BoostTimer
+                    && ms.BoostDvr && ms.BoostMem && !ms.BoostBackground && !ms.BoostAffinity && !ms.BoostIrq
+                    && ms.MatchesBalanced(), "safe 5 items on");
+
+                ms.ApplyCustom(new bool[] { true, false, true, false, true, false, true, false });
+                check("boost mode custom",
+                    ms.BoostMode == "custom" && ms.BoostPriority && !ms.BoostPowerPlan
+                    && ms.BoostTimer && !ms.BoostDvr && ms.BoostMem && !ms.BoostBackground
+                    && ms.BoostAffinity && !ms.BoostIrq && !ms.MatchesBalanced() && !ms.MatchesBeast(),
+                    "custom flags kept");
+
+                check("boost mode key", Settings.ModeKey("BEAST") == "balanced" && Settings.ModeKey(null) == "balanced",
+                    "unknown keys fall back to balanced");
+            }
+            catch (Exception ex) { check("boost modes", false, ex.Message); }
+
             sb.AppendLine();
             sb.AppendLine(fail == 0 ? "RESULT: OK" : "RESULT: " + fail + " failure(s)");
 

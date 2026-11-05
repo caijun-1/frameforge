@@ -35,7 +35,8 @@ namespace FrameForge.Sys
         // 最近检测到的游戏:切出游戏去看数据时仍算"有游戏",否则界面会立刻变回
         // "未检测到游戏",帧率跟踪也会被停掉,看起来就像没识别到。
         public int GamePid = -1;
-        public string GameName = "";
+        public string GameName = "";       // 进程名,带 .exe 去掉扩展名
+        public string GameTitle = "";      // 识别出来的游戏名(中文/英文)
         public bool GameRecent;
 
         public string GpuName = "";
@@ -61,6 +62,7 @@ namespace FrameForge.Sys
         private string lastGameName = "";
         private int lastLoggedPid = -2;
         private int lastLoggedGamePid = -2;
+        private DateTime lastScan = DateTime.MinValue;
 
         public volatile SysSample Current = new SysSample();
         public event Action<SysSample> Updated;
@@ -190,6 +192,16 @@ namespace FrameForge.Sys
                 int found;
                 if (FindFullscreenWindow(out found)) gamePid = found;
             }
+
+            // 最后一层兜底:窗口化、小窗口、窗口尺寸读不到的游戏都够不到上面的全屏判定。
+            // 直接扫进程,只要进程是内置库里认识的游戏,且有可见窗口,就算"检测到游戏"。
+            // 已经在跟踪的游戏还活着就不用扫,省开销。
+            if (gamePid <= 0 && lastGamePid <= 0 && (DateTime.UtcNow - lastScan).TotalMilliseconds > 1500)
+            {
+                lastScan = DateTime.UtcNow;
+                int known;
+                if (FindKnownGame(out known)) gamePid = known;
+            }
             s.Fullscreen = gamePid > 0;
 
             // 换前台窗口时记一行,识别不出来时能直接看到窗口类名/尺寸/屏幕尺寸。
@@ -234,6 +246,7 @@ namespace FrameForge.Sys
                 s.GameRecent = true;
                 s.GamePid = lastGamePid;
                 s.GameName = lastGameName;
+                s.GameTitle = GameDb.Title(lastGamePid, lastGameName);
             }
 
             return s;
@@ -337,6 +350,64 @@ namespace FrameForge.Sys
             return found > 0;
         }
 
+        /// <summary>
+        /// 最后一层兜底:直接扫进程。只要进程是内置库里认识的游戏(或 Java 版我的世界),
+        /// 并且有可见、未最小化的窗口,就认为"有游戏在跑"。
+        /// 窗口化、小窗口、无边框但尺寸读不到的情况都能靠这一层认出来。
+        /// </summary>
+        public static bool FindKnownGame(out int pid)
+        {
+            pid = -1;
+            Process[] list = null;
+            try { list = Process.GetProcesses(); }
+            catch { return false; }
+            if (list == null) return false;
+
+            try
+            {
+                for (int i = 0; i < list.Length; i++)
+                {
+                    Process p = list[i];
+                    try
+                    {
+                        if (p.Id <= 4) continue;
+                        string name = p.ProcessName;
+                        if (name.Length == 0) continue;
+                        // 启动器不是游戏本体:我的世界启动器、各种 game launcher 都要跳过。
+                        if (name.IndexOf("launcher", StringComparison.OrdinalIgnoreCase) >= 0) continue;
+                        if (IsNonGameName(name)) continue;
+
+                        IntPtr h = p.MainWindowHandle;
+                        if (h == IntPtr.Zero) continue;
+                        if (!Native.IsWindowVisible(h)) continue;
+                        if (Native.IsIconic(h)) continue;
+
+                        // 通用引擎进程名(Client-Win64-Shipping 之类)不认,否则会把
+                        // 任何 Unreal 程序当成游戏;Java 进程靠窗口标题判断;
+                        // 内置库没收录的新游戏,装在 Steam/Epic 等游戏目录下也认。
+                        bool game = GameDb.Known(name);
+                        if (!game && (string.Equals(name, "java", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(name, "javaw", StringComparison.OrdinalIgnoreCase)))
+                            game = GameDb.JavaGame(p.Id);
+                        if (!game) game = GameDb.LibraryGame(p.Id);
+                        if (!game) continue;
+
+                        pid = p.Id;
+                        return true;
+                    }
+                    catch { }
+                }
+            }
+            finally
+            {
+                for (int i = 0; i < list.Length; i++)
+                {
+                    try { list[i].Dispose(); } catch { }
+                }
+            }
+            return false;
+        }
+
         /// <summary>常见"会全屏但不是游戏"的应用:浏览器按 F11、播放器全屏都不该被当成游戏。</summary>
         private static bool IsNonGameName(string name)
         {
@@ -352,15 +423,65 @@ namespace FrameForge.Sys
                 case "firefox":
                 case "opera":
                 case "brave":
+                case "iexplore":
                 case "vlc":
                 case "mpv":
                 case "potplayermini":
                 case "potplayermini64":
+                case "potplayer":
                 case "wmplayer":
                 case "video.ui":
                 case "photos":
                 case "powerpnt":
                 case "wpspresentation":
+                case "wpp":
+                case "winword":
+                case "excel":
+                case "wps":
+                case "acrobat":
+                case "acrord32":
+                // 聊天 / 会议 / 直播:全屏时窗口同样铺满屏幕,但显然不是游戏
+                case "wechat":
+                case "weixin":
+                case "qq":
+                case "tim":
+                case "wemeetapp":
+                case "dingtalk":
+                case "feishu":
+                case "lark":
+                case "teams":
+                case "ms-teams":
+                case "zoom":
+                case "skype":
+                case "telegram":
+                case "whatsapp":
+                case "discord":
+                case "thunder":
+                case "iqiyi":
+                case "qyclient":
+                case "qqlive":
+                case "youku":
+                case "bilibili":
+                case "douyu":
+                case "huya":
+                case "cloudmusic":
+                case "qqmusic":
+                case "kugou":
+                case "spotify":
+                // 录制 / 剪辑
+                case "obs":
+                case "obs64":
+                case "obs32":
+                case "camtasia":
+                // 系统外壳
+                case "applicationframehost":
+                case "searchapp":
+                case "startmenuexperiencehost":
+                case "shellexperiencehost":
+                case "lockapp":
+                case "systemsettings":
+                case "gamebar":
+                case "nvidia share":
                     return true;
                 default:
                     return false;
@@ -392,8 +513,14 @@ namespace FrameForge.Sys
                 Rectangle b = Screen.FromHandle(hwnd).Bounds;
                 // 允许 8px 误差:不同 DPI 下窗口矩形和显示器边界会差一两个像素,
                 // 部分窗口还带一圈不可见的缩放边框。
-                if (w < b.Width - 8 || h < b.Height - 8) return false;
-                return (long)w * h >= (long)b.Width * b.Height * 95 / 100;
+                long area = (long)w * h;
+                long screen = (long)b.Width * b.Height;
+                if (w >= b.Width - 8 && h >= b.Height - 8 && area >= screen * 95 / 100) return true;
+
+                // 我的世界这类常以「最大化窗口」跑的游戏够不到 95%,
+                // 为了不漏检,对明确认得出的游戏放宽到 88%(普通软件仍然不算)。
+                if (area < screen * 88 / 100) return false;
+                return GameDb.Known(name) || GameDb.JavaGame(pid) || GameDb.LibraryGame(pid);
             }
             catch { return false; }
         }

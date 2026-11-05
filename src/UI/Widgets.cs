@@ -95,12 +95,12 @@ namespace FrameForge.UI
                 new Rectangle(0, 0, Width, (int)labelH), Theme.Sub,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
             TextRenderer.DrawText(g, shown + Unit, Theme.F(9.5f, FontStyle.Bold),
-                new Rectangle(0, 0, Width, (int)labelH), Theme.Text,
+                new Rectangle(0, 0, Width, (int)labelH), Theme.Accent,
                 TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
 
             float cy = labelH + (Height - labelH) / 2f;
             float left = Ui.Fp(2), right = Width - Ui.Fp(2);
-            var track = new RectangleF(left, cy - Ui.Fp(2), right - left, Ui.Fp(4));
+            var track = new RectangleF(left, cy - Ui.Fp(3), right - left, Ui.Fp(6));
             Ui.Fill(g, track, track.Height / 2f, Theme.Track);
 
             double t = (val - Min) / (double)Math.Max(1, Max - Min);
@@ -108,18 +108,22 @@ namespace FrameForge.UI
             bool bipolar = Min < 0 && Max > 0;
             float from = bipolar ? left + (right - left) * (float)((0 - Min) / (double)(Max - Min)) : left;
             float to = left + (right - left) * (float)t;
-            var filled = new RectangleF(Math.Min(from, to), cy - Ui.Fp(2), Math.Abs(to - from), Ui.Fp(4));
+            var filled = new RectangleF(Math.Min(from, to), cy - Ui.Fp(3), Math.Abs(to - from), Ui.Fp(6));
             if (filled.Width > 0.5f)
                 Ui.Fill(g, filled, filled.Height / 2f, Theme.Accent);
 
-            float knob = Ui.Fp(13);
+            float knob = Ui.Fp(14);
+            float stroke = Math.Max(2f, Ui.Fp(2.6));
+            // 夹紧时要把描边和投影的余量留出来:贴到 0 / Width 时圆环外半圈会被控件边界裁平。
+            float inset = stroke / 2f + 1f;
             float kx = left + (float)((right - left) * t) - knob / 2f;
-            // 两端收进控件内,满值/零值时滑钮不会被裁掉半个。
-            if (kx < 0f) kx = 0f;
-            if (kx > Width - knob) kx = Width - knob;
+            if (kx < inset) kx = inset;
+            if (kx > Width - knob - inset) kx = Width - knob - inset;
             var kr = new RectangleF(kx, cy - knob / 2f, knob, knob);
+            using (var sh = new SolidBrush(Color.FromArgb(Theme.Dark ? 90 : 26, 15, 23, 42)))
+                g.FillEllipse(sh, kr.X, kr.Y + Ui.Fp(1.2f), kr.Width, kr.Height);
             using (var b = new SolidBrush(Theme.Card)) g.FillEllipse(b, kr);
-            using (var pen = new Pen(hover || drag ? Theme.AccentHover : Theme.Accent, Math.Max(2f, Ui.Fp(2.6))))
+            using (var pen = new Pen(hover || drag ? Theme.AccentHover : Theme.Accent, stroke))
                 g.DrawEllipse(pen, kr);
         }
     }
@@ -154,8 +158,15 @@ namespace FrameForge.UI
                 fill = hover ? Theme.Hover : Theme.Card;
                 fg = Theme.Sub;
             }
-            Ui.Fill(g, r, rad, fill);
-            if (!Selected) Ui.Stroke(g, r, rad, Theme.Border, 1f);
+            if (Selected)
+            {
+                Ui.FillVGrad(g, r, rad, Theme.Mix(fill, Color.White, 0.16), Theme.Mix(fill, Color.Black, 0.08));
+            }
+            else
+            {
+                Ui.Fill(g, r, rad, fill);
+                Ui.Stroke(g, r, rad, Theme.Border, 1f);
+            }
             TextRenderer.DrawText(g, Text ?? "", Theme.F(FontPt, Selected ? FontStyle.Bold : FontStyle.Regular),
                 ClientRectangle, fg,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
@@ -165,6 +176,8 @@ namespace FrameForge.UI
     /// <summary>细进度条,用于内存占用。</summary>
     public class Meter : Ctl
     {
+        /// <summary>正常区间颜色,为空时用主题色。</summary>
+        public Color AccentColor = Color.Empty;
         private double target, disp;
         private Timer t;
 
@@ -200,10 +213,259 @@ namespace FrameForge.UI
             var fg = new RectangleF(0, bg.Y, (float)(Width * disp), bg.Height);
             if (fg.Width > 0.5f)
             {
-                Color col = Theme.Accent;
+                Color col = AccentColor.A == 0 ? Theme.Accent : AccentColor;
                 if (disp >= 0.9) col = Theme.Danger;
                 else if (disp >= 0.75) col = Theme.Warn;
                 Ui.Fill(g, fg, fg.Height / 2f, col);
+            }
+        }
+    }
+
+    /// <summary>半圆表:仪表盘下半区的 DRAM 式弧表。</summary>
+    public class ArcGauge : Ctl
+    {
+        /// <summary>弧线颜色,为空时用主题色。</summary>
+        public Color AccentColor = Color.Empty;
+        /// <summary>弧内标题,如“内存”。</summary>
+        public string Caption = "";
+        /// <summary>中心读数文本,为空时显示百分比。帧率表用它显示原始帧数。</summary>
+        public string Readout = "";
+        /// <summary>右端刻度标注,默认 100。</summary>
+        public string RangeMax = "100";
+        private double target, disp;
+        private Timer t;
+        private string sub = "";
+
+        public void SetValue(double v, string subText)
+        {
+            if (v < 0) v = 0;
+            if (v > 1) v = 1;
+            sub = subText == null ? "" : subText;
+            if (Math.Abs(v - target) < 0.0005) { Invalidate(); return; }
+            target = v;
+            if (t == null)
+            {
+                t = new Timer();
+                t.Interval = 16;
+                t.Tick += delegate
+                {
+                    double d = target - disp;
+                    if (Math.Abs(d) < 0.003) { disp = target; t.Stop(); }
+                    else disp += d * 0.25;
+                    Invalidate();
+                };
+                disp = v;
+            }
+            if (!t.Enabled) t.Start();
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            Prep(g);
+            // 圆弧下移、半径按高度收一点,外圈刻度才不会顶出控件上沿。
+            float rad = Math.Min(Width * 0.42f, Height * 0.52f);
+            float thick = Math.Max(2f, rad * 0.10f);
+            float cx = Width / 2f, cy = Height * 0.72f;
+
+            // 外圈刻度(上半圆),让弧表有机械仪表盘的味道。
+            using (var pen = new Pen(Theme.Alpha(Theme.Text, Theme.Dark ? 60 : 42), Math.Max(1f, Ui.Fp(1))))
+            {
+                for (int i = 0; i <= 30; i++)
+                {
+                    bool big = i % 5 == 0;
+                    double a = (180.0 + i * 6.0) * Math.PI / 180.0;
+                    float r0 = rad + thick * 1.35f;
+                    float r1 = r0 + (big ? Ui.Fp(7) : Ui.Fp(4));
+                    pen.Color = big ? Theme.Alpha(Theme.Text, Theme.Dark ? 110 : 70)
+                                    : Theme.Alpha(Theme.Text, Theme.Dark ? 48 : 34);
+                    g.DrawLine(pen, cx + (float)Math.Cos(a) * r0, cy + (float)Math.Sin(a) * r0,
+                        cx + (float)Math.Cos(a) * r1, cy + (float)Math.Sin(a) * r1);
+                }
+            }
+
+            var arc = new RectangleF(cx - rad, cy - rad, rad * 2f, rad * 2f);
+            using (var pen = new Pen(Theme.Mix(Theme.Track, Theme.Sub, Theme.Dark ? 0.12 : 0.28), thick))
+            {
+                pen.StartCap = LineCap.Round;
+                pen.EndCap = LineCap.Round;
+                g.DrawArc(pen, arc, 180f, 180f);
+            }
+
+            Color acc = AccentColor.A == 0 ? Theme.Accent : AccentColor;
+            if (disp > 0.001)
+            {
+                using (var glow = new Pen(Theme.Alpha(acc, Theme.Dark ? 44 : 20), thick * 1.8f))
+                {
+                    glow.StartCap = LineCap.Round;
+                    glow.EndCap = LineCap.Round;
+                    g.DrawArc(glow, arc, 180f, (float)(180.0 * disp));
+                }
+                Color col = acc;
+                // 渐变范围向外各扩一个线宽:否则圆头端帽超出渐变区,平铺模式会取到
+                // 另一端的浅色,左下角出现一块浅色竖条。两点构造的画笔不支持 Clamp,只能靠扩范围。
+                using (var brush = new LinearGradientBrush(new PointF(arc.Left - thick, arc.Bottom),
+                    new PointF(arc.Right + thick, arc.Bottom), Theme.Mix(col, Color.Black, 0.18), Theme.Mix(col, Color.White, 0.25)))
+                using (var pen = new Pen(brush, thick))
+                {
+                    pen.StartCap = LineCap.Round;
+                    pen.EndCap = LineCap.Round;
+                    g.DrawArc(pen, arc, 180f, (float)(180.0 * disp));
+                }
+
+                // 弧尖亮点:像仪表指针的针尖,一眼看出读到哪。
+                double ea = (180.0 + 180.0 * disp) * Math.PI / 180.0;
+                float ex = cx + (float)Math.Cos(ea) * rad;
+                float ey = cy + (float)Math.Sin(ea) * rad;
+                float tr = Math.Max(1.8f, thick * 0.30f);
+                using (var b = new SolidBrush(Theme.Alpha(acc, Theme.Dark ? 90 : 55)))
+                    g.FillEllipse(b, ex - tr * 2f, ey - tr * 2f, tr * 4f, tr * 4f);
+                using (var b = new SolidBrush(Color.White))
+                    g.FillEllipse(b, ex - tr, ey - tr, tr * 2f, tr * 2f);
+            }
+
+            // 两端刻度标注:弧表有了 0 / 100,读数值才有参照。
+            TextRenderer.DrawText(g, "0", Theme.F(7.5f, FontStyle.Regular),
+                Rectangle.Round(new RectangleF(cx - rad - Ui.Fp(18), cy + Ui.Fp(6), Ui.Fp(36), Ui.Fp(14))), Theme.Faint,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+            TextRenderer.DrawText(g, RangeMax, Theme.F(7.5f, FontStyle.Regular),
+                Rectangle.Round(new RectangleF(cx + rad - Ui.Fp(18), cy + Ui.Fp(6), Ui.Fp(36), Ui.Fp(14))), Theme.Faint,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+
+            if (Caption.Length > 0)
+                TextRenderer.DrawText(g, Caption, Theme.F(10f, FontStyle.Bold),
+                    Rectangle.Round(new RectangleF(0, cy - rad * 0.66f, Width, rad * 0.30f)), Theme.Sub,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+
+            string pct = Readout.Length > 0 ? Readout : ((int)Math.Round(disp * 100)) + "%";
+            float pt = rad / Math.Max(1f, Ui.S) * 0.30f;
+            TextRenderer.DrawText(g, pct, Theme.Num(pt),
+                Rectangle.Round(new RectangleF(0, cy - rad * 0.44f, Width, rad * 0.44f)), acc,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+
+            TextRenderer.DrawText(g, sub, Theme.F(8.5f, FontStyle.Regular),
+                Rectangle.Round(new RectangleF(0, cy - rad * 0.05f, Width, Ui.Fp(18))), Theme.Faint,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+        }
+    }
+
+    /// <summary>五轴雷达图:中间那张综合状态图。</summary>
+    public class RadarChart : Ctl
+    {
+        /// <summary>数据多边形颜色,为空时用主题色。</summary>
+        public Color AccentColor = Color.Empty;
+        public string[] Labels = new string[0];
+        private double[] vals = new double[0];
+
+        public void SetValues(double[] v)
+        {
+            if (v == null) return;
+            if (vals.Length != v.Length) vals = new double[v.Length];
+            for (int i = 0; i < v.Length; i++)
+                vals[i] = v[i] < 0 ? 0 : (v[i] > 1 ? 1 : v[i]);
+            Invalidate();
+        }
+
+        private static PointF P(float cx, float cy, float r, double deg)
+        {
+            double a = (deg - 90) * Math.PI / 180.0;
+            return new PointF(cx + (float)Math.Cos(a) * r, cy + (float)Math.Sin(a) * r);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            Prep(g);
+            int n = Labels.Length;
+            if (n < 3) return;
+            float cx = Width / 2f, cy = Height / 2f;
+            // 半径要给轴标签留出位置,否则最上面的标签会被控件上沿切掉。
+            float rad = Math.Max(Ui.Fp(30f), Math.Min(Width * 0.40f, Math.Min(Width / 2f - Ui.Fp(42), Height / 2f - Ui.Fp(26))));
+            Color acc = AccentColor.A == 0 ? Theme.Accent : AccentColor;
+
+            // 网格圈 + 轴线
+            for (int lv = 1; lv <= 4; lv++)
+            {
+                var pts = new PointF[n];
+                for (int i = 0; i < n; i++) pts[i] = P(cx, cy, rad * lv / 4f, 360.0 / n * i);
+                using (var pen = new Pen(Theme.Alpha(Theme.Text, Theme.Dark ? (lv == 4 ? 62 : 34) : (lv == 4 ? 48 : 26)), lv == 4 ? 1.4f : 1f))
+                    g.DrawPolygon(pen, pts);
+            }
+            using (var pen = new Pen(Theme.Alpha(Theme.Text, Theme.Dark ? 34 : 24), 1f))
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    PointF p = P(cx, cy, rad, 360.0 / n * i);
+                    g.DrawLine(pen, cx, cy, p.X, p.Y);
+                }
+            }
+            // 外圈每个轴交点一个小刻度点,雷达盘更像刻度盘而不是一张网。
+            using (var dot = new SolidBrush(Theme.Alpha(Theme.Text, Theme.Dark ? 78 : 58)))
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    PointF p = P(cx, cy, rad, 360.0 / n * i);
+                    float d = Math.Max(1.6f, Ui.Fp(1.8f));
+                    g.FillEllipse(dot, p.X - d, p.Y - d, d * 2f, d * 2f);
+                }
+            }
+
+            // 数据多边形
+            var dp = new PointF[n];
+            for (int i = 0; i < n; i++)
+                dp[i] = P(cx, cy, rad * (float)(i < vals.Length ? vals[i] : 0), 360.0 / n * i);
+            // 外圈先画一圈柔光,数据面像浮在刻度盘上方。
+            using (var glow = new Pen(Theme.Alpha(acc, Theme.Dark ? 66 : 40), Math.Max(4f, Ui.Fp(5))))
+            {
+                glow.LineJoin = LineJoin.Round;
+                g.DrawPolygon(glow, dp);
+            }
+            double maxV = 0;
+            for (int i = 0; i < n; i++) if (i < vals.Length && vals[i] > maxV) maxV = vals[i];
+            if (maxV < 0.01)
+            {
+                // 还没有数据时多边形退化成一个点,径向渐变会画不出来,退回平涂。
+                using (var fill = new SolidBrush(Theme.Alpha(acc, Theme.Dark ? 58 : 42)))
+                using (var pen = new Pen(acc, Math.Max(1.5f, Ui.Fp(2))))
+                {
+                    g.FillPolygon(fill, dp);
+                    g.DrawPolygon(pen, dp);
+                }
+            }
+            else
+            {
+                using (var fill = new PathGradientBrush(dp))
+                using (var pen = new Pen(acc, Math.Max(1.5f, Ui.Fp(2))))
+                {
+                    // 由外向内提亮的径向渐变:数据面有中间鼓起来的体积感,不是一张平涂的色块。
+                    Color[] ring = new Color[n];
+                    for (int i = 0; i < n; i++) ring[i] = Theme.Alpha(acc, Theme.Dark ? 26 : 16);
+                    fill.CenterColor = Theme.Alpha(acc, Theme.Dark ? 96 : 66);
+                    fill.CenterPoint = new PointF(cx, cy);
+                    fill.SurroundColors = ring;
+                    g.FillPolygon(fill, dp);
+                    g.DrawPolygon(pen, dp);
+                }
+            }
+            // 中心一个极小的圆点,把五条轴线收在一处。
+            using (var hub = new SolidBrush(Theme.Alpha(acc, Theme.Dark ? 150 : 110)))
+            {
+                float d = Math.Max(1.8f, Ui.Fp(2.2f));
+                g.FillEllipse(hub, cx - d, cy - d, d * 2f, d * 2f);
+            }
+            using (var dot = new SolidBrush(acc))
+            {
+                for (int i = 0; i < n; i++) g.FillEllipse(dot, dp[i].X - Ui.Fp(2.5f), dp[i].Y - Ui.Fp(2.5f), Ui.Fp(5), Ui.Fp(5));
+            }
+
+            // 轴标签
+            for (int i = 0; i < n; i++)
+            {
+                PointF p = P(cx, cy, rad + Ui.Fp(15), 360.0 / n * i);
+                var r = new RectangleF(p.X - Ui.Fp(34), p.Y - Ui.Fp(8), Ui.Fp(68), Ui.Fp(16));
+                TextRenderer.DrawText(g, Labels[i], Theme.F(8f, FontStyle.Regular), Rectangle.Round(r), Theme.Sub,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
             }
         }
     }

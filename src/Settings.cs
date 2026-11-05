@@ -29,6 +29,9 @@ namespace FrameForge
         public bool ShowGpu = true;
         public bool ShowTemp = true;
         public bool ShowRam = false;
+        public bool ShowLow = false;          // 1% Low
+        public bool ShowClock = false;        // 帧时间 / 当前时间由 OverlayStyle 决定
+        public bool ShowSession = false;      // 已游戏时长
 
         // 加速
         public bool BoostPriority = true;
@@ -40,7 +43,9 @@ namespace FrameForge
         public bool BoostAffinity = false;
         public bool BoostIrq = false;
         public bool BoostProfile = true;
+        public bool AutoBoost = true;         // 检测到游戏就自动套用加速(安全项)
         public int AffinityCores = 0;         // 0 = 自动
+        public string BoostMode = "balanced"; // balanced | beast | custom
 
         // 画面滤镜
         public int FilterMode = 0;            // 0 关 | 1 仅游戏 | 2 始终
@@ -50,6 +55,12 @@ namespace FrameForge
         public int FilterContrast = 0;
         public int FilterSaturation = 0;
         public int FilterWarmth = 0;
+        public int FilterDark = 0;            // 暗部场景平衡 0..100
+        public int FilterVibrance = 0;        // 数字振动 0..100
+
+        // 战绩报告
+        public bool ReportAuto = true;        // 退出游戏后自动弹出本局报告
+        public int ReportMinSec = 30;         // 短于该时长的对局不记录
 
         // 内存
         public bool MemAuto = false;
@@ -98,6 +109,9 @@ namespace FrameForge
                 case "showgpu": ShowGpu = Bool(v, true); break;
                 case "showtemp": ShowTemp = Bool(v, true); break;
                 case "showram": ShowRam = Bool(v, false); break;
+                case "showlow": ShowLow = Bool(v, false); break;
+                case "showclock": ShowClock = Bool(v, false); break;
+                case "showsession": ShowSession = Bool(v, false); break;
                 case "boostpriority": BoostPriority = Bool(v, true); break;
                 case "boostpowerplan": BoostPowerPlan = Bool(v, true); break;
                 case "boosttimer": BoostTimer = Bool(v, true); break;
@@ -107,7 +121,9 @@ namespace FrameForge
                 case "boostaffinity": BoostAffinity = Bool(v, false); break;
                 case "boostirq": BoostIrq = Bool(v, false); break;
                 case "boostprofile": BoostProfile = Bool(v, true); break;
+                case "autoboost": AutoBoost = Bool(v, true); break;
                 case "affinitycores": AffinityCores = Int(v, 0); break;
+                case "boostmode": BoostMode = ModeKey(v); break;
                 case "filtermode": FilterMode = Int(v, 0); break;
                 case "filterpreset": FilterPreset = Int(v, 0); break;
                 case "filterintensity": FilterIntensity = Int(v, 100); break;
@@ -115,6 +131,10 @@ namespace FrameForge
                 case "filtercontrast": FilterContrast = Int(v, 0); break;
                 case "filtersaturation": FilterSaturation = Int(v, 0); break;
                 case "filterwarmth": FilterWarmth = Int(v, 0); break;
+                case "filterdark": FilterDark = Int(v, 0); break;
+                case "filtervibrance": FilterVibrance = Int(v, 0); break;
+                case "reportauto": ReportAuto = Bool(v, true); break;
+                case "reportminsec": ReportMinSec = Int(v, 30); break;
                 case "memauto": MemAuto = Bool(v, false); break;
                 case "memthreshold": MemThreshold = Int(v, 88); break;
                 case "autostart": Autostart = Bool(v, false); break;
@@ -143,6 +163,9 @@ namespace FrameForge
                 sb.AppendLine("showGpu=" + B(ShowGpu));
                 sb.AppendLine("showTemp=" + B(ShowTemp));
                 sb.AppendLine("showRam=" + B(ShowRam));
+                sb.AppendLine("showLow=" + B(ShowLow));
+                sb.AppendLine("showClock=" + B(ShowClock));
+                sb.AppendLine("showSession=" + B(ShowSession));
                 sb.AppendLine("boostPriority=" + B(BoostPriority));
                 sb.AppendLine("boostPowerPlan=" + B(BoostPowerPlan));
                 sb.AppendLine("boostTimer=" + B(BoostTimer));
@@ -152,6 +175,8 @@ namespace FrameForge
                 sb.AppendLine("boostAffinity=" + B(BoostAffinity));
                 sb.AppendLine("boostIrq=" + B(BoostIrq));
                 sb.AppendLine("boostProfile=" + B(BoostProfile));
+                sb.AppendLine("autoBoost=" + B(AutoBoost));
+                sb.AppendLine("boostMode=" + BoostMode);
                 sb.AppendLine("affinityCores=" + AffinityCores.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterMode=" + FilterMode.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterPreset=" + FilterPreset.ToString(CultureInfo.InvariantCulture));
@@ -160,6 +185,10 @@ namespace FrameForge
                 sb.AppendLine("filterContrast=" + FilterContrast.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterSaturation=" + FilterSaturation.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterWarmth=" + FilterWarmth.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("filterDark=" + FilterDark.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("filterVibrance=" + FilterVibrance.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("reportAuto=" + B(ReportAuto));
+                sb.AppendLine("reportMinSec=" + ReportMinSec.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("memAuto=" + B(MemAuto));
                 sb.AppendLine("memThreshold=" + MemThreshold.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("autostart=" + B(Autostart));
@@ -183,6 +212,71 @@ namespace FrameForge
             p.Irq = BoostIrq;
             p.Cores = AffinityCores;
             return p;
+        }
+
+        public static string ModeKey(string v)
+        {
+            if (v == "beast" || v == "custom") return v;
+            return "balanced";
+        }
+
+        /// <summary>套用模式预设:均衡只开可回滚的安全项,野兽全开,自定义保留用户勾选。</summary>
+        public void ApplyMode(string mode)
+        {
+            BoostMode = ModeKey(mode);
+            if (BoostMode == "balanced") SetSafeItems();
+            else if (BoostMode == "beast") SetAllItems();
+        }
+
+        /// <summary>自定义优化项:数组顺序为 priority/power/timer/dvr/mem/bg/affinity/irq。</summary>
+        public void ApplyCustom(bool[] v)
+        {
+            if (v == null || v.Length < 8) return;
+            BoostPriority = v[0];
+            BoostPowerPlan = v[1];
+            BoostTimer = v[2];
+            BoostDvr = v[3];
+            BoostMem = v[4];
+            BoostBackground = v[5];
+            BoostAffinity = v[6];
+            BoostIrq = v[7];
+            BoostMode = "custom";
+        }
+
+        public bool MatchesBalanced()
+        {
+            return BoostPriority && BoostPowerPlan && BoostTimer && BoostDvr && BoostMem
+                && !BoostBackground && !BoostAffinity && !BoostIrq;
+        }
+
+        public bool MatchesBeast()
+        {
+            return BoostPriority && BoostPowerPlan && BoostTimer && BoostDvr && BoostMem
+                && BoostBackground && BoostAffinity && BoostIrq;
+        }
+
+        private void SetSafeItems()
+        {
+            BoostPriority = true;
+            BoostPowerPlan = true;
+            BoostTimer = true;
+            BoostDvr = true;
+            BoostMem = true;
+            BoostBackground = false;
+            BoostAffinity = false;
+            BoostIrq = false;
+        }
+
+        private void SetAllItems()
+        {
+            BoostPriority = true;
+            BoostPowerPlan = true;
+            BoostTimer = true;
+            BoostDvr = true;
+            BoostMem = true;
+            BoostBackground = true;
+            BoostAffinity = true;
+            BoostIrq = true;
         }
 
         private static string B(bool v) { return v ? "1" : "0"; }

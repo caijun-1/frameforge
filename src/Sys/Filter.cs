@@ -12,8 +12,17 @@ namespace FrameForge.Sys
         public static readonly string[] PresetKeys =
         {
             "flt.none", "flt.vivid", "flt.soft", "flt.bright", "flt.cinema",
-            "flt.snow", "flt.day", "flt.night", "flt.gray"
+            "flt.snow", "flt.day", "flt.night", "flt.gray",
+            "flt.benq", "flt.fog", "flt.comp", "flt.anime",
+            // 热门游戏预设:索引必须接在通用预设后面,旧的 filterPreset 数值才不会错位。
+            "flt.g.delta", "flt.g.valorant", "flt.g.genshin", "flt.g.apex",
+            "flt.g.cs2", "flt.g.pubg", "flt.g.naraka", "flt.g.lol"
         };
+
+        /// <summary>通用预设个数,之后是游戏预设。</summary>
+        public const int GeneralCount = 13;
+
+        public static bool IsGamePreset(int i) { return i >= GeneralCount && i < PresetKeys.Length; }
 
         private static bool inited;
         private static bool supported;
@@ -66,7 +75,8 @@ namespace FrameForge.Sys
         {
             if (st == null) return Identity();
             return Build(st.FilterPreset, st.FilterIntensity,
-                st.FilterBrightness, st.FilterContrast, st.FilterSaturation, st.FilterWarmth);
+                st.FilterBrightness, st.FilterContrast, st.FilterSaturation, st.FilterWarmth,
+                st.FilterDark, st.FilterVibrance);
         }
 
         public static void Clear()
@@ -107,29 +117,51 @@ namespace FrameForge.Sys
         /// 组合预设与自定义参数。intensity 0..100 把结果向恒等矩阵插值,
         /// brightness/contrast/saturation/warmth 均为 -100..100。
         /// </summary>
-        public static float[] Build(int preset, int intensity, int brightness, int contrast, int saturation, int warmth)
+        public static float[] Build(int preset, int intensity, int brightness, int contrast, int saturation, int warmth,
+            int dark = 0, int vibrance = 0)
         {
-            double sat = 1.0, con = 1.0, bri = 0.0, warm = 0.0;
+            double sat = 1.0, con = 1.0, bri = 0.0, warm = 0.0; double shadow = 0.0;
             switch (preset)
             {
-                case 1: sat = 1.32; con = 1.06; break;                    // 鲜艳
-                case 2: sat = 0.92; con = 0.94; bri = 0.02; break;        // 柔和
-                case 3: con = 1.04; bri = 0.06; break;                    // 高亮
-                case 4: sat = 1.12; con = 1.08; bri = -0.01; warm = 0.12; break; // 电影
-                case 5: con = 0.90; bri = -0.05; sat = 0.96; break;       // 防雪盲
-                case 6: con = 0.98; bri = 0.05; sat = 1.05; break;        // 白天
-                case 7: con = 0.94; bri = -0.04; warm = 0.35; break;      // 夜间护眼
+                case 1: sat = 1.12; con = 1.04; break;                    // 鲜艳
+                case 2: sat = 0.98; con = 0.97; bri = 0.02; break;        // 柔和
+                case 3: con = 1.02; bri = 0.05; break;                    // 高亮
+                case 4: sat = 1.05; con = 1.03; warm = 0.06; shadow = 0.06; break; // 电影
+                case 5: con = 0.94; bri = -0.03; sat = 0.99; break;       // 防雪盲
+                case 6: con = 1.0; bri = 0.04; sat = 1.02; break;         // 白天
+                case 7: con = 0.96; bri = -0.02; warm = 0.16; break;      // 夜间护眼
                 case 8: sat = 0.0; break;                                 // 灰度
+                case 9: con = 1.04; bri = 0.03; sat = 1.06; shadow = 0.06; break; // 明基亮丽
+                case 10: con = 0.92; bri = 0.01; sat = 0.94; shadow = 0.16; break; // 雾天增强
+                case 11: con = 1.06; sat = 1.04; shadow = 0.10; break;    // 竞技
+                case 12: sat = 1.12; con = 1.02; bri = 0.02; shadow = 0.06; break; // 二次元
+
+                // ---- 热门游戏 ----
+                // 战场类都靠"轻抬暗部 + 一点点冷调"把人和环境拉开距离,
+                // 数值刻意保守:全屏矩阵过强会让素材发灰、HUD 变色,
+                // 玩久了还会有明显的眩晕感。
+                case 13: sat = 1.04; con = 1.04; bri = 0.01; warm = -0.04; shadow = 0.10; break; // 三角洲行动
+                case 14: sat = 1.06; con = 1.06; bri = 0.02; warm = -0.06; shadow = 0.08; break; // 无畏契约
+                case 15: sat = 1.10; con = 1.02; bri = 0.03; warm = 0.06; shadow = 0.04; break;  // 原神
+                case 16: sat = 1.05; con = 1.05; bri = 0.01; warm = -0.05; shadow = 0.12; break; // Apex 英雄
+                case 17: sat = 1.04; con = 1.07; shadow = 0.08; break;                           // CS2
+                case 18: sat = 1.03; con = 0.98; bri = 0.02; warm = -0.03; shadow = 0.18; break; // PUBG
+                case 19: sat = 1.08; con = 1.03; bri = 0.01; warm = 0.08; shadow = 0.06; break;  // 永劫无间
+                case 20: sat = 1.06; con = 1.0; bri = 0.02; warm = 0.03; shadow = 0.04; break;   // 英雄联盟
             }
 
-            // 自定义滑杆叠加在预设之上
-            sat *= 1.0 + saturation / 100.0 * 0.6;
-            con *= 1.0 + contrast / 100.0 * 0.5;
-            bri += brightness / 100.0 * 0.18;
-            warm += warmth / 100.0 * 0.5;
+            // 自定义滑杆叠加在预设之上:倍率整体收窄,拉到顶也不会过曝或发灰。
+            sat *= 1.0 + saturation / 100.0 * 0.4;
+            con *= 1.0 + contrast / 100.0 * 0.35;
+            bri += brightness / 100.0 * 0.14;
+            warm += warmth / 100.0 * 0.4;
+            sat *= 1.0 + vibrance / 100.0 * 0.4;            // 数字振动:只往上加饱和度
+            shadow += dark / 100.0 * 0.4;                   // 暗部场景平衡
 
             if (sat < 0) sat = 0;
             if (con < 0.2) con = 0.2;
+            if (shadow > 1) shadow = 1;
+            if (shadow < 0) shadow = 0;
 
             // 饱和度矩阵
             double lr = 0.2126, lg = 0.7152, lb = 0.0722;
@@ -146,6 +178,16 @@ namespace FrameForge.Sys
             double offset = 0.5 * (1 - con) + bri;
             for (int i = 0; i < 5; i++) for (int j = 0; j < 3; j++) m[i * 5 + j] *= con;
             m[4] += offset; m[9] += offset; m[14] += offset;
+
+            // 暗部场景平衡:压一点高光、抬黑位,暗处细节更清楚(线性矩阵的近似做法)。
+            // gain/lift 都收得很轻,主要是不让暗部彻底死黑,同时避免整屏发灰。
+            if (shadow > 0)
+            {
+                double gain = 1.0 - 0.15 * shadow;
+                double lift = 0.06 * shadow;
+                for (int i = 0; i < 3; i++) for (int j = 0; j < 5; j++) m[i * 5 + j] *= gain;
+                m[4] += lift; m[9] += lift; m[14] += lift;
+            }
 
             // 色温:暖色抬高红、压低蓝
             double rg = 1.0 + warm * 0.16;

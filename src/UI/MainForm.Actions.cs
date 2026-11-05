@@ -14,6 +14,7 @@ namespace FrameForge.UI
     {
         private const int HotkeyBoost = 1;
         private const int HotkeyOverlay = 2;
+        private const int HotkeyFilter = 3;
         private const uint MOD_ALT = 0x0001;
         private const uint MOD_CONTROL = 0x0002;
         private const uint MOD_NOREPEAT = 0x4000;
@@ -22,6 +23,7 @@ namespace FrameForge.UI
         private bool rebuildQueued;
         private int lastAutoPid = -1;
         private int suppressAutoPid = -1;
+        private int lastFilterMode = 2;
         private DateTime lastAutoTry = DateTime.MinValue;
 
         // ---------------- 页面可用 ----------------
@@ -96,6 +98,7 @@ namespace FrameForge.UI
             }
             boostPage = null;
             setPage = null;
+            reportPage = null;
 
             BuildPages();
             ShowPage(idx);
@@ -218,12 +221,12 @@ namespace FrameForge.UI
         }
 
         /// <summary>
-        /// 检测到游戏且存过策略时自动套用。只做安全项:暂停后台进程需要用户确认,
-        /// 中断避让要重启才生效,两项都不在自动范围内。
+        /// 检测到游戏后自动套用加速。有该游戏的策略就用策略,没有就用当前加速项。
+        /// 只做安全项:暂停后台进程需要用户确认,中断避让要重启才生效,两项都不在自动范围内。
         /// </summary>
         private void MaybeAutoBoost(SysSample s)
         {
-            if (!St.BoostProfile || s == null || s.GamePid <= 0 || s.GameName.Length == 0) return;
+            if (!St.AutoBoost || s == null || s.GamePid <= 0 || s.GameName.Length == 0) return;
             if (Boost == null || Boost.Active || boosting) return;
             if (!s.GameRecent) return;
             if (s.GamePid == lastAutoPid || s.GamePid == suppressAutoPid) return;
@@ -231,9 +234,7 @@ namespace FrameForge.UI
             lastAutoTry = DateTime.UtcNow;
 
             GameProfile prof = Profiles != null ? Profiles.Find(s.GameName) : null;
-            if (prof == null) return;
-
-            BoostPlan plan = prof.Plan();
+            BoostPlan plan = prof != null ? prof.Plan() : St.Plan();
             plan.Background = false;
             plan.Irq = false;
             if (!plan.Any) return;
@@ -304,6 +305,23 @@ namespace FrameForge.UI
             return text;
         }
 
+        // ---------------- 战绩 ----------------
+
+        /// <summary>一局游戏结束:刷新战绩页,并按设置在游戏加加式弹窗里汇报本局表现。</summary>
+        private void OnSessionDone(SessionRecord r)
+        {
+            if (r == null) return;
+            Toast(I18n.T("toast.report"));
+            if (reportPage != null) reportPage.Reload();
+            if (!St.ReportAuto) return;
+            try
+            {
+                var f = new ReportForm(r, delegate { RestoreFromTray(); ShowPage(3); });
+                f.Show();
+            }
+            catch (Exception ex) { Log.Write("report form: " + ex.Message); }
+        }
+
         // ---------------- 叠加层 ----------------
 
         public void ToggleOverlay()
@@ -340,6 +358,28 @@ namespace FrameForge.UI
             catch (Exception ex) { Log.Write("filter: " + ex.Message); }
         }
 
+        /// <summary>Ctrl+Alt+F:在游戏里直接开关画面滤镜,不用切回主界面。</summary>
+        public void ToggleFilter()
+        {
+            if (!Sys.Filter.Supported)
+            {
+                Toast(I18n.T("flt.unsupported"));
+                return;
+            }
+            if (St.FilterMode == 0)
+            {
+                St.FilterMode = lastFilterMode > 0 ? lastFilterMode : 2;
+            }
+            else
+            {
+                lastFilterMode = St.FilterMode;
+                St.FilterMode = 0;
+            }
+            St.Save();
+            ApplyFilter();
+            Toast(St.FilterMode != 0 ? I18n.T("toast.filter.on") : I18n.T("toast.filter.off"));
+        }
+
         // ---------------- 内存 ----------------
 
         public void RunTrim()
@@ -350,7 +390,7 @@ namespace FrameForge.UI
 
             int gamePid = -1;
             SysSample s = Mon.Current;
-            if (s != null && s.Fullscreen) gamePid = s.ForegroundPid;
+            if (s != null && s.GameRecent) gamePid = s.GamePid;
 
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -520,9 +560,10 @@ namespace FrameForge.UI
 
         private void RegisterHotkeys()
         {
-            // Ctrl+Alt+B 一键加速/还原,Ctrl+Alt+O 切换叠加层
+            // Ctrl+Alt+B 一键加速/还原,Ctrl+Alt+O 切换叠加层,Ctrl+Alt+F 开关滤镜
             Native.RegisterHotKey(Handle, HotkeyBoost, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 0x42);
             Native.RegisterHotKey(Handle, HotkeyOverlay, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 0x4F);
+            Native.RegisterHotKey(Handle, HotkeyFilter, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 0x46);
         }
 
         private void UnregisterHotkeys()
@@ -532,6 +573,7 @@ namespace FrameForge.UI
             {
                 Native.UnregisterHotKey(Handle, HotkeyBoost);
                 Native.UnregisterHotKey(Handle, HotkeyOverlay);
+                Native.UnregisterHotKey(Handle, HotkeyFilter);
             }
             catch { }
         }
@@ -540,6 +582,7 @@ namespace FrameForge.UI
         {
             if (id == HotkeyBoost) ApplyBoost();
             else if (id == HotkeyOverlay) ToggleOverlay();
+            else if (id == HotkeyFilter) ToggleFilter();
         }
     }
 }

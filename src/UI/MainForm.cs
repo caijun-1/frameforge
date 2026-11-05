@@ -19,6 +19,8 @@ namespace FrameForge.UI
         public Overlay Ov;
         public BoostEngine Boost;
         public ProfileStore Profiles;
+        public SessionStore Sessions;
+        public SessionTracker Tracker;
 
         private const int WM_NCHITTEST = 0x0084;
         private const int WM_NCCALCSIZE = 0x0083;
@@ -40,6 +42,7 @@ namespace FrameForge.UI
         private int activePage;
         private BoostPage boostPage;
         private SettingsPage setPage;
+        private ReportPage reportPage;
 
         private Timer ui;
         private Timer saveTimer;
@@ -95,7 +98,7 @@ namespace FrameForge.UI
             Log.Write("ui: dpi=" + (int)Math.Round(Ui.S * 96) + " scale=" + Ui.S.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
                 + " client=" + ClientSize.Width + "x" + ClientSize.Height
                 + " screen=" + wa.Width + "x" + wa.Height
-                + " admin=" + (MemEngine.IsAdmin ? 1 : 0));
+                + " admin=" + (MemEngine.IsAdmin ? 1 : 0) + " dark=" + (Theme.Dark ? 1 : 0));
 
             BuildTitle();
             BuildPages();
@@ -109,6 +112,13 @@ namespace FrameForge.UI
             Boost = new BoostEngine();
             Profiles = new ProfileStore();
             Profiles.Load();
+
+            Sessions = new SessionStore();
+            Sessions.Load();
+            Tracker = new SessionTracker(Sessions);
+            Tracker.MinSeconds = St.ReportMinSec;
+            Tracker.Completed += delegate(SessionRecord r) { OnSessionDone(r); };
+
             LayoutAll();
         }
 
@@ -178,10 +188,11 @@ namespace FrameForge.UI
         private void BuildPages()
         {
             boostPage = new BoostPage(this);
+            reportPage = new ReportPage(this);
             setPage = new SettingsPage(this);
             pages = new Page[]
             {
-                boostPage, new MonitorPage(this), new FilterPage(this), new OverlayPage(this), setPage
+                boostPage, new FilterPage(this), new OverlayPage(this), reportPage, setPage
             };
             for (int i = 0; i < pages.Length; i++)
             {
@@ -231,8 +242,8 @@ namespace FrameForge.UI
         {
             return new string[]
             {
-                I18n.T("nav.boost"), I18n.T("nav.monitor"), I18n.T("nav.filter"),
-                I18n.T("nav.overlay"), I18n.T("nav.settings")
+                I18n.T("nav.boost"), I18n.T("nav.filter"),
+                I18n.T("nav.overlay"), I18n.T("nav.report"), I18n.T("nav.settings")
             };
         }
 
@@ -305,15 +316,16 @@ namespace FrameForge.UI
             else Fps.Stop();
 
             Ov.Feed(s, Fps.Fps, Fps.Low1);
+            Tracker.Feed(s, Fps.Fps, Fps.Low1);
 
             CheckBoostAlive();
             MaybeAutoBoost(s);
             AutoTrim(s);
 
-            // 帧率每秒在变,监测页跟着 200ms 刷新;其它页面没有实时数据,1 秒一次就够,
+            // 帧率每秒在变,加速页(已合并监测)跟着 200ms 刷新;其它页面没有实时数据,1 秒一次就够,
             // 免得整窗高频重绘白占 CPU。
             DateTime now = DateTime.UtcNow;
-            double gap = activePage == 1 ? 0.2 : 1.0;
+            double gap = activePage == 0 ? 0.2 : 1.0;
             if ((now - lastPageRefresh).TotalSeconds >= gap)
             {
                 lastPageRefresh = now;
@@ -339,6 +351,34 @@ namespace FrameForge.UI
             RefreshActive();
         }
 
+        /// <summary>顶部导航的选中色跟随加速模式:野兽模式整窗变红。</summary>
+        public void SetNavAccent(Color c)
+        {
+            if (nav == null) return;
+            nav.AccentColor = c;
+            nav.Invalidate();
+        }
+
+        /// <summary>
+        /// 按加速模式切换全局强调色(0 蓝 / 1 红 / 2 紫):所有页面共用,
+        /// 已上屏的控件全部重绘,滑杆/开关/图表不用逐个改。
+        /// </summary>
+        public void ApplyModeTheme(int mode)
+        {
+            Theme.SetMode(mode);
+            if (nav != null)
+            {
+                nav.AccentColor = Theme.Accent;
+                nav.Invalidate();
+            }
+            if (pages != null)
+            {
+                for (int i = 0; i < pages.Length; i++) pages[i].Invalidate(true);
+            }
+            if (toast != null) toast.Invalidate();
+            Invalidate(true);
+        }
+
         // ---------------- 布局与绘制 ----------------
 
         protected override void OnResize(EventArgs e)
@@ -361,7 +401,7 @@ namespace FrameForge.UI
             btnTheme.SetBounds(x, by, bh, bh); x -= bh + gap;
             btnLang.SetBounds(x, by, bh, bh);
 
-            int navW = Ui.Px(I18n.IsEn ? 468 : 372);
+            int navW = Ui.Px(I18n.IsEn ? 472 : 378);
             int limit = Width - Ui.Px(480);
             if (navW > limit) navW = limit;
             if (navW < Ui.Px(220)) navW = Ui.Px(220);
@@ -385,10 +425,9 @@ namespace FrameForge.UI
 
             int th = TitleH();
             int nameW = Math.Max(Ui.Px(120), nav.Left - Ui.Px(44));
+            int nameH = Ui.Px(26);
             TextRenderer.DrawText(g, "FrameForge", Theme.Bold(14f),
-                new Rectangle(Ui.Px(22), Ui.Px(4), nameW, Ui.Px(26)), Theme.Text, LeftLine());
-            TextRenderer.DrawText(g, I18n.T("app.sub"), Theme.Regular(8.3f),
-                new Rectangle(Ui.Px(23), Ui.Px(30), nameW, Ui.Px(18)), Theme.Sub, LeftLine());
+                new Rectangle(Ui.Px(22), (th - nameH) / 2, nameW, nameH), Theme.Text, LeftLine());
 
             using (var pen = new Pen(Theme.Border, 1f))
                 g.DrawLine(pen, 0, th - 1, Width, th - 1);
@@ -517,6 +556,8 @@ namespace FrameForge.UI
         {
             if (ui != null) ui.Stop();
             if (saveTimer != null) saveTimer.Stop();
+            // 退出时正在玩的对局也要留下记录,否则关掉软件这局的成绩就丢了。
+            try { if (Tracker != null) Tracker.Flush(); } catch { }
             try { if (St != null) St.Save(); } catch { }
 
             UnregisterHotkeys();
