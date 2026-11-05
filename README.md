@@ -223,6 +223,8 @@ frameforge/
 
 [MIT](LICENSE)。第三方组件声明见 [NOTICE](NOTICE)。
 
+发布件由 CI 从 tag 构建后签名，校验方式与「不做什么」见 [SIGNING.md](SIGNING.md)；漏洞报告见 [SECURITY.md](SECURITY.md)。
+
 ---
 
 ## English
@@ -258,4 +260,6 @@ Settings and logs live in `%LOCALAPPDATA%\FrameForge\`. The app makes no network
 
 ### License
 
-[MIT](LICENSE). Third-party notices in [NOTICE](NOTICE).
+[MIT](LICENSE). Third-party notices in [NOTICE](NOTICE). Release builds are
+code-signed from CI — see [SIGNING.md](SIGNING.md); vulnerability reports go
+through [SECURITY.md](SECURITY.md).
