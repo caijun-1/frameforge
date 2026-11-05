@@ -1,0 +1,73 @@
+name: release
+
+# 打 tag 或手动触发：CI 从源码构建 -> SignPath 签名 -> 发布 Release
+# 未配置 SignPath 变量时自动跳过签名，只发未签名产物。
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build with csc
+        shell: pwsh
+        run: ./build.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frameforge-unsigned
+          path: FrameForge.exe
+          if-no-files-found: error
+
+  sign:
+    needs: build
+    # 仓库变量 SIGNPATH_PROJECT_SLUG 为空时跳过，因此可以先合并代码、后补签名
+    if: vars.SIGNPATH_PROJECT_SLUG != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Submit signing request to SignPath
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIG_SLUG }}
+          github-artifact-id: frameforge-unsigned
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frameforge-signed
+          path: signed/
+          if-no-files-found: error
+
+  release:
+    needs: [build, sign]
+    if: always() && needs.build.result == 'success' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: frameforge-*
+          merge-multiple: true
+          path: dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          gh release create "$TAG" dist/FrameForge.exe \
+            --repo "${{ github.repository }}" \
+            --title "FrameForge $TAG" \
+            --generate-notes

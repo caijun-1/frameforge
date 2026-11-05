@@ -6,6 +6,12 @@ FrameForge.exe
 obj/
 bin/
 
+# 签名密钥（绝不提交）
+*.pfx
+*.p12
+*.cer
+*.snk
+
 # 本地截图与临时脚本
 tmp_shots/
 
