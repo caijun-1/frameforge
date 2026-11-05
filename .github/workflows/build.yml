@@ -1,0 +1,46 @@
+# 每次推送与 PR 都从源码完整编译一次，证明默认分支是可构建的。
+# 只构建、不发布；发布与签名在 release.yml 里，由 tag 触发。
+
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        shell: pwsh
+        run: |
+          $csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          if (-not (Test-Path $csc)) { throw "in-box csc not found" }
+          Write-Host "csc: $csc"
+          & $csc /? | Select-Object -First 1
+
+      - name: Build from source
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Report artifact
+        shell: pwsh
+        run: |
+          $f = Get-Item ./FrameForge.exe
+          Write-Host ("FrameForge.exe " + [math]::Round($f.Length / 1KB, 1) + " KB")
+          (Get-FileHash ./FrameForge.exe -Algorithm SHA256).Hash.ToLower() | Write-Host
+          if ($f.Length -lt 200KB) { throw "artifact too small, build likely incomplete" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frameforge-build
+          path: FrameForge.exe
+          if-no-files-found: error
+          retention-days: 14

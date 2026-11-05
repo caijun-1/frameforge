@@ -8,6 +8,7 @@
 <p align="center">单文件 · 免安装 · 312 KB · 不注入游戏 · 不装驱动</p>
 
 <p align="center">
+  <img src="https://github.com/caijun-1/frameforge/actions/workflows/build.yml/badge.svg" alt="build">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue" alt="platform">
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
   <img src="https://img.shields.io/badge/size-312%20KB-brightgreen" alt="size 312 KB">
