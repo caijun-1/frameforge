@@ -75,7 +75,8 @@ jobs:
 
       - name: Publish release
         env:
-          GH_TOKEN: ${{ github.token }}
+          # 配了 RELEASE_TOKEN（自己账号的 PAT）就以本人身份发布，否则退回内置 token（显示为 github-actions[bot]）
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
         run: |
           TAG="${{ github.ref_name }}"
           sha256sum dist/FrameForge.exe | awk '{print $1}' > dist/FrameForge.exe.sha256
