@@ -20,6 +20,7 @@ namespace FrameForge
             bool selftest = HasArg(args, "--selftest");
 
             if (selftest) return SelfTest();
+            if (HasArg(args, "--restore")) return RestoreCli();
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
@@ -39,6 +40,12 @@ namespace FrameForge
                 { Log.Write("unhandled: " + e.ExceptionObject); };
 
                 Settings st = Settings.Load();
+                BoostEngine.SetWhitelist(st.WhitelistNames());
+
+                // 上次加速如果没来得及还原(崩溃/强杀),这里把注册表和电源计划拨回去。
+                try { BoostJournal.RecoverStale(); }
+                catch (Exception ex) { Log.Write("journal recover: " + ex.Message); }
+
                 try
                 {
                     Application.Run(new UI.MainForm(st, minimized));
@@ -58,6 +65,14 @@ namespace FrameForge
             for (int i = 0; i < args.Length; i++)
                 if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase)) return true;
             return false;
+        }
+
+        /// <summary>命令行还原:FrameForge.exe --restore,没有待还原的改动时返回 2。</summary>
+        private static int RestoreCli()
+        {
+            int n = BoostJournal.RestoreAll();
+            Log.Write("restore cli: " + n + " item(s)");
+            return n > 0 ? 0 : 2;
         }
 
         /// <summary>单实例:把已运行的窗口叫回前台。</summary>
@@ -332,6 +347,77 @@ namespace FrameForge
                     "unknown keys fall back to balanced");
             }
             catch (Exception ex) { check("boost modes", false, ex.Message); }
+
+            // 15. 保护名单归一化(不落盘)
+            try
+            {
+                BoostEngine.SetWhitelist(new string[] { "TestProc.exe", " keepme " });
+                check("boost whitelist",
+                    BoostEngine.UserWhitelist.Contains("testproc") && BoostEngine.UserWhitelist.Contains("keepme"),
+                    BoostEngine.UserWhitelist.Count + " name(s)");
+                BoostEngine.SetWhitelist(new string[0]);
+            }
+            catch (Exception ex) { check("boost whitelist", false, ex.Message); }
+
+            // 16. 加速日志往返(有未还原的日志时跳过,避免覆盖真实数据)
+            try
+            {
+                if (BoostJournal.Pending)
+                {
+                    check("boost journal", true, "pending journal, skipped");
+                }
+                else
+                {
+                    var js = new BoostJournal.State();
+                    js.GamePid = 0;
+                    js.GameName = "selftest";
+                    js.PrevScheme = BoostEngine.SchemeBalanced;
+                    var je = new BoostJournal.Entry();
+                    je.Path = @"Software\FrameForge\Selftest";
+                    je.Name = "v";
+                    je.Exists = false;
+                    je.Value = 7;
+                    js.Reg.Add(je);
+                    BoostJournal.Save(js);
+
+                    BoostJournal.State back = BoostJournal.Load();
+                    check("boost journal", back != null && back.Reg.Count == 1
+                        && back.Reg[0].Value == 7 && back.PrevScheme == BoostEngine.SchemeBalanced,
+                        back == null ? "null" : back.Reg.Count + " entry");
+                    BoostJournal.Clear();
+                }
+            }
+            catch (Exception ex) { check("boost journal", false, ex.Message); }
+
+            // 17. 系统体检(只读)
+            try
+            {
+                System.Collections.Generic.List<HealthItem> items = Health.Check(null);
+                check("health check", items.Count >= 6, items.Count + " item(s)");
+            }
+            catch (Exception ex) { check("health check", false, ex.Message); }
+
+            // 18. 优化页绘制:健康度环 + 分隔线 + 一键优化按钮,直接画到位图验证不抛异常
+            try
+            {
+                using (var hp = new UI.HealthPage(null))
+                {
+                    hp.Size = new System.Drawing.Size(900, 620);
+                    hp.CreateControl();
+                    using (var bmp = new System.Drawing.Bitmap(900, 620))
+                        hp.DrawToBitmap(bmp, new System.Drawing.Rectangle(0, 0, 900, 620));
+                }
+                check("health paint", true, "ring + rows");
+            }
+            catch (Exception ex) { check("health paint", false, ex.Message); }
+
+            // 19. 程序图标读取:战绩、报告、保护名单共用的 exe 图标
+            try
+            {
+                System.Drawing.Image ico = UI.AppIcons.Load(Path.Combine(Environment.SystemDirectory, "notepad.exe"));
+                check("app icon", ico != null && ico.Width > 0, ico == null ? "null" : ico.Width + "px");
+            }
+            catch (Exception ex) { check("app icon", false, ex.Message); }
 
             sb.AppendLine();
             sb.AppendLine(fail == 0 ? "RESULT: OK" : "RESULT: " + fail + " failure(s)");

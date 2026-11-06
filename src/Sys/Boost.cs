@@ -54,6 +54,10 @@ namespace FrameForge.Sys
         public int IrqOk;
         public int IrqDevices;
         public bool IrqNeedReboot;
+        /// <summary>本次请求的项数(用来算「实际生效 / 跳过」)。</summary>
+        public int Requested;
+        /// <summary>没有生效的项,元素是 i18n 键,由界面翻译成原因。</summary>
+        public List<string> Skipped = new List<string>();
     }
 
     /// <summary>
@@ -151,7 +155,9 @@ namespace FrameForge.Sys
                     long ws = p.WorkingSet64;
                     if (ws < 80L << 20) continue;
                     string name = p.ProcessName;
-                    if (name.Length == 0 || Protected.Contains(name)) continue;
+                    if (name.Length == 0) continue;
+                    // 内置保护(系统进程 + 平台/录制工具)和用户白名单都不参与暂停。
+                    if (Protected.Contains(name) || UserWhitelist.Contains(name)) continue;
                     list.Add(new BackgroundProc { Pid = p.Id, Name = name, WorkingSet = (ulong)ws });
                 }
                 catch { }
@@ -167,8 +173,149 @@ namespace FrameForge.Sys
             "Idle", "System", "Registry", "Memory Compression", "csrss", "wininit", "winlogon",
             "services", "lsass", "smss", "svchost", "MsMpEng", "MpDefenderCoreService",
             "dwm", "FrameForge", "audiodg", "SecurityHealthService", "WUDFHost", "fontdrvhost",
-            "SystemSettings", "winlogon", "taskhostw", "ctfmon", "RuntimeBroker"
+            "SystemSettings", "winlogon", "taskhostw", "ctfmon", "RuntimeBroker",
+            // 游戏平台:暂停客户端会导致游戏掉线或无法启动,永远不碰。
+            "steam", "steamwebhelper", "SteamService", "GameOverlayUI",
+            "EpicGamesLauncher", "EpicWebHelper", "Battle.net", "BlizzardBrowser",
+            "Origin", "EADesktop", "EABackgroundService", "UbisoftConnect", "upc",
+            "RiotClientServices", "RiotClientUx", "WeGame", "TencentDL",
+            "GalaxyClient", "GalaxyClientHelper", "GOGGalaxy",
+            // 录制 / 叠加工具:暂停后画面和帧率都会断,不能当后台进程处理。
+            "Discord", "obs64", "obs32", "nvsphelper64", "NVIDIA Share", "NVIDIA Overlay",
+            "RTSS", "RTSSHooksLoader64", "MSIAfterburner", "Overwolf"
         };
+
+        /// <summary>用户自定义保护名单,由设置页维护;与内置名单同等生效。</summary>
+        public static readonly HashSet<string> UserWhitelist = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        public static void SetWhitelist(string[] names)
+        {
+            UserWhitelist.Clear();
+            if (names == null) return;
+            foreach (string n in names)
+            {
+                string s = (n ?? "").Trim();
+                if (s.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                    s = s.Substring(0, s.Length - 4);
+                if (s.Length > 0) UserWhitelist.Add(s);
+            }
+        }
+
+        /// <summary>保护名单里的一行:给小白看的勾选项,不用手打进程名。</summary>
+        public class AppChoice
+        {
+            public string Name = "";      // 进程名(不带 .exe)
+            public string Label = "";     // 显示名,常见平台用中文友好名
+            public ulong Memory;
+            public bool Running;
+            public bool BuiltIn;          // 游戏平台/录制工具,永远保护,不可取消
+        }
+
+        /// <summary>常见平台与录制工具:即使没在运行也列出来,方便提前保护。</summary>
+        private static readonly string[][] Presets = new string[][]
+        {
+            new string[] { "steam", "Steam" },
+            new string[] { "EpicGamesLauncher", "Epic Games" },
+            new string[] { "Battle.net", "Battle.net" },
+            new string[] { "WeGame", "WeGame" },
+            new string[] { "Discord", "Discord" },
+            new string[] { "obs64", "OBS Studio" },
+            new string[] { "RTSS", "RTSS" },
+            new string[] { "MSIAfterburner", "MSI Afterburner" }
+        };
+
+        private static bool IsPreset(string name)
+        {
+            for (int i = 0; i < Presets.Length; i++)
+                if (string.Equals(Presets[i][0], name, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// 生成保护名单的可勾选列表:正在运行的程序(按内存排序) + 常用平台 + 已保存但没在跑的项。
+        /// 系统进程不出现,避免把用户吓到。
+        /// </summary>
+        public static AppChoice[] ProtectChoices()
+        {
+            var map = new Dictionary<string, AppChoice>(StringComparer.OrdinalIgnoreCase);
+            Process[] procs;
+            try { procs = Process.GetProcesses(); }
+            catch { procs = new Process[0]; }
+
+            int self = Process.GetCurrentProcess().Id;
+            foreach (Process p in procs)
+            {
+                try
+                {
+                    if (p.Id <= 4 || p.Id == self) continue;
+                    string name = p.ProcessName;
+                    if (name.Length == 0) continue;
+
+                    bool preset = IsPreset(name);
+                    if (!preset && Protected.Contains(name)) continue;
+
+                    long ws = 0;
+                    try { ws = p.WorkingSet64; } catch (Exception) { }
+                    bool visible = false;
+                    try { visible = p.MainWindowHandle != IntPtr.Zero; } catch (Exception) { }
+                    // 只留用户能认出来的:有窗口的、吃过 120MB 的,以及固定预设。
+                    if (!preset && !visible && ws < (120L << 20)) continue;
+
+                    AppChoice c;
+                    if (map.TryGetValue(name, out c))
+                    {
+                        if ((ulong)ws > c.Memory) c.Memory = (ulong)ws;
+                        continue;
+                    }
+                    map[name] = new AppChoice
+                    {
+                        Name = name,
+                        Label = name,
+                        Memory = (ulong)ws,
+                        Running = true,
+                        BuiltIn = preset
+                    };
+                }
+                catch (Exception) { }
+                finally { try { p.Dispose(); } catch (Exception) { } }
+            }
+
+            for (int i = 0; i < Presets.Length; i++)
+            {
+                if (map.ContainsKey(Presets[i][0])) continue;
+                map[Presets[i][0]] = new AppChoice
+                {
+                    Name = Presets[i][0],
+                    Label = Presets[i][1],
+                    Running = false,
+                    BuiltIn = true
+                };
+            }
+
+            // 用户之前保存过、但当前没在运行的程序也要留住,否则一保存就"消失"了。
+            foreach (string n in UserWhitelist)
+            {
+                if (n.Length == 0 || map.ContainsKey(n)) continue;
+                map[n] = new AppChoice { Name = n, Label = n, BuiltIn = IsPreset(n) };
+            }
+
+            var list = new List<AppChoice>(map.Values);
+            list.Sort(delegate(AppChoice a, AppChoice b)
+            {
+                int ga = Group(a), gb = Group(b);
+                if (ga != gb) return ga.CompareTo(gb);
+                if (a.Running && b.Running) return b.Memory.CompareTo(a.Memory);
+                return string.Compare(a.Label, b.Label, StringComparison.OrdinalIgnoreCase);
+            });
+            return list.ToArray();
+        }
+
+        /// <summary>排序分组:0 正在运行,1 常用软件,2 默认保护。</summary>
+        private static int Group(AppChoice c)
+        {
+            if (c.BuiltIn) return 2;
+            return c.Running ? 0 : 1;
+        }
 
         // =================================================================
         //  应用
@@ -217,7 +364,8 @@ namespace FrameForge.Sys
                 {
                     OptimizeResult m = MemEngine.Optimize(OptimizeLevel.Standard, gamePid, null);
                     r.MemReleased = m.Released;
-                    r.MemoryOk = 1;
+                    // 一个字节都没释放时不算生效,免得结果里出现虚的「已整理」。
+                    r.MemoryOk = m.Released > 0 ? 1 : 0;
                 }
                 catch (Exception ex) { Log.Write("boost memory: " + ex.Message); }
             }
@@ -231,6 +379,24 @@ namespace FrameForge.Sys
                 || r.Suspended > 0;
             r.NeedAdmin = !IsAdmin && (r.PowerOk == 0 || r.TimerOk == 0);
             Active = true;
+
+            // 把「请求了什么、哪些没生效」记清楚:界面只报确认生效的数量。
+            r.Requested = (plan.Priority ? 1 : 0) + (plan.PowerPlan ? 1 : 0) + (plan.Timer ? 1 : 0)
+                + (plan.Dvr ? 1 : 0) + (plan.Memory ? 1 : 0) + (plan.Background ? 1 : 0)
+                + (plan.Affinity ? 1 : 0) + (plan.Irq ? 1 : 0);
+            if (plan.Priority && r.PriorityOk == 0) r.Skipped.Add("boost.skip.priority");
+            if (plan.PowerPlan && r.PowerOk == 0) r.Skipped.Add("boost.skip.power");
+            if (plan.Timer && r.TimerOk == 0) r.Skipped.Add("boost.skip.timer");
+            if (plan.Dvr && r.DvrOk == 0) r.Skipped.Add("boost.skip.dvr");
+            if (plan.Memory && r.MemoryOk == 0) r.Skipped.Add("boost.skip.mem");
+            if (plan.Background && r.Suspended == 0) r.Skipped.Add("boost.skip.bg");
+            if (plan.Affinity && r.AffinityOk == 0) r.Skipped.Add("boost.skip.affinity");
+            if (plan.Irq && r.IrqOk == 0) r.Skipped.Add("boost.skip.irq");
+
+            // 先把原始值落到磁盘再返回:进程中途被杀或重启,下次启动还能自愈。
+            try { BoostJournal.Save(Snapshot()); }
+            catch (Exception ex) { Log.Write("journal save: " + ex.Message); }
+
             Log.Write("boost apply pid=" + gamePid + " ok=" + (r.Ok ? "1" : "0")
                 + " prio=" + r.PriorityOk + " power=" + r.PowerOk + " timer=" + r.TimerOk
                 + " dvr=" + r.DvrOk + " mem=" + (r.MemReleased / 1048576L) + "MB"
@@ -370,7 +536,32 @@ namespace FrameForge.Sys
             StartedAt = DateTime.MinValue;
             GamePid = -1;
             GameName = "";
+            // 全部恢复完成才删日志:删早了中途崩溃就再也没机会自愈。
+            try { BoostJournal.Clear(); } catch { }
             Log.Write("boost restore");
+        }
+
+        /// <summary>把当前这次改动整理成可落盘的原始值,供崩溃后恢复。</summary>
+        internal BoostJournal.State Snapshot()
+        {
+            var st = new BoostJournal.State();
+            st.GamePid = GamePid;
+            st.GameName = GameName;
+            st.PrevScheme = prevScheme;
+            foreach (RegSaved s in regSaved)
+            {
+                var e = new BoostJournal.Entry();
+                e.Path = s.Path;
+                e.Name = s.Name;
+                e.Exists = s.Exists;
+                if (s.Exists)
+                {
+                    try { e.Value = Convert.ToInt32(s.Value, CultureInfo.InvariantCulture); }
+                    catch { e.Exists = false; }
+                }
+                st.Reg.Add(e);
+            }
+            return st;
         }
 
         private class RegSaved
@@ -426,7 +617,18 @@ namespace FrameForge.Sys
             catch { return ""; }
         }
 
-        private static bool SetScheme(string guid)
+        /// <summary>体检页/命令行用:把电源计划切到高性能。</summary>
+        public static bool SwitchToHighPerformance()
+        {
+            try
+            {
+                if (string.Equals(ActiveSchemeGuid(), SchemeHigh, StringComparison.OrdinalIgnoreCase)) return true;
+                return SetScheme(SchemeHigh);
+            }
+            catch { return false; }
+        }
+
+        public static bool SetScheme(string guid)
         {
             try
             {

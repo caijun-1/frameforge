@@ -883,7 +883,8 @@ namespace FrameForge.UI
             if (Width <= 0 || Height <= 0) return;
             int gap = Ui.Px(12);
             int itemH = Ui.Px(116);
-            int hintH = Ui.Px(176);
+            // 说明卡只有三行字,留 146 就够;多出来的高度让给上面的设置卡和预览。
+            int hintH = Ui.Px(146);
             int cardH = Height - itemH - hintH - gap * 2;
             if (cardH < Ui.Px(272))
             {
@@ -1160,12 +1161,16 @@ namespace FrameForge.UI
     {
         private readonly Card genCard, memCard, fpsCard, adminCard, aboutCard, hotCard;
         private readonly Segmented segLang, segTheme;
-        private readonly Toggle tgAuto, tgTray, tgMemAuto, tgBoostProfile;
+        private readonly Toggle tgAuto, tgTray, tgMemAuto, tgBoostProfile, tgUpdates;
         private readonly Slider sldThreshold;
         private readonly TextLabel memInfo, fpsStatus, fpsNote, adminStatus, adminNote, aboutName, aboutNotice, aboutEnv;
-        private readonly FlatButton btnFps, btnAdmin, btnLog;
+        private readonly TextLabel[] adminItems = new TextLabel[3];
+        private readonly TextLabel[] adminMarks = new TextLabel[3];
+        private readonly Hairline adminLine;
+        private readonly FlatButton btnFps, btnAdmin, btnLog, btnWhitelist, btnRestore;
         private readonly TextLabel langTitle, themeTitle, autoTitle, autoSub, trayTitle, traySub;
         private readonly TextLabel boostProfileTitle, boostProfileSub;
+        private readonly TextLabel updateTitle, updateSub;
         private readonly TextLabel memAutoTitle, memAutoSub;
         private readonly TextLabel hotOvTitle, hotOvKey, hotBoostTitle, hotBoostKey, hotFlTitle, hotFlKey;
 
@@ -1259,6 +1264,22 @@ namespace FrameForge.UI
             genCard.Controls.Add(boostProfileSub);
             genCard.Controls.Add(tgBoostProfile);
 
+            // 版本更新
+            updateTitle = RowTitle(I18n.T("set.update"));
+            updateSub = RowSub(I18n.T("set.update.sub"));
+            tgUpdates = new Toggle();
+            tgUpdates.SetSilent(host.St.CheckUpdates);
+            tgUpdates.CheckedChanged += delegate
+            {
+                Host.St.CheckUpdates = tgUpdates.Checked;
+                Host.SaveSettingsSoon();
+                if (tgUpdates.Checked) Host.CheckUpdates(true);
+            };
+
+            genCard.Controls.Add(updateTitle);
+            genCard.Controls.Add(updateSub);
+            genCard.Controls.Add(tgUpdates);
+
             // 内存
             memAutoTitle = RowTitle(I18n.T("set.memauto"));
             memAutoSub = RowSub(I18n.T("set.memauto.sub"));
@@ -1323,15 +1344,57 @@ namespace FrameForge.UI
             adminNote.Wrap = true;
             adminNote.Align = ContentAlignment.TopLeft;
             adminNote.Text = I18n.T("set.admin.note");
+
+            // 拿到管理员权限后具体能多做什么:三行清单,卡片下半截不再空一大片。
+            string[] caps =
+            {
+                I18n.T("set.admin.cap.mem"),
+                I18n.T("set.admin.cap.power"),
+                I18n.T("set.admin.cap.timer")
+            };
+            for (int i = 0; i < caps.Length; i++)
+            {
+                var it = new TextLabel();
+                it.Size = 8.8f;
+                it.ForeColor = Theme.Sub;
+                it.Ellipsis = true;
+                it.Text = "·  " + caps[i];
+                adminItems[i] = it;
+                adminCard.Controls.Add(it);
+
+                var mk = new TextLabel();
+                mk.Size = 8.8f;
+                mk.Align = ContentAlignment.MiddleRight;
+                adminMarks[i] = mk;
+                adminCard.Controls.Add(mk);
+            }
+
+            adminLine = new Hairline();
+            adminCard.Controls.Add(adminLine);
             btnAdmin = new FlatButton();
             btnAdmin.Primary = false;
             btnAdmin.FontPt = 9f;
             btnAdmin.Text = I18n.T("set.admin.restart");
             btnAdmin.Click += delegate { MemEngine.RestartElevated(""); };
 
+            // 保护名单与还原:一个避免误伤平台进程,一个兜底把系统改回去。
+            btnWhitelist = new FlatButton();
+            btnWhitelist.Primary = false;
+            btnWhitelist.FontPt = 9f;
+            btnWhitelist.Text = I18n.T("set.whitelist");
+            btnWhitelist.Click += delegate { Host.EditWhitelist(); };
+
+            btnRestore = new FlatButton();
+            btnRestore.Primary = false;
+            btnRestore.FontPt = 9f;
+            btnRestore.Text = I18n.T("set.restoreall");
+            btnRestore.Click += delegate { Host.RestoreAll(); };
+
             adminCard.Controls.Add(adminStatus);
             adminCard.Controls.Add(adminNote);
             adminCard.Controls.Add(btnAdmin);
+            adminCard.Controls.Add(btnWhitelist);
+            adminCard.Controls.Add(btnRestore);
 
             // 快捷键
             hotOvTitle = RowTitle(I18n.T("set.hotkey.overlay"));
@@ -1388,6 +1451,11 @@ namespace FrameForge.UI
 
         // ---------------- Actions 调用 ----------------
 
+        public void SyncState()
+        {
+            UpdateStatus();
+        }
+
         public void SetDownloadState(bool busy, int pct)
         {
             btnFps.Busy = busy;
@@ -1423,6 +1491,12 @@ namespace FrameForge.UI
             adminStatus.Text = admin ? I18n.T("set.admin.on") : I18n.T("set.admin.off");
             adminStatus.ForeColor = admin ? Theme.Text : Theme.Warn;
             btnAdmin.Visible = !admin;
+
+            for (int i = 0; i < adminMarks.Length; i++)
+            {
+                adminMarks[i].Text = admin ? I18n.T("set.admin.cap.ok") : I18n.T("set.admin.cap.no");
+                adminMarks[i].ForeColor = admin ? Theme.Accent : Theme.Faint;
+            }
         }
 
         public override void Refresh(SysSample s)
@@ -1503,16 +1577,16 @@ namespace FrameForge.UI
             if (aboutH < Ui.Px(150))
             {
                 aboutH = Ui.Px(150);
-                genH = Math.Max(Ui.Px(230), Height - hotH - aboutH - gap * 2);
+                genH = Math.Max(Ui.Px(274), Height - hotH - aboutH - gap * 2);
             }
 
-            int memH = Ui.Px(168);
-            int fpsH = Ui.Px(176);
+            int memH = Ui.Px(160);
+            int fpsH = Ui.Px(150);
             int adminH = Height - memH - fpsH - gap * 2;
-            if (adminH < Ui.Px(150))
+            if (adminH < Ui.Px(184))
             {
-                adminH = Ui.Px(150);
-                memH = Math.Max(Ui.Px(140), Height - fpsH - adminH - gap * 2);
+                adminH = Ui.Px(184);
+                memH = Math.Max(Ui.Px(160), Height - fpsH - adminH - gap * 2);
             }
 
             genCard.SetBounds(0, 0, colW, genH);
@@ -1544,12 +1618,16 @@ namespace FrameForge.UI
             boostProfileSub.SetBounds(pad, Ui.Px(210), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(18));
             tgBoostProfile.SetBounds(colW - pad - toggleW, Ui.Px(194), toggleW, Ui.Px(24));
 
+            updateTitle.SetBounds(pad, Ui.Px(230), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(20));
+            updateSub.SetBounds(pad, Ui.Px(248), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(18));
+            tgUpdates.SetBounds(colW - pad - toggleW, Ui.Px(232), toggleW, Ui.Px(24));
+
             PlaceHeader(memCard, pad);
             memAutoTitle.SetBounds(pad, Ui.Px(44), rightW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(20));
             memAutoSub.SetBounds(pad, Ui.Px(64), rightW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(18));
             tgMemAuto.SetBounds(rightW - pad - toggleW, Ui.Px(46), toggleW, Ui.Px(24));
             sldThreshold.SetBounds(pad, Ui.Px(92), rightW - pad * 2, Ui.Px(44));
-            memInfo.SetBounds(pad, Ui.Px(138), rightW - pad * 2, Ui.Px(18));
+            memInfo.SetBounds(pad, memH - Ui.Px(20), rightW - pad * 2, Ui.Px(18));
 
             PlaceHeader(fpsCard, pad);
             fpsStatus.SetBounds(pad, Ui.Px(44), rightW - pad * 2, Ui.Px(20));
@@ -1560,10 +1638,41 @@ namespace FrameForge.UI
             // 管理员卡与关于卡会吃掉窗口剩余的整块高度:把多出来的空白
             // 均摊进各行之间的间距,内容铺满卡片,标题下方不会空一大截。
             PlaceHeader(adminCard, pad);
-            int adminExtra = Math.Max(0, adminH - Ui.Px(210));
-            adminStatus.SetBounds(pad, Ui.Px(44) + adminExtra / 8, rightW - pad * 2, Ui.Px(22));
-            adminNote.SetBounds(pad, Ui.Px(70) + adminExtra * 3 / 8, rightW - pad * 2, Ui.Px(56));
-            btnAdmin.SetBounds(rightW - pad - bw, Ui.Px(140) + adminExtra * 7 / 8, bw, bh);
+            // 卡片够高才铺开权限清单;窗口太矮时只留状态、说明和按钮,不硬塞导致重叠。
+            bool caps = adminH >= Ui.Px(248);
+            int adminExtra = Math.Max(0, adminH - Ui.Px(caps ? 248 : 184));
+            // 重启按钮挪到状态行右侧,说明文字就能占满整行,不会被挤成省略号。
+            int statusY = Ui.Px(44) + adminExtra / 8;
+            adminStatus.SetBounds(pad, statusY, rightW - pad * 2 - (btnAdmin.Visible ? bw + Ui.Px(10) : 0), Ui.Px(22));
+            btnAdmin.SetBounds(rightW - pad - bw, statusY - Ui.Px(4), bw, bh);
+
+            int noteY = statusY + Ui.Px(32);
+            adminNote.SetBounds(pad, noteY, rightW - pad * 2, Ui.Px(36));
+
+            adminLine.Visible = caps;
+            for (int i = 0; i < adminItems.Length; i++)
+            {
+                adminItems[i].Visible = caps;
+                adminMarks[i].Visible = caps;
+            }
+
+            if (caps)
+            {
+                // 权限清单铺在说明和底部按钮之间,多出来的高度按行距均摊。
+                int listTop = noteY + Ui.Px(42) + adminExtra / 8;
+                int step = Ui.Px(22) + adminExtra / 24;
+                adminLine.SetBounds(pad, listTop, rightW - pad * 2, Ui.Px(1));
+                for (int i = 0; i < adminItems.Length; i++)
+                {
+                    int y = listTop + Ui.Px(9) + i * step;
+                    adminItems[i].SetBounds(pad, y, rightW - pad * 2 - Ui.Px(62), Ui.Px(20));
+                    adminMarks[i].SetBounds(rightW - pad - Ui.Px(58), y, Ui.Px(58), Ui.Px(20));
+                }
+            }
+
+            int rowY2 = caps ? adminH - bh - Ui.Px(16) : Ui.Px(148) + adminExtra * 7 / 8;
+            btnWhitelist.SetBounds(pad, rowY2, bw, bh);
+            btnRestore.SetBounds(pad + bw + Ui.Px(8), rowY2, rightW - pad * 2 - bw - Ui.Px(8), bh);
 
             PlaceHeader(hotCard, pad);
             int keyW = Ui.Px(150);
@@ -2369,15 +2478,22 @@ namespace FrameForge.UI
                 else Ui.Fill(g, rr, Ui.Fp(8), Theme.Bg);
 
                 int pad = Ui.Px(12);
-                TextRenderer.DrawText(g, Safe(r.Title), Theme.Bold(10.2f),
-                    new Rectangle(pad, y + Ui.Px(6), Width - pad * 2 - Ui.Px(90), Ui.Px(20)),
+                int ico = Ui.Px(22);
+                AppIcons.DrawApp(g, r.IconPath,
+                    new Rectangle(pad, y + Ui.Px(9), ico, ico),
+                    on ? Theme.Accent : Theme.Sub, AppGlyph.Gamepad);
+
+                int textX = pad + ico + Ui.Px(10);
+                int textW = Width - textX - Ui.Px(90);
+                TextRenderer.DrawText(g, Safe(r.DisplayName), Theme.Bold(10.2f),
+                    new Rectangle(textX, y + Ui.Px(6), textW, Ui.Px(20)),
                     on ? Theme.Accent : Theme.Text,
                     TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
                 string sub = r.Start.ToString("MM-dd HH:mm") + "   ·   " + r.Duration
                     + "   ·   " + I18n.T("report.avg") + " " + (r.FpsAvg > 0 ? r.FpsAvg.ToString("0") : "—")
                     + "   ·   1% Low " + (r.Low1 > 0 ? r.Low1.ToString("0") : "—");
                 TextRenderer.DrawText(g, sub, Theme.Regular(8.3f),
-                    new Rectangle(pad, y + Ui.Px(28), Width - pad * 2 - Ui.Px(90), Ui.Px(18)), Theme.Faint,
+                    new Rectangle(textX, y + Ui.Px(28), textW, Ui.Px(18)), Theme.Faint,
                     TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
                 TextRenderer.DrawText(g, r.FpsAvg > 0 ? r.FpsAvg.ToString("0") : "—", Theme.Num(13f),
                     new Rectangle(Width - Ui.Px(88), y + Ui.Px(10), Ui.Px(74), Ui.Px(24)), Theme.Sub,

@@ -28,11 +28,13 @@ namespace FrameForge.Sys
             "https://github.com/GameTechDev/PresentMon/releases/download/v" + Version + "/PresentMon-" + Version + "-x64.exe";
 
         private static readonly object Gate = new object();
-        private Process proc;
+        private volatile Process proc;
         private Thread reader;
         private Thread errReader;
         private int trackedPid = -1;
         private DateTime lastTry = DateTime.MinValue;
+        private DateTime nextRecoverAt = DateTime.MinValue;
+        private long lastRowTicks;
         private volatile bool stopping;
         private volatile bool gotRow;
         private readonly Queue<Frame> window = new Queue<Frame>();
@@ -109,7 +111,23 @@ namespace FrameForge.Sys
         /// <summary>开始跟踪某个进程;pid 未变化时什么也不做。</summary>
         public void Track(int pid)
         {
-            if (pid == trackedPid && proc != null && !proc.HasExited) return;
+            if (pid == trackedPid && proc != null && !proc.HasExited)
+            {
+                // PresentMon 有时"活着但不再输出":ETW 实时会话被系统诊断会话挤占时,
+                // 进程不退出、stderr 只刷 lost events,界面上的帧率就停在最后一个数字。
+                // 按"最近一行数据"做心跳,超过 8 秒没有新行就重启采集会话。
+                long last = Interlocked.Read(ref lastRowTicks);
+                if (last == 0) return;
+                if ((DateTime.UtcNow - new DateTime(last, DateTimeKind.Utc)).TotalSeconds < 8) return;
+                if (DateTime.UtcNow < nextRecoverAt) return;
+                nextRecoverAt = DateTime.UtcNow.AddSeconds(6);
+                Log.Write("presentmon stalled, restart pid=" + pid);
+                Stop();
+                trackedPid = pid;
+                lastTry = DateTime.UtcNow;
+                Start(pid);
+                return;
+            }
             if (pid <= 0) { Stop(); return; }
             if (!Installed) { trackedPid = pid; Status = FpsStatus.NotInstalled; return; }
 
@@ -136,6 +154,7 @@ namespace FrameForge.Sys
                 Low1 = -1;
                 stopping = false;
                 gotRow = false;
+                Interlocked.Exchange(ref lastRowTicks, DateTime.UtcNow.Ticks);
 
                 var psi = new ProcessStartInfo();
                 psi.FileName = ExePath;
@@ -193,6 +212,7 @@ namespace FrameForge.Sys
             reader = null;
             errReader = null;
             trackedPid = -1;
+            Interlocked.Exchange(ref lastRowTicks, 0);
             Fps = -1;
             Low1 = -1;
             if (Status == FpsStatus.Running || Status == FpsStatus.NeedAdmin) Status = FpsStatus.Idle;
@@ -320,7 +340,9 @@ namespace FrameForge.Sys
             catch { }
             finally
             {
-                if (!stopping && Status != FpsStatus.NeedAdmin)
+                // 换游戏时会先 Stop 再 Start,旧线程的 finally 可能在新实例启动之后才跑到。
+                // 只在自己仍是当前进程时改状态,否则会把新实例的 Running 覆盖成 Failed。
+                if (!stopping && ReferenceEquals(proc, p) && Status != FpsStatus.NeedAdmin)
                 {
                     Status = FpsStatus.Failed;
                     Message = "presentmon exited";
@@ -361,6 +383,7 @@ namespace FrameForge.Sys
 
         private void Push(double t, double ms)
         {
+            Interlocked.Exchange(ref lastRowTicks, DateTime.UtcNow.Ticks);
             if (!gotRow)
             {
                 gotRow = true;

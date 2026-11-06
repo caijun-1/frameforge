@@ -12,6 +12,8 @@ namespace FrameForge.Sys
         public string Id = "";
         public string Exe = "";
         public string Title = "";
+        /// <summary>exe 全路径,读程序图标用;老记录没有这个字段时按进程名现找。</summary>
+        public string ExePath = "";
         public DateTime Start;
         public DateTime End;
         public int Seconds;
@@ -51,6 +53,51 @@ namespace FrameForge.Sys
             }
         }
 
+        /// <summary>
+        /// 展示用名字:存档里已经识别出游戏名就直接用;旧记录或识别失败时存的是进程名,
+        /// 再用内置库重认一次,保证报告和历史战绩看到的是同一个名字。
+        /// </summary>
+        public string DisplayName
+        {
+            get
+            {
+                string t = Title == null ? "" : Title.Trim();
+                if (t.Length == 0) t = Exe == null ? "" : Exe;
+                if (Exe != null && Exe.Length > 0 && LooksLikeProcess(t, Exe))
+                {
+                    string g = GameDb.Title(Exe);
+                    if (g.Length > 0 && !LooksLikeProcess(g, Exe)) return g;
+                }
+                return t;
+            }
+        }
+
+        private static bool LooksLikeProcess(string name, string exe)
+        {
+            string a = Strip(name);
+            string b = Strip(exe);
+            return b.Length > 0 && string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string Strip(string s)
+        {
+            if (s == null) return "";
+            string t = s.Trim();
+            if (t.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                t = t.Substring(0, t.Length - 4);
+            return t.Trim();
+        }
+
+        /// <summary>读程序图标用的 exe 路径:存档里有就用,老记录按进程名现找。</summary>
+        public string IconPath
+        {
+            get
+            {
+                if (ExePath != null && ExePath.Length > 0 && File.Exists(ExePath)) return ExePath;
+                return Exe != null && Exe.Length > 0 ? GameDb.PathFor(Exe) : "";
+            }
+        }
+
         public string Serialize()
         {
             var sb = new StringBuilder();
@@ -71,6 +118,7 @@ namespace FrameForge.Sys
                 if (i > 0) sb.Append(',');
                 sb.Append(FpsSeries[i].ToString("0.#", CultureInfo.InvariantCulture));
             }
+            sb.Append('|').Append(Safe(ExePath));
             return sb.ToString();
         }
 
@@ -104,6 +152,7 @@ namespace FrameForge.Sys
                     r.FpsSeries = new double[parts.Length];
                     for (int i = 0; i < parts.Length; i++) r.FpsSeries[i] = D(parts[i]);
                 }
+                if (p.Length > 21) r.ExePath = p[21];
                 if (r.Title.Length == 0) r.Title = r.Exe;
                 return r;
             }
@@ -263,6 +312,7 @@ namespace FrameForge.Sys
         private int pid = -1;
         private string exe = "";
         private string title = "";
+        private string exePath = "";
         private DateTime start;
 
         private double fpsSum, fpsMax, fpsMin;
@@ -283,6 +333,8 @@ namespace FrameForge.Sys
         private const int SeriesMax = 300;
         private readonly List<double> fpsSeries = new List<double>();
         private DateTime lastSeriesAt = DateTime.MinValue;
+        // 最近一次确认"游戏还在"的时刻,给检测抖动留宽限。
+        private DateTime lastSeenAt = DateTime.MinValue;
 
         public event Action<SessionRecord> Completed;
 
@@ -306,6 +358,7 @@ namespace FrameForge.Sys
 
             if (s.GamePid > 0)
             {
+                lastSeenAt = now;
                 if (pid != s.GamePid)
                 {
                     Finish(now);
@@ -319,7 +372,10 @@ namespace FrameForge.Sys
             }
             else
             {
-                if (pid > 0) Finish(now);
+                // 切全屏、UAC 弹窗、启动器抢焦点都会让检测短暂掉成"没有游戏"。
+                // 以前一掉就结算,一局会被拆成两段、帧率曲线也跟着重来;
+                // 这里留 3 秒宽限,同一个进程回来就继续算同一局。
+                if (pid > 0 && (now - lastSeenAt).TotalSeconds >= 3) Finish(now);
                 return;
             }
 
@@ -369,7 +425,11 @@ namespace FrameForge.Sys
             pid = s.GamePid;
             exe = s.GameName;
             title = s.GameTitle.Length > 0 ? s.GameTitle : GameDb.Title(pid, exe);
+            // 进程还活着时先记下路径,退出后就能靠它读出游戏图标。
+            exePath = GameDb.PathOf(pid);
+            if (exePath.Length == 0 && exe.Length > 0) exePath = GameDb.PathFor(exe);
             start = now;
+            lastSeenAt = now;
             fpsSum = fpsMax = fpsMin = 0; fpsN = 0;
             lowSum = 0; lowN = 0;
             cpuSum = cpuMax = gpuSum = gpuMax = 0; loadN = 0;
@@ -390,6 +450,7 @@ namespace FrameForge.Sys
             r.Id = start.Ticks.ToString(CultureInfo.InvariantCulture);
             r.Exe = exe;
             r.Title = title.Length > 0 ? title : GameDb.Title(exe);
+            r.ExePath = exePath;
             r.Start = start;
             r.Seconds = sec;
             r.End = now;
@@ -414,6 +475,7 @@ namespace FrameForge.Sys
             }
 
             pid = -1;
+            exePath = "";
             Action<SessionRecord> cb = Completed;
             if (sec >= min)
             {

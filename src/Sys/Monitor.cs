@@ -408,10 +408,94 @@ namespace FrameForge.Sys
             return false;
         }
 
+        /// <summary>
+        /// 截图 / 标注类工具。这份名单同时用于两件事:
+        /// 1) 不把它们的全屏取色窗口当成游戏;2) 截图进行时临时让出滤镜和叠加层。
+        /// 两个功能共用一份数据,以后加工具只改这里。
+        /// </summary>
+        private static readonly string[] CaptureTools =
+        {
+            "snipaste", "sharex", "greenshot", "lightshot", "picpick", "pixpin",
+            "snagit", "snagit32", "snagit64", "screenpresso", "hypersnap", "fscapture",
+            "flameshot", "jietu", "xnip", "gyazo",
+            // Windows 自带截图:Win10 截图工具 / Win11 截图工具 / Win+Shift+S 的取色层
+            "snippingtool", "screensketch", "screenclip", "screenclippinghost"
+        };
+
+        // 全窗口扫描的结果与时间:前台没变时直接复用,避免每 150ms 扫一遍所有窗口。
+        private static DateTime captureScanTime = DateTime.MinValue;
+        private static bool captureScanHit;
+
+        public static bool IsCaptureTool(string name)
+        {
+            if (name.Length == 0) return false;
+            string n = name.ToLowerInvariant();
+            for (int i = 0; i < CaptureTools.Length; i++)
+                if (CaptureTools[i] == n) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// 截图工具是否正在截屏。多数工具会铺一层全屏取色窗口,但它常常刻意不抢前台
+        /// (靠全局键盘钩子收按键),所以不能只看前台进程,还要扫一遍铺满屏幕的顶层窗口。
+        /// 先比窗口尺寸再取进程名:全屏窗口通常只有一两个,省掉大量 OpenProcess。
+        /// </summary>
+        public static bool CaptureActive()
+        {
+            try
+            {
+                IntPtr fg = Native.GetForegroundWindow();
+                int fgPid;
+                Native.GetWindowThreadProcessId(fg, out fgPid);
+                // 快路径:Win+Shift+S 一按下,取色层会立刻抢到前台,这一步是毫秒级。
+                if (fgPid > 4 && IsCaptureTool(Native.ProcessName(fgPid))) return true;
+
+                // 慢路径(全窗口扫描)限流到每秒一次:前台没变就不用反复扫,
+                // 于是守卫轮询可以提到 150ms,按下热键第一时间就能让开。
+                DateTime now = DateTime.UtcNow;
+                if ((now - captureScanTime).TotalMilliseconds < 1000) return captureScanHit;
+                captureScanTime = now;
+                captureScanHit = ScanFullscreenCapture();
+                return captureScanHit;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>枚举所有顶层窗口,找铺满整屏的截图取色层。</summary>
+        private static bool ScanFullscreenCapture()
+        {
+            try
+            {
+                IntPtr hit = IntPtr.Zero;
+                Native.EnumWindows(delegate(IntPtr h, IntPtr l)
+                {
+                    if (!Native.IsWindowVisible(h) || Native.IsIconic(h)) return true;
+                    Native.RECT r;
+                    if (!Native.GetWindowRect(h, out r)) return true;
+                    int w = r.Right - r.Left;
+                    int hh = r.Bottom - r.Top;
+                    if (w <= 0 || hh <= 0) return true;
+
+                    Rectangle b = Screen.FromHandle(h).Bounds;
+                    // 截图的取色层一定铺满整块屏;小于 85% 的窗口(托盘气泡、粘贴小窗)直接跳过。
+                    if (w < b.Width * 85 / 100 || hh < b.Height * 85 / 100) return true;
+
+                    int pid;
+                    Native.GetWindowThreadProcessId(h, out pid);
+                    if (pid <= 4 || !IsCaptureTool(Native.ProcessName(pid))) return true;
+                    hit = h;
+                    return false;
+                }, IntPtr.Zero);
+                return hit != IntPtr.Zero;
+            }
+            catch { return false; }
+        }
+
         /// <summary>常见"会全屏但不是游戏"的应用:浏览器按 F11、播放器全屏都不该被当成游戏。</summary>
         private static bool IsNonGameName(string name)
         {
             if (name.Length == 0) return false;
+            if (IsCaptureTool(name)) return true;
             switch (name.ToLowerInvariant())
             {
                 case "explorer":
@@ -473,6 +557,8 @@ namespace FrameForge.Sys
                 case "obs64":
                 case "obs32":
                 case "camtasia":
+                case "bandicam":
+                // 截图 / 标注类不在这里列:CaptureTools 已经统一处理,见 IsCaptureTool。
                 // 系统外壳
                 case "applicationframehost":
                 case "searchapp":

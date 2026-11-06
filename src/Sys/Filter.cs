@@ -16,45 +16,82 @@ namespace FrameForge.Sys
             "flt.benq", "flt.fog", "flt.comp", "flt.anime",
             // 热门游戏预设:索引必须接在通用预设后面,旧的 filterPreset 数值才不会错位。
             "flt.g.delta", "flt.g.valorant", "flt.g.genshin", "flt.g.apex",
-            "flt.g.cs2", "flt.g.pubg", "flt.g.naraka", "flt.g.lol"
+            "flt.g.cs2", "flt.g.pubg", "flt.g.naraka", "flt.g.lol",
+            // 新增通用预设只能往后追加,否则用户已保存的 filterPreset 会指到别的方案上。
+            "flt.cool", "flt.warm"
         };
 
         /// <summary>通用预设个数,之后是游戏预设。</summary>
         public const int GeneralCount = 13;
 
-        public static bool IsGamePreset(int i) { return i >= GeneralCount && i < PresetKeys.Length; }
+        /// <summary>最后一个游戏预设的下标,之后追加的仍算通用预设。</summary>
+        public const int LastGamePreset = 20;
 
-        private static bool inited;
-        private static bool supported;
+        public static bool IsGamePreset(int i) { return i >= GeneralCount && i <= LastGamePreset; }
+
+        private static bool probed;       // 是否探测过本机是否支持放大镜
+        private static bool available;    // 探测结果
+        private static bool active;       // 当前是否初始化着(占着 DWM 的合成链)
         private static float[] last = null;
+        // 最近一次真正卸下放大镜的时间。截图工具收起时前台会在取色层和主窗口之间来回跳,
+        // 守卫跟着抖就会反复 MagInitialize / MagUninitialize 重建 DWM 上的效果链,
+        // 那比常驻还容易把整个桌面卡住,所以卸下后先静一会儿再装回去。
+        private static DateTime offAt = DateTime.MinValue;
+        private const int CoolMs = 2000;
 
-        /// <summary>放大镜是否可用(远程桌面等场景不可用)。</summary>
+        /// <summary>放大镜是否可用(远程桌面等场景不可用)。只探测,不长期占用。</summary>
         public static bool Supported
         {
             get
             {
-                if (!inited) Init();
-                return supported;
+                if (!probed)
+                {
+                    probed = true;
+                    try { available = Native.MagInitialize(); }
+                    catch (Exception ex) { available = false; Log.Write("magnification: " + ex.Message); }
+                    // 探测完立刻还回去:常驻的放大镜会一直挂在 DWM 上,和截图工具抢同一帧。
+                    if (available) { try { Native.MagUninitialize(); } catch { } }
+                    if (!available) Log.Write("magnification unavailable");
+                }
+                return available;
             }
         }
 
+        /// <summary>真正要上滤镜时才初始化。</summary>
         public static void Init()
         {
-            if (inited) return;
-            inited = true;
-            try { supported = Native.MagInitialize(); }
-            catch (Exception ex) { supported = false; Log.Write("magnification: " + ex.Message); }
-            if (!supported) Log.Write("magnification unavailable");
+            if (active || !Supported) return;
+            if ((DateTime.UtcNow - offAt).TotalMilliseconds < CoolMs) return;
+            try
+            {
+                if (Native.MagInitialize())
+                {
+                    active = true;
+                    Log.Write("magnification init");
+                }
+            }
+            catch (Exception ex) { Log.Write("magnification: " + ex.Message); available = false; }
+        }
+
+        /// <summary>
+        /// 把放大镜整个卸下来。只推恒等矩阵不够:效果链还挂在 DWM 上,
+        /// Win+Shift+S 的取色层一铺开整屏就会卡住,要等窗口重新上屏才恢复。
+        /// </summary>
+        public static void Suspend()
+        {
+            last = null;
+            if (!active) return;
+            active = false;
+            offAt = DateTime.UtcNow;
+            try { Native.MagUninitialize(); } catch { }
+            Log.Write("magnification suspend");
         }
 
         public static void Shutdown()
         {
-            if (!inited) return;
-            try { if (supported) Native.MagUninitialize(); }
-            catch { }
-            supported = false;
-            inited = false;
-            last = null;
+            Suspend();
+            probed = false;
+            available = false;
         }
 
         /// <summary>按设置决定当前是否应该生效,并把矩阵推给系统(矩阵未变化时跳过)。</summary>
@@ -64,9 +101,12 @@ namespace FrameForge.Sys
             bool on = st.FilterMode == 2 || (st.FilterMode == 1 && isGame);
             if (!on)
             {
-                Clear();
+                // 不需要滤镜时连放大镜一起卸掉,避免平时就占着系统的合成链。
+                Suspend();
                 return;
             }
+            Init();
+            if (!active) return;
             Apply(Current(st));
         }
 
@@ -79,17 +119,10 @@ namespace FrameForge.Sys
                 st.FilterDark, st.FilterVibrance);
         }
 
-        public static void Clear()
-        {
-            if (!supported) return;
-            if (last == null) return;
-            Apply(Identity());
-        }
-
         /// <summary>把 5×5 矩阵推给系统;已是最新则什么都不做。</summary>
         public static void Apply(float[] m)
         {
-            if (!Supported) return;
+            if (!active) return;
             if (Same(last, m)) return;
             try
             {
@@ -148,6 +181,8 @@ namespace FrameForge.Sys
                 case 18: sat = 1.03; con = 0.98; bri = 0.02; warm = -0.03; shadow = 0.18; break; // PUBG
                 case 19: sat = 1.08; con = 1.03; bri = 0.01; warm = 0.08; shadow = 0.06; break;  // 永劫无间
                 case 20: sat = 1.06; con = 1.0; bri = 0.02; warm = 0.03; shadow = 0.04; break;   // 英雄联盟
+                case 21: sat = 1.03; con = 1.03; bri = 0.01; warm = -0.22; shadow = 0.08; break; // 冷色
+                case 22: sat = 1.03; con = 1.02; warm = 0.22; shadow = 0.06; break;              // 暖色
             }
 
             // 自定义滑杆叠加在预设之上:倍率整体收窄,拉到顶也不会过曝或发灰。

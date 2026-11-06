@@ -46,6 +46,8 @@ namespace FrameForge
         public bool AutoBoost = true;         // 检测到游戏就自动套用加速(安全项)
         public int AffinityCores = 0;         // 0 = 自动
         public string BoostMode = "balanced"; // balanced | beast | custom
+        // 保护名单:这些进程永远不会被「暂停后台进程」选中。逗号分隔,不含 .exe。
+        public string BoostWhitelist = "";
 
         // 画面滤镜
         public int FilterMode = 0;            // 0 关 | 1 仅游戏 | 2 始终
@@ -68,6 +70,7 @@ namespace FrameForge
 
         // 常规
         public bool Autostart = false;
+        public bool CheckUpdates = false;      // 启动时检查 GitHub 新版本(默认关,避免后台联网)
         public bool CloseToTray = true;
         public bool AskedElevation = false;
 
@@ -124,6 +127,7 @@ namespace FrameForge
                 case "autoboost": AutoBoost = Bool(v, true); break;
                 case "affinitycores": AffinityCores = Int(v, 0); break;
                 case "boostmode": BoostMode = ModeKey(v); break;
+                case "boostwhitelist": BoostWhitelist = v; break;
                 case "filtermode": FilterMode = Int(v, 0); break;
                 case "filterpreset": FilterPreset = Int(v, 0); break;
                 case "filterintensity": FilterIntensity = Int(v, 100); break;
@@ -138,6 +142,7 @@ namespace FrameForge
                 case "memauto": MemAuto = Bool(v, false); break;
                 case "memthreshold": MemThreshold = Int(v, 88); break;
                 case "autostart": Autostart = Bool(v, false); break;
+                case "checkupdates": CheckUpdates = Bool(v, false); break;
                 case "closetotray": CloseToTray = Bool(v, true); break;
                 case "askedelevation": AskedElevation = Bool(v, false); break;
             }
@@ -177,6 +182,7 @@ namespace FrameForge
                 sb.AppendLine("boostProfile=" + B(BoostProfile));
                 sb.AppendLine("autoBoost=" + B(AutoBoost));
                 sb.AppendLine("boostMode=" + BoostMode);
+                sb.AppendLine("boostWhitelist=" + BoostWhitelist);
                 sb.AppendLine("affinityCores=" + AffinityCores.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterMode=" + FilterMode.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterPreset=" + FilterPreset.ToString(CultureInfo.InvariantCulture));
@@ -192,6 +198,7 @@ namespace FrameForge
                 sb.AppendLine("memAuto=" + B(MemAuto));
                 sb.AppendLine("memThreshold=" + MemThreshold.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("autostart=" + B(Autostart));
+                sb.AppendLine("checkUpdates=" + B(CheckUpdates));
                 sb.AppendLine("closeToTray=" + B(CloseToTray));
                 sb.AppendLine("askedElevation=" + B(AskedElevation));
                 File.WriteAllText(FilePath, sb.ToString(), new UTF8Encoding(false));
@@ -277,6 +284,14 @@ namespace FrameForge
             BoostBackground = true;
             BoostAffinity = true;
             BoostIrq = true;
+        }
+
+        /// <summary>拆出保护名单里的进程名(逗号、分号或空白分隔)。</summary>
+        public string[] WhitelistNames()
+        {
+            if (string.IsNullOrEmpty(BoostWhitelist)) return new string[0];
+            return BoostWhitelist.Split(new char[] { ',', ';', ' ', '\t', '\r', '\n' },
+                StringSplitOptions.RemoveEmptyEntries);
         }
 
         private static string B(bool v) { return v ? "1" : "0"; }

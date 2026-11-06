@@ -43,12 +43,17 @@ namespace FrameForge.UI
         private BoostPage boostPage;
         private SettingsPage setPage;
         private ReportPage reportPage;
+        private HealthPage healthPage;
 
         private Timer ui;
         private Timer saveTimer;
+        private Timer updateTimer;
+        private Timer captureTimer;
+        private bool captureGuard;
         private NotifyIcon tray;
         private Icon appIcon;
         private bool trayHinted;
+        private string trayTip = "";
 
         private bool ovShown;
         private bool lastFullscreen;
@@ -115,9 +120,25 @@ namespace FrameForge.UI
 
             Sessions = new SessionStore();
             Sessions.Load();
+            if (reportPage != null) reportPage.Reload();
             Tracker = new SessionTracker(Sessions);
             Tracker.MinSeconds = St.ReportMinSec;
             Tracker.Completed += delegate(SessionRecord r) { OnSessionDone(r); };
+
+            // 启动 6 秒后再查更新:让界面先画出来,也避开开机时的一堆启动项。
+            if (St.CheckUpdates)
+            {
+                updateTimer = new Timer();
+                updateTimer.Interval = 6000;
+                updateTimer.Tick += delegate
+                {
+                    updateTimer.Stop();
+                    updateTimer.Dispose();
+                    updateTimer = null;
+                    CheckUpdates(false);
+                };
+                updateTimer.Start();
+            }
 
             LayoutAll();
         }
@@ -189,10 +210,11 @@ namespace FrameForge.UI
         {
             boostPage = new BoostPage(this);
             reportPage = new ReportPage(this);
+            healthPage = new HealthPage(this);
             setPage = new SettingsPage(this);
             pages = new Page[]
             {
-                boostPage, new FilterPage(this), new OverlayPage(this), reportPage, setPage
+                boostPage, new FilterPage(this), new OverlayPage(this), reportPage, healthPage, setPage
             };
             for (int i = 0; i < pages.Length; i++)
             {
@@ -213,16 +235,23 @@ namespace FrameForge.UI
 
         private void BuildTray()
         {
-            var menu = new ContextMenuStrip();
-            menu.Items.Add(I18n.T("tray.open"), null, delegate { RestoreFromTray(); });
-            menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add(I18n.T("tray.exit"), null, delegate { Close(); });
+            // 菜单只留两个动作,其余功能都在主界面里,托盘保持安静。
+            var menu = new TrayMenu();
+            menu.Add(I18n.T("tray.open"), delegate { RestoreFromTray(); });
+
+            ToolStripMenuItem exitItem = menu.Add(I18n.T("tray.exit"), delegate { Close(); });
+            exitItem.Tag = Theme.Danger;
 
             tray = new NotifyIcon();
             tray.Icon = appIcon;
             tray.Text = "FrameForge";
             tray.ContextMenuStrip = menu;
             tray.DoubleClick += delegate { RestoreFromTray(); };
+            // 托盘图标现在很常见是"点一下打开",双击只是习惯之一,两种都支持。
+            tray.MouseClick += delegate(object sender, MouseEventArgs e)
+            {
+                if (e.Button == MouseButtons.Left) RestoreFromTray();
+            };
             tray.Visible = true;
         }
 
@@ -236,6 +265,44 @@ namespace FrameForge.UI
             saveTimer = new Timer();
             saveTimer.Interval = 700;
             saveTimer.Tick += delegate { saveTimer.Stop(); St.Save(); };
+
+            // 截图守卫要跟着截图的"按下即开始",200ms 那一跳太慢,单独 150ms 轮询。
+            // 判定本身有快路径(看前台进程)兜着,慢路径限流到每秒一次,这里不必省。
+            captureTimer = new Timer();
+            captureTimer.Interval = 150;
+            captureTimer.Tick += delegate { CheckCaptureGuard(); };
+        }
+
+        /// <summary>
+        /// 截图守卫:截图工具铺开全屏取色层时,先把滤镜还原、叠加层收起。
+        /// 全屏颜色矩阵会让部分工具抓到的画面发黑甚至抓不到,置顶的叠加层还会被一起截进去;
+        /// 工具退出后(取色层消失)自动恢复,用户不需要手动关滤镜。
+        /// </summary>
+        private void CheckCaptureGuard()
+        {
+            bool active = false;
+            try { active = Monitor.CaptureActive(); } catch { }
+            if (active == captureGuard) return;
+            captureGuard = active;
+            Log.Write("capture guard: " + (active ? "on" : "off"));
+            // 这里在 UI 线程上跑,任何异常都不能让消息循环断掉。
+            try { ApplyFilter(); } catch (Exception ex) { Log.Write("guard filter: " + ex.Message); }
+            try { SyncOverlay(); } catch (Exception ex) { Log.Write("guard overlay: " + ex.Message); }
+        }
+
+        /// <summary>托盘提示跟着检测结果走,收起窗口后也能一眼看到当前在加速哪个游戏。</summary>
+        private void UpdateTrayTip(SysSample s)
+        {
+            string text = "FrameForge";
+            if (s != null && s.GamePid > 0)
+            {
+                string name = s.GameTitle.Length > 0 ? s.GameTitle : s.GameName;
+                if (name.Length > 0) text = "FrameForge · " + name;
+            }
+            if (text == trayTip) return;
+            trayTip = text;
+            if (text.Length > 63) text = text.Substring(0, 62) + "…";
+            if (tray != null) tray.Text = text;
         }
 
         private string[] NavItems()
@@ -243,7 +310,8 @@ namespace FrameForge.UI
             return new string[]
             {
                 I18n.T("nav.boost"), I18n.T("nav.filter"),
-                I18n.T("nav.overlay"), I18n.T("nav.report"), I18n.T("nav.settings")
+                I18n.T("nav.overlay"), I18n.T("nav.report"),
+                I18n.T("nav.health"), I18n.T("nav.settings")
             };
         }
 
@@ -254,9 +322,10 @@ namespace FrameForge.UI
             base.OnShown(e);
             Mon.Start();
             ui.Start();
+            captureTimer.Start();
             if (setPage != null) setPage.UpdateStatus();
             SyncOverlay();
-            Sys.Filter.Init();
+            // 放大镜按需初始化(ApplyFilter 内部决定),不再开机就挂着。
             ApplyFilter();
             if (startMinimized) { HideToTray(false); return; }
             if (!St.AskedElevation && !MemEngine.IsAdmin) AskElevationOnce();
@@ -311,12 +380,14 @@ namespace FrameForge.UI
                 ApplyFilter();
             }
 
-            // 切出游戏(看状态/看网页)的短时间内继续跟踪,否则一看数据帧率就被清零。
-            if (s.GameRecent && s.GamePid > 0) Fps.Track(s.GamePid);
+            // 只要游戏进程还在就保持采集。GameRecent 在切窗口、加载、UAC 弹窗时会短暂变假,
+            // 跟着它反复 Stop/Start 会让帧率断流好几秒,赛后记录也会被拆成两段。
+            if (s.GamePid > 0) Fps.Track(s.GamePid);
             else Fps.Stop();
 
             Ov.Feed(s, Fps.Fps, Fps.Low1);
             Tracker.Feed(s, Fps.Fps, Fps.Low1);
+            UpdateTrayTip(s);
 
             CheckBoostAlive();
             MaybeAutoBoost(s);
@@ -401,7 +472,7 @@ namespace FrameForge.UI
             btnTheme.SetBounds(x, by, bh, bh); x -= bh + gap;
             btnLang.SetBounds(x, by, bh, bh);
 
-            int navW = Ui.Px(I18n.IsEn ? 472 : 378);
+            int navW = Ui.Px(I18n.IsEn ? 566 : 454);
             int limit = Width - Ui.Px(480);
             if (navW > limit) navW = limit;
             if (navW < Ui.Px(220)) navW = Ui.Px(220);
@@ -556,6 +627,7 @@ namespace FrameForge.UI
         {
             if (ui != null) ui.Stop();
             if (saveTimer != null) saveTimer.Stop();
+            if (captureTimer != null) captureTimer.Stop();
             // 退出时正在玩的对局也要留下记录,否则关掉软件这局的成绩就丢了。
             try { if (Tracker != null) Tracker.Flush(); } catch { }
             try { if (St != null) St.Save(); } catch { }

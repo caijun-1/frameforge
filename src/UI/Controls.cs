@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
+using System.IO;
 using System.Windows.Forms;
 
 namespace FrameForge.UI
@@ -1128,6 +1129,180 @@ namespace FrameForge.UI
                 TextRenderer.DrawText(g, dBody, Theme.F(9.5f, FontStyle.Regular), bodyRect, Theme.Sub,
                     TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
             }
+        }
+    }
+
+    /// <summary>列表与报告前面用的小图标。</summary>
+    public enum AppGlyph
+    {
+        App,
+        Gamepad,
+        Chart,
+        Shield
+    }
+
+    /// <summary>
+    /// 自绘矢量小图标:线宽、留白按方框大小等比缩放,颜色跟随主题,
+    /// 不依赖外部图片,也不受 DPI 影响。
+    /// </summary>
+    public static class AppIcons
+    {
+        public static void Draw(Graphics g, AppGlyph kind, Rectangle box, Color color)
+        {
+            if (box.Width <= 0 || box.Height <= 0) return;
+
+            SmoothingMode old = g.SmoothingMode;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            float x = box.X, y = box.Y, w = box.Width, h = box.Height;
+            float sw = Math.Max(1f, Math.Min(w, h) * 0.075f);
+
+            switch (kind)
+            {
+                case AppGlyph.Shield: Shield(g, x, y, w, h, color, sw); break;
+                case AppGlyph.Gamepad: Pad(g, x, y, w, h, color, sw); break;
+                case AppGlyph.Chart: Chart(g, x, y, w, h, color, sw); break;
+                default: Window(g, x, y, w, h, color, sw); break;
+            }
+
+            g.SmoothingMode = old;
+        }
+
+        // 程序图标缓存:同一个 exe 只解一次,列表滚动时不重复读文件。
+        private static readonly Dictionary<string, Image> pics = new Dictionary<string, Image>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>读 exe 自带的图标(就是资源管理器里看到的那个);读不到返回 null。</summary>
+        public static Image Load(string exePath)
+        {
+            if (string.IsNullOrEmpty(exePath)) return null;
+            Image img;
+            if (pics.TryGetValue(exePath, out img)) return img;
+            img = null;
+            try
+            {
+                if (File.Exists(exePath))
+                {
+                    using (Icon ic = Icon.ExtractAssociatedIcon(exePath))
+                        if (ic != null) img = ic.ToBitmap();
+                }
+            }
+            catch { img = null; }
+            pics[exePath] = img;
+            return img;
+        }
+
+        /// <summary>
+        /// 优先画 exe 自己的图标(圆角裁切,和系统任务栏观感一致),
+        /// 取不到图标时退回自绘矢量图标,保证列表不会出现空位。
+        /// </summary>
+        public static void DrawApp(Graphics g, string exePath, Rectangle box, Color fallback, AppGlyph kind)
+        {
+            Image img = Load(exePath);
+            if (img == null)
+            {
+                Draw(g, kind, box, fallback);
+                return;
+            }
+            if (box.Width <= 0 || box.Height <= 0) return;
+
+            GraphicsState st = g.Save();
+            try
+            {
+                using (GraphicsPath p = Ui.Round(new RectangleF(box.X, box.Y, box.Width, box.Height), box.Width * 0.26f))
+                    g.SetClip(p, CombineMode.Intersect);
+                InterpolationMode old = g.InterpolationMode;
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.DrawImage(img, box);
+                g.InterpolationMode = old;
+            }
+            finally { g.Restore(st); }
+        }
+
+        private static void Shield(Graphics g, float x, float y, float w, float h, Color c, float sw)
+        {
+            using (var p = new GraphicsPath())
+            {
+                p.AddLine(x + w * 0.5f, y + h * 0.08f, x + w * 0.9f, y + h * 0.2f);
+                p.AddLine(x + w * 0.9f, y + h * 0.2f, x + w * 0.9f, y + h * 0.5f);
+                p.AddBezier(x + w * 0.9f, y + h * 0.5f, x + w * 0.9f, y + h * 0.74f,
+                    x + w * 0.72f, y + h * 0.9f, x + w * 0.5f, y + h * 0.94f);
+                p.AddBezier(x + w * 0.5f, y + h * 0.94f, x + w * 0.28f, y + h * 0.9f,
+                    x + w * 0.1f, y + h * 0.74f, x + w * 0.1f, y + h * 0.5f);
+                p.AddLine(x + w * 0.1f, y + h * 0.5f, x + w * 0.1f, y + h * 0.2f);
+                p.CloseFigure();
+
+                using (var b = new SolidBrush(Theme.Alpha(c, 26))) g.FillPath(b, p);
+                using (var pen = new Pen(c, sw))
+                {
+                    pen.LineJoin = LineJoin.Round;
+                    g.DrawPath(pen, p);
+                }
+            }
+
+            using (var pen = new Pen(c, sw))
+            {
+                pen.StartCap = LineCap.Round;
+                pen.EndCap = LineCap.Round;
+                pen.LineJoin = LineJoin.Round;
+                g.DrawLines(pen, new PointF[] {
+                    new PointF(x + w * 0.33f, y + h * 0.5f),
+                    new PointF(x + w * 0.45f, y + h * 0.62f),
+                    new PointF(x + w * 0.68f, y + h * 0.38f) });
+            }
+        }
+
+        private static void Pad(Graphics g, float x, float y, float w, float h, Color c, float sw)
+        {
+            var body = new RectangleF(x + w * 0.04f, y + h * 0.29f, w * 0.92f, h * 0.44f);
+            float rad = body.Height * 0.5f;
+            Ui.Fill(g, body, rad, Theme.Alpha(c, 24));
+            Ui.Stroke(g, body, rad, c, sw);
+
+            float cx = body.X + body.Width * 0.28f, cy = body.Y + body.Height * 0.5f;
+            float arm = body.Height * 0.19f;
+            using (var pen = new Pen(c, sw))
+            {
+                pen.StartCap = LineCap.Round;
+                pen.EndCap = LineCap.Round;
+                g.DrawLine(pen, cx - arm, cy, cx + arm, cy);
+                g.DrawLine(pen, cx, cy - arm, cx, cy + arm);
+            }
+
+            float r = Math.Max(1f, body.Height * 0.09f);
+            using (var b = new SolidBrush(c))
+            {
+                float ry = cy - body.Height * 0.04f;
+                g.FillEllipse(b, body.X + body.Width * 0.66f - r, ry - r, r * 2, r * 2);
+                g.FillEllipse(b, body.X + body.Width * 0.79f - r, ry - r, r * 2, r * 2);
+            }
+        }
+
+        private static void Chart(Graphics g, float x, float y, float w, float h, Color c, float sw)
+        {
+            float bw = w * 0.2f;
+            float gap = w * 0.12f;
+            float baseY = y + h * 0.86f;
+            float x0 = x + (w - (bw * 3 + gap * 2)) / 2f;
+            float[] hs = new float[] { h * 0.32f, h * 0.54f, h * 0.74f };
+
+            for (int i = 0; i < 3; i++)
+            {
+                var r = new RectangleF(x0 + i * (bw + gap), baseY - hs[i], bw, hs[i]);
+                Ui.Fill(g, r, bw * 0.34f, Theme.Alpha(c, i == 2 ? 58 : 32));
+                Ui.Stroke(g, r, bw * 0.34f, c, sw * 0.85f);
+            }
+        }
+
+        private static void Window(Graphics g, float x, float y, float w, float h, Color c, float sw)
+        {
+            var r = new RectangleF(x + w * 0.1f, y + h * 0.16f, w * 0.8f, h * 0.68f);
+            float rad = w * 0.13f;
+            Ui.Fill(g, r, rad, Theme.Alpha(c, 22));
+            Ui.Stroke(g, r, rad, c, sw);
+
+            float barY = r.Y + r.Height * 0.28f;
+            using (var pen = new Pen(c, sw * 0.8f))
+                g.DrawLine(pen, r.X + 1f, barY, r.Right - 1f, barY);
         }
     }
 }

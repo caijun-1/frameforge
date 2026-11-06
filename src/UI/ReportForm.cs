@@ -83,14 +83,18 @@ namespace FrameForge.UI
             int pad = Ui.Px(24);
             int y = Ui.Px(24);
 
+            // 行高要留够:SingleLine 下矩形比字形略矮就会裁掉文字底部(高 DPI 下尤其明显)。
             Txt(g, I18n.T("report.title"), Theme.Bold(11f), Theme.Sub,
-                new Rectangle(pad, y, Width - pad * 2, Ui.Px(20)), TextFormatFlags.Left);
-            y += Ui.Px(24);
+                new Rectangle(pad, y, Width - pad * 2, Ui.Px(26)), TextFormatFlags.Left);
+            y += Ui.Px(28);
 
-            Txt(g, Safe(rec.Title), Theme.Bold(21f), Theme.Text,
-                new Rectangle(pad, y, Width - pad * 2, Ui.Px(34)),
+            int ico = Ui.Px(30);
+            AppIcons.DrawApp(g, rec.IconPath, new Rectangle(pad, y + Ui.Px(5), ico, ico), Theme.Accent, AppGlyph.Chart);
+
+            Txt(g, Safe(rec.DisplayName), Theme.Bold(21f), Theme.Text,
+                new Rectangle(pad + ico + Ui.Px(12), y, Width - pad * 2 - ico - Ui.Px(12), Ui.Px(40)),
                 TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
-            y += Ui.Px(34);
+            y += Ui.Px(42);
 
             string when = rec.Start.ToString("yyyy-MM-dd HH:mm") + "   ·   "
                 + I18n.T("report.duration") + " " + rec.Duration;

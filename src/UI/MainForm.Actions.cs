@@ -33,6 +33,69 @@ namespace FrameForge.UI
             if (toast != null) toast.Show(text);
         }
 
+        /// <summary>检查更新。manual=true 表示用户主动点的,没更新时也给个提示。</summary>
+        public void CheckUpdates(bool manual)
+        {
+            if (!manual && !St.CheckUpdates) return;
+            UpdateCheck.Start(delegate(bool newer)
+            {
+                if (IsDisposed || !IsHandleCreated) return;
+                try
+                {
+                    BeginInvoke((MethodInvoker)delegate
+                    {
+                        if (IsDisposed) return;
+                        if (newer) ShowUpdateDialog();
+                        else if (manual) Toast(I18n.T("upd.latest"));
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Log.Write("update invoke failed: " + ex.Message);
+                }
+            });
+        }
+
+        private void ShowUpdateDialog()
+        {
+            using (UpdateDialog d = new UpdateDialog(UpdateCheck.CurrentVersion, "v" + UpdateCheck.LatestTag))
+            {
+                if (d.ShowDialog(this) != DialogResult.OK) return;
+                if (d.InstallRequested) Close();
+                else UpdateCheck.OpenDownloadPage();
+            }
+        }
+
+        /// <summary>编辑「暂停后台进程」的保护名单。</summary>
+        public void EditWhitelist()
+        {
+            using (var d = new WhitelistDialog(St.WhitelistNames()))
+            {
+                if (d.ShowDialog(this) != DialogResult.OK) return;
+                St.BoostWhitelist = d.Result;
+                St.Save();
+                BoostEngine.SetWhitelist(St.WhitelistNames());
+                Toast(I18n.T("toast.whitelist"));
+            }
+        }
+
+        /// <summary>还原全部改动,包括上次异常退出留下的日志。</summary>
+        public void RestoreAll()
+        {
+            if (!DialogBox.Ask(this, I18n.T("set.restoreall"), I18n.T("set.restoreall.body"),
+                    I18n.T("set.restoreall.ok"), I18n.T("dialog.cancel"))) return;
+
+            // 先按日志还原:日志里记的是原始值,而且会顺带清掉日志;
+            // 再走一次内存里的还原,把还挂起着的后台进程恢复回来。
+            int n = 0;
+            try { n = BoostJournal.RestoreAll(); }
+            catch (Exception ex) { Log.Write("restore all: " + ex.Message); }
+            RestoreBoost(false);
+
+            if (setPage != null) setPage.SyncState();
+            Toast(n > 0 ? I18n.T("toast.restoreall", n) : I18n.T("toast.restored"));
+        }
+
         public void SaveSettingsSoon()
         {
             if (saveTimer == null) return;
@@ -99,6 +162,7 @@ namespace FrameForge.UI
             boostPage = null;
             setPage = null;
             reportPage = null;
+            healthPage = null;
 
             BuildPages();
             ShowPage(idx);
@@ -286,22 +350,31 @@ namespace FrameForge.UI
 
         private string ComposeResult(BoostResult r)
         {
-            var parts = new List<string>();
-            if (r.PriorityOk > 0) parts.Add(I18n.T("boost.item.priority"));
-            if (r.AffinityOk > 0) parts.Add(I18n.T("boost.item.affinity", r.AffinityCores));
-            if (r.IrqOk > 0) parts.Add(I18n.T("boost.item.irq", r.IrqDevices));
-            if (r.PowerOk > 0) parts.Add(I18n.T("boost.item.power"));
-            if (r.TimerOk > 0) parts.Add(I18n.T("boost.item.timer"));
-            if (r.DvrOk > 0) parts.Add(I18n.T("boost.item.dvr"));
-            if (r.MemReleased > 0) parts.Add(I18n.T("boost.item.mem", Fmt.Bytes((ulong)r.MemReleased)));
-            if (r.Suspended > 0) parts.Add(I18n.T("boost.item.bg", r.Suspended));
+            // 只报确认生效的数量,跳过项用原因短语挂在后面,不列一堆看起来已经成功的条目。
+            int applied = 0;
+            if (r.PriorityOk > 0) applied++;
+            if (r.AffinityOk > 0) applied++;
+            if (r.IrqOk > 0) applied++;
+            if (r.PowerOk > 0) applied++;
+            if (r.TimerOk > 0) applied++;
+            if (r.DvrOk > 0) applied++;
+            if (r.MemoryOk > 0) applied++;
+            if (r.Suspended > 0) applied++;
 
-            string text = parts.Count > 0
-                ? string.Join("   ·   ", parts.ToArray())
-                : I18n.T("boost.item.failed");
+            var reasons = new List<string>();
+            for (int i = 0; i < r.Skipped.Count; i++)
+            {
+                string t = I18n.T(r.Skipped[i]);
+                if (t.Length == 0 || t == r.Skipped[i] || reasons.Contains(t)) continue;
+                reasons.Add(t);
+            }
 
-            string names = Boost.SuspendedNames();
-            if (names.Length > 0) text += "\r\n" + I18n.T("boost.item.bg.names", names);
+            if (applied == 0 && reasons.Count == 0) return I18n.T("boost.item.failed");
+
+            string text = I18n.T("boost.result.count", applied, r.Skipped.Count);
+            if (reasons.Count > 0)
+                text += I18n.T("boost.result.reasons",
+                    string.Join(I18n.IsEn ? ", " : "、", reasons.ToArray()));
             return text;
         }
 
@@ -335,7 +408,9 @@ namespace FrameForge.UI
         public void SyncOverlay()
         {
             if (Ov == null) return;
-            bool show = St.OverlayOn && (lastFullscreen || !St.OverlayLocked);
+            // 截图进行时先收起来:置顶窗口每 200ms 重画一次,既会拖慢截图的取色层,
+            // 也会把帧率文字一起截进图里。
+            bool show = !captureGuard && St.OverlayOn && (lastFullscreen || !St.OverlayLocked);
             if (show)
             {
                 Ov.ApplySettings();
@@ -354,7 +429,14 @@ namespace FrameForge.UI
         public void ApplyFilter()
         {
             bool isGame = Mon != null && Mon.Current != null && Mon.Current.Fullscreen;
-            try { Sys.Filter.ApplySettings(St, isGame); }
+            try
+            {
+                // 截图工具在抓屏:只推恒等矩阵不够,放大镜的整条效果链还挂在 DWM 上,
+                // Win+Shift+S 的取色层会和它抢同一帧,整屏就卡住。这里直接把放大镜卸掉,
+                // 工具栏收起后由守卫重新装回来。
+                if (captureGuard) Sys.Filter.Suspend();
+                else Sys.Filter.ApplySettings(St, isGame);
+            }
             catch (Exception ex) { Log.Write("filter: " + ex.Message); }
         }
 

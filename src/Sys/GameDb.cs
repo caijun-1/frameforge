@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using Microsoft.Win32;
 
 namespace FrameForge.Sys
 {
@@ -256,6 +257,12 @@ namespace FrameForge.Sys
         };
 
         private static readonly Dictionary<string, string> cache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // 进程名 → exe 全路径。读程序图标要用;进程退出后仍能靠记下的路径继续显示图标。
+        private static readonly Dictionary<string, string> paths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // 进程名 → 上次没找到的时刻。列表每次重绘都要图标,找不到时别反复扫进程。
+        private static readonly Dictionary<string, DateTime> miss = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        // exe 文件名 → 完整路径,来自资源管理器缓存(旧战绩记录只有进程名时靠它补图标)。
+        private static Dictionary<string, string> mui;
         private static Dictionary<string, string> user;
         private static bool userLoaded;
 
@@ -297,6 +304,9 @@ namespace FrameForge.Sys
         public static void ClearCache()
         {
             cache.Clear();
+            paths.Clear();
+            miss.Clear();
+            mui = null;
             user = null;
             userLoaded = false;
         }
@@ -323,6 +333,7 @@ namespace FrameForge.Sys
             if (Map.TryGetValue(key, out pair)) { cache[key] = pair; return pair; }
 
             string path = ProcessPath(pid);
+            if (path.Length > 0) paths[key] = path;
 
             pair = FolderHint(path);
             if (pair.Length > 0) { cache[key] = pair; return pair; }
@@ -401,6 +412,132 @@ namespace FrameForge.Sys
             catch { return ""; }
         }
 
+        /// <summary>取某个进程的 exe 路径,取不到返回空。</summary>
+        public static string PathOf(int pid)
+        {
+            string p = ProcessPath(pid);
+            return p == null ? "" : p;
+        }
+
+        /// <summary>
+        /// 按进程名找 exe 路径:先查记下的路径,再扫描同名运行中的进程,
+        /// 最后从资源管理器缓存(MuiCache)里找曾经运行过的程序。
+        /// 用来给战绩、报告、保护名单读程序自己的图标。
+        /// </summary>
+        public static string PathFor(string exe)
+        {
+            string key = Norm(exe);
+            if (key.Length == 0) return "";
+
+            string p;
+            if (paths.TryGetValue(key, out p) && File.Exists(p)) return p;
+
+            // 列表每次重绘都会来问一遍,短时间内找不到就别反复扫进程。
+            DateTime at;
+            if (miss.TryGetValue(key, out at) && (DateTime.UtcNow - at).TotalSeconds < 8) return "";
+
+            p = RunningPath(key);
+            if (p.Length == 0) p = MuiPath(key + ".exe");
+
+            if (p.Length == 0)
+            {
+                miss[key] = DateTime.UtcNow;
+                return "";
+            }
+            miss.Remove(key);
+            paths[key] = p;
+            return p;
+        }
+
+        private static string RunningPath(string key)
+        {
+            Process[] ps;
+            try { ps = Process.GetProcessesByName(key); }
+            catch { return ""; }
+            try
+            {
+                for (int i = 0; i < ps.Length; i++)
+                {
+                    try
+                    {
+                        string f = ps[i].MainModule.FileName;
+                        if (!string.IsNullOrEmpty(f)) return f;
+                    }
+                    catch { }
+                }
+            }
+            finally
+            {
+                for (int i = 0; i < ps.Length; i++) { try { ps[i].Dispose(); } catch { } }
+            }
+            return "";
+        }
+
+        /// <summary>按 exe 文件名查 MuiCache 里记下的完整路径,没有返回空。</summary>
+        private static string MuiPath(string file)
+        {
+            if (mui == null) LoadMui();
+            string p;
+            return mui.TryGetValue(file, out p) ? p : "";
+        }
+
+        /// <summary>
+        /// 资源管理器会把它见过的每个程序记在 MuiCache 里(值名就是 exe 完整路径),
+        /// 旧战绩记录没存路径、游戏又没在跑时,靠这里才拿得到真实图标。
+        /// </summary>
+        private static void LoadMui()
+        {
+            mui = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                using (RegistryKey k = Registry.CurrentUser.OpenSubKey(
+                    @"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache"))
+                {
+                    if (k == null) return;
+                    string[] names = k.GetValueNames();
+                    for (int i = 0; i < names.Length; i++)
+                    {
+                        string p = MuiExe(names[i]);
+                        if (p.Length == 0) continue;
+                        string file = Path.GetFileName(p);
+                        if (file.Length == 0) continue;
+
+                        // 同名 exe 会有一堆(launcher.exe),优先留在游戏目录里的那个。
+                        string old;
+                        if (mui.TryGetValue(file, out old) && !(UnderLibrary(p) && !UnderLibrary(old)))
+                            continue;
+                        mui[file] = p;
+                    }
+                }
+            }
+            catch (Exception ex) { Log.Write("muicache: " + ex.Message); }
+        }
+
+        /// <summary>MuiCache 的值名是「exe 完整路径.FriendlyAppName」,还原成 exe 路径。</summary>
+        private static string MuiExe(string name)
+        {
+            const string friendly = ".FriendlyAppName";
+            const string company = ".ApplicationCompany";
+            string p = name;
+            if (p.EndsWith(friendly, StringComparison.OrdinalIgnoreCase))
+                p = p.Substring(0, p.Length - friendly.Length);
+            else if (p.EndsWith(company, StringComparison.OrdinalIgnoreCase))
+                p = p.Substring(0, p.Length - company.Length);
+            else return "";
+            if (!p.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) return "";
+            try { return File.Exists(p) ? p : ""; }
+            catch { return ""; }
+        }
+
+        private static bool UnderLibrary(string path)
+        {
+            if (path.Length == 0) return false;
+            string p = path.ToLowerInvariant().Replace('/', '\\');
+            for (int i = 0; i < Libraries.Length; i++)
+                if (p.IndexOf(Libraries[i], StringComparison.Ordinal) >= 0) return true;
+            return false;
+        }
+
         /// <summary>Java 版我的世界:进程名是 javaw,只能靠窗口标题判断。</summary>
         public static bool JavaGame(int pid)
         {
@@ -421,12 +558,7 @@ namespace FrameForge.Sys
         /// <summary>exe 是否位于常见游戏安装目录下(用于兜底识别内置库没有的游戏)。</summary>
         public static bool LibraryGame(int pid)
         {
-            string path = ProcessPath(pid);
-            if (path.Length == 0) return false;
-            string p = path.ToLowerInvariant().Replace('/', '\\');
-            for (int i = 0; i < Libraries.Length; i++)
-                if (p.IndexOf(Libraries[i], StringComparison.Ordinal) >= 0) return true;
-            return false;
+            return UnderLibrary(ProcessPath(pid));
         }
 
         private static bool IsJava(string key)
