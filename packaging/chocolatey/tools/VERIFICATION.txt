@@ -22,8 +22,8 @@ https://github.com/caijun-1/frameforge/releases/download/v1.3.2/FrameForge.exe.s
 File details
 ------------
 File name:  FrameForge.exe
-File size:  378368 bytes (370 KB)
-SHA256:     587E7BBCB33DDB5B2EF0752803554E3ACDC4BC18A4E40F385F23029EF0045A51
+File size:  395776 bytes (386 KB)
+SHA256:     2032201316E70F2CE3D50128BADE243E94EA55465524D39A52A6469919AA4AA0
 
 How to verify manually
 ----------------------
