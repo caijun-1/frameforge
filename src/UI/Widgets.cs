@@ -43,6 +43,14 @@ namespace FrameForge.UI
 
         public Slider() { Cursor = Cursors.Hand; }
 
+        protected override void OnEnabledChanged(EventArgs e)
+        {
+            Cursor = Enabled ? Cursors.Hand : Cursors.Default;
+            hover = false;
+            Invalidate();
+            base.OnEnabledChanged(e);
+        }
+
         protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
         protected override void OnMouseLeave(EventArgs e) { hover = false; Invalidate(); base.OnMouseLeave(e); }
 
@@ -92,10 +100,10 @@ namespace FrameForge.UI
             // 双极性滑杆(-100~100)正值补一个加号,数值方向一眼可辨。
             string shown = val > 0 && Min < 0 ? "+" + val : val.ToString();
             TextRenderer.DrawText(g, Label, Theme.F(9f, FontStyle.Regular),
-                new Rectangle(0, 0, Width, (int)labelH), Theme.Sub,
+                new Rectangle(0, 0, Width, (int)labelH), Enabled ? Theme.Sub : Theme.Faint,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
             TextRenderer.DrawText(g, shown + Unit, Theme.F(9.5f, FontStyle.Bold),
-                new Rectangle(0, 0, Width, (int)labelH), Theme.Accent,
+                new Rectangle(0, 0, Width, (int)labelH), Enabled ? Theme.Accent : Theme.Faint,
                 TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
 
             float cy = labelH + (Height - labelH) / 2f;
@@ -110,7 +118,7 @@ namespace FrameForge.UI
             float to = left + (right - left) * (float)t;
             var filled = new RectangleF(Math.Min(from, to), cy - Ui.Fp(3), Math.Abs(to - from), Ui.Fp(6));
             if (filled.Width > 0.5f)
-                Ui.Fill(g, filled, filled.Height / 2f, Theme.Accent);
+                Ui.Fill(g, filled, filled.Height / 2f, Enabled ? Theme.Accent : Theme.Track);
 
             float knob = Ui.Fp(14);
             float stroke = Math.Max(2f, Ui.Fp(2.6));
@@ -123,7 +131,7 @@ namespace FrameForge.UI
             using (var sh = new SolidBrush(Color.FromArgb(Theme.Dark ? 90 : 26, 15, 23, 42)))
                 g.FillEllipse(sh, kr.X, kr.Y + Ui.Fp(1.2f), kr.Width, kr.Height);
             using (var b = new SolidBrush(Theme.Card)) g.FillEllipse(b, kr);
-            using (var pen = new Pen(hover || drag ? Theme.AccentHover : Theme.Accent, stroke))
+            using (var pen = new Pen(!Enabled ? Theme.Faint : hover || drag ? Theme.AccentHover : Theme.Accent, stroke))
                 g.DrawEllipse(pen, kr);
         }
     }

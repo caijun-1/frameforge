@@ -24,6 +24,7 @@ $cscArgs = @(
     ("/win32manifest:" + (Join-Path $root "app.manifest")),
     ("/win32icon:" + (Join-Path $root "app.ico")),
     ("/resource:" + (Join-Path $root "app.ico") + ",app.ico"),
+    ("/r:System.Management.dll"),
     ("/out:" + $out)
 ) + $src
 

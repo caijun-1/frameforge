@@ -56,6 +56,23 @@ namespace FrameForge.Sys
             "dwm", "FrameForge", "audiodg", "SecurityHealthService", "WUDFHost", "fontdrvhost"
         };
 
+        /// <summary>
+        /// 反作弊组件一律不碰:暂停或裁剪 ACE / EAC / BattlEye 之类的进程,
+        /// 会被当成篡改运行环境,后果远比省下的那点内存严重。
+        /// 用前缀匹配覆盖同系列的不同版本和进程名。
+        /// </summary>
+        public static bool IsProtectedName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return true;
+            if (Protected.Contains(name)) return true;
+            string n = name.ToLowerInvariant();
+            return n.StartsWith("sguard") || n.StartsWith("ace") || n.StartsWith("anticheatexpert")
+                || n.StartsWith("tenprotect") || n.StartsWith("tensafe") || n.StartsWith("qqprotect")
+                || n.StartsWith("easyanticheat") || n.StartsWith("beservice") || n.StartsWith("battleye")
+                || n.StartsWith("vgc") || n.StartsWith("nprotect") || n.StartsWith("gameguard")
+                || n.StartsWith("xigncode");
+        }
+
         private const ulong MinWorkingSetBytes = 20UL << 20;
         private const ulong LightMaxWorkingSet = 300UL << 20;
 
@@ -346,7 +363,7 @@ namespace FrameForge.Sys
             {
                 if (budget >= cap) break;
                 if (e.Pid == self || e.Pid <= 4) { skipped++; continue; }
-                if (string.IsNullOrEmpty(e.Name) || Protected.Contains(e.Name)) { skipped++; continue; }
+                if (string.IsNullOrEmpty(e.Name) || IsProtectedName(e.Name)) { skipped++; continue; }
                 if (keep.Contains(e.Pid)) { skipped++; continue; }
                 if (e.WorkingSet < MinWorkingSetBytes) { skipped++; continue; }
                 if (level == OptimizeLevel.Light && e.WorkingSet > LightMaxWorkingSet) { skipped++; continue; }

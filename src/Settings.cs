@@ -53,7 +53,6 @@ namespace FrameForge
         public int FilterMode = 0;            // 0 关 | 1 仅游戏 | 2 始终
         public int FilterPreset = 0;
         public int FilterIntensity = 100;
-        public int FilterBrightness = 0;
         public int FilterContrast = 0;
         public int FilterSaturation = 0;
         public int FilterWarmth = 0;
@@ -131,7 +130,6 @@ namespace FrameForge
                 case "filtermode": FilterMode = Int(v, 0); break;
                 case "filterpreset": FilterPreset = Int(v, 0); break;
                 case "filterintensity": FilterIntensity = Int(v, 100); break;
-                case "filterbrightness": FilterBrightness = Int(v, 0); break;
                 case "filtercontrast": FilterContrast = Int(v, 0); break;
                 case "filtersaturation": FilterSaturation = Int(v, 0); break;
                 case "filterwarmth": FilterWarmth = Int(v, 0); break;
@@ -187,7 +185,6 @@ namespace FrameForge
                 sb.AppendLine("filterMode=" + FilterMode.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterPreset=" + FilterPreset.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterIntensity=" + FilterIntensity.ToString(CultureInfo.InvariantCulture));
-                sb.AppendLine("filterBrightness=" + FilterBrightness.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterContrast=" + FilterContrast.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterSaturation=" + FilterSaturation.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterWarmth=" + FilterWarmth.ToString(CultureInfo.InvariantCulture));

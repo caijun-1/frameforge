@@ -351,6 +351,21 @@ namespace FrameForge.Sys
         }
 
         /// <summary>
+        /// 当前是否有 D3D 应用处于独占全屏。独占全屏的交换链不经过 DWM,
+        /// 任何分层置顶窗口都会被挡在游戏后面——这不是叠加层坏了,是系统限制。
+        /// </summary>
+        public static bool IsExclusiveFullscreen()
+        {
+            try
+            {
+                int state;
+                if (Native.SHQueryUserNotificationState(out state) != 0) return false;
+                return state == Native.QUNS_RUNNING_D3D_FULL_SCREEN;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
         /// 最后一层兜底:直接扫进程。只要进程是内置库里认识的游戏(或 Java 版我的世界),
         /// 并且有可见、未最小化的窗口,就认为"有游戏在跑"。
         /// 窗口化、小窗口、无边框但尺寸读不到的情况都能靠这一层认出来。

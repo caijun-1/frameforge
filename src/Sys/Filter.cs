@@ -115,7 +115,7 @@ namespace FrameForge.Sys
         {
             if (st == null) return Identity();
             return Build(st.FilterPreset, st.FilterIntensity,
-                st.FilterBrightness, st.FilterContrast, st.FilterSaturation, st.FilterWarmth,
+                st.FilterContrast, st.FilterSaturation, st.FilterWarmth,
                 st.FilterDark, st.FilterVibrance);
         }
 
@@ -148,9 +148,9 @@ namespace FrameForge.Sys
 
         /// <summary>
         /// 组合预设与自定义参数。intensity 0..100 把结果向恒等矩阵插值,
-        /// brightness/contrast/saturation/warmth 均为 -100..100。
+        /// contrast/saturation/warmth 均为 -100..100;亮度改由显示器硬件背光负责。
         /// </summary>
-        public static float[] Build(int preset, int intensity, int brightness, int contrast, int saturation, int warmth,
+        public static float[] Build(int preset, int intensity, int contrast, int saturation, int warmth,
             int dark = 0, int vibrance = 0)
         {
             double sat = 1.0, con = 1.0, bri = 0.0, warm = 0.0; double shadow = 0.0;
@@ -188,7 +188,6 @@ namespace FrameForge.Sys
             // 自定义滑杆叠加在预设之上:倍率整体收窄,拉到顶也不会过曝或发灰。
             sat *= 1.0 + saturation / 100.0 * 0.4;
             con *= 1.0 + contrast / 100.0 * 0.35;
-            bri += brightness / 100.0 * 0.14;
             warm += warmth / 100.0 * 0.4;
             sat *= 1.0 + vibrance / 100.0 * 0.4;            // 数字振动:只往上加饱和度
             shadow += dark / 100.0 * 0.4;                   // 暗部场景平衡

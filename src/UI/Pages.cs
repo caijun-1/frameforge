@@ -1719,6 +1719,8 @@ namespace FrameForge.UI
         private readonly Slider sIntensity, sBright, sContrast, sSat, sWarm, sDark, sVibrance;
         private readonly FlatButton resetBtn;
         private readonly ToolTip tips;
+        private readonly Timer brightTimer;
+        private int brightPending;
         // 0 = 通用,1 = 热门游戏;只是分组显示,不写进设置。
         private int group;
 
@@ -1794,7 +1796,28 @@ namespace FrameForge.UI
             resetBtn.Click += delegate { ResetCustom(); };
 
             sIntensity = MakeSlider(I18n.T("flt.intensity"), 0, 100, "%", host.St.FilterIntensity);
-            sBright = MakeSlider(I18n.T("flt.brightness"), -100, 100, "", host.St.FilterBrightness);
+
+            // 亮度直接写显示器硬件背光(DDC/CI),不再进滤镜矩阵。
+            brightTimer = new Timer();
+            brightTimer.Interval = 180;
+            brightTimer.Tick += delegate
+            {
+                brightTimer.Stop();
+                if (!Display.TrySet(brightPending)) Host.Toast(I18n.T("flt.bright.fail"));
+            };
+            sBright = new Slider();
+            sBright.Label = I18n.T("flt.brightness");
+            sBright.Min = 0;
+            sBright.Max = 100;
+            sBright.Unit = "%";
+            sBright.SetSilent(0);
+            sBright.Changed += delegate
+            {
+                brightPending = sBright.Value;
+                brightTimer.Stop();
+                brightTimer.Start();
+            };
+
             sContrast = MakeSlider(I18n.T("flt.contrast"), -100, 100, "", host.St.FilterContrast);
             sSat = MakeSlider(I18n.T("flt.saturation"), -100, 100, "", host.St.FilterSaturation);
             sWarm = MakeSlider(I18n.T("flt.warmth"), -100, 100, "", host.St.FilterWarmth);
@@ -1818,6 +1841,31 @@ namespace FrameForge.UI
             UpdateNote();
             UpdatePreview();
             LayoutCards();
+        }
+
+        /// <summary>切到滤镜页时把滑块同步成显示器当前亮度;不支持 DDC/CI 就禁用。</summary>
+        protected override void OnVisibleChanged(EventArgs e)
+        {
+            base.OnVisibleChanged(e);
+            if (!Visible)
+            {
+                brightTimer.Stop();
+                return;
+            }
+
+            Display.Attach(Host.Handle);
+            int v, lo, hi;
+            bool ok = Display.TryGet(out v, out lo, out hi);
+            sBright.Enabled = ok;
+            sBright.Label = I18n.T(ok ? "flt.brightness" : "flt.brightness.unsupported");
+            if (ok)
+            {
+                sBright.Min = lo;
+                sBright.Max = hi;
+                sBright.Unit = hi == 100 ? "%" : "";
+                sBright.SetSilent(v);
+            }
+            sBright.Invalidate();
         }
 
         private static Card NewCard()
@@ -1875,7 +1923,6 @@ namespace FrameForge.UI
         private void CommitCustom()
         {
             Host.St.FilterIntensity = sIntensity.Value;
-            Host.St.FilterBrightness = sBright.Value;
             Host.St.FilterContrast = sContrast.Value;
             Host.St.FilterSaturation = sSat.Value;
             Host.St.FilterWarmth = sWarm.Value;
@@ -1889,7 +1936,6 @@ namespace FrameForge.UI
         private void ResetCustom()
         {
             sIntensity.SetSilent(100);
-            sBright.SetSilent(0);
             sContrast.SetSilent(0);
             sSat.SetSilent(0);
             sWarm.SetSilent(0);

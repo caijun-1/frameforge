@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
@@ -156,8 +157,8 @@ namespace FrameForge.Sys
                     if (ws < 80L << 20) continue;
                     string name = p.ProcessName;
                     if (name.Length == 0) continue;
-                    // 内置保护(系统进程 + 平台/录制工具)和用户白名单都不参与暂停。
-                    if (Protected.Contains(name) || UserWhitelist.Contains(name)) continue;
+                    // 内置保护(系统进程 + 平台/录制工具 + 反作弊组件)和用户白名单都不参与暂停。
+                    if (Protected.Contains(name) || MemEngine.IsProtectedName(name) || UserWhitelist.Contains(name)) continue;
                     list.Add(new BackgroundProc { Pid = p.Id, Name = name, WorkingSet = (ulong)ws });
                 }
                 catch { }
@@ -332,7 +333,11 @@ namespace FrameForge.Sys
             GameName = gameName ?? "";
             StartedAt = DateTime.Now;
 
-            if (plan.Priority && ApplyPriority(gamePid)) r.PriorityOk = 1;
+            string priorityFail = "";
+            if (plan.Priority)
+            {
+                if (ApplyPriority(gamePid, out priorityFail)) r.PriorityOk = 1;
+            }
             if (plan.Affinity)
             {
                 try
@@ -384,7 +389,8 @@ namespace FrameForge.Sys
             r.Requested = (plan.Priority ? 1 : 0) + (plan.PowerPlan ? 1 : 0) + (plan.Timer ? 1 : 0)
                 + (plan.Dvr ? 1 : 0) + (plan.Memory ? 1 : 0) + (plan.Background ? 1 : 0)
                 + (plan.Affinity ? 1 : 0) + (plan.Irq ? 1 : 0);
-            if (plan.Priority && r.PriorityOk == 0) r.Skipped.Add("boost.skip.priority");
+            if (plan.Priority && r.PriorityOk == 0)
+                r.Skipped.Add(priorityFail.Length > 0 ? priorityFail : "boost.skip.priority");
             if (plan.PowerPlan && r.PowerOk == 0) r.Skipped.Add("boost.skip.power");
             if (plan.Timer && r.TimerOk == 0) r.Skipped.Add("boost.skip.timer");
             if (plan.Dvr && r.DvrOk == 0) r.Skipped.Add("boost.skip.dvr");
@@ -398,7 +404,8 @@ namespace FrameForge.Sys
             catch (Exception ex) { Log.Write("journal save: " + ex.Message); }
 
             Log.Write("boost apply pid=" + gamePid + " ok=" + (r.Ok ? "1" : "0")
-                + " prio=" + r.PriorityOk + " power=" + r.PowerOk + " timer=" + r.TimerOk
+                + " prio=" + r.PriorityOk + (priorityFail.Length > 0 ? "(" + priorityFail + ")" : "")
+                + " power=" + r.PowerOk + " timer=" + r.TimerOk
                 + " dvr=" + r.DvrOk + " mem=" + (r.MemReleased / 1048576L) + "MB"
                 + " suspended=" + r.Suspended
                 + " affinity=" + r.AffinityOk + "/" + r.AffinityCores + "c/" + r.AffinityMoved + "p"
@@ -406,15 +413,62 @@ namespace FrameForge.Sys
             return r;
         }
 
-        private bool ApplyPriority(int pid)
+        /// <summary>
+        /// 提升游戏进程优先级。带反作弊的游戏经常直接拒绝这类请求,所以这里把
+        /// 「被拒绝」和普通失败分开报,并且回读一次确认真的生效——SetPriorityClass
+        /// 返回成功但优先级没变的情况是存在的,不能据此谎报"已优化"。
+        /// failKey 为空表示失败原因不明,由调用方用通用的「优先级」文案。
+        /// </summary>
+        private bool ApplyPriority(int pid, out string failKey)
         {
+            failKey = "";
+            bool denied;
+            if (TrySetHigh(pid, out denied)) return true;
+
+            // 游戏刚启动时保护组件可能还没装好,隔半秒再试一次。
+            // 自动加速跑在线程池里,不会卡住界面。
+            if (denied)
+            {
+                try { System.Threading.Thread.Sleep(400); }
+                catch { }
+                if (TrySetHigh(pid, out denied)) return true;
+            }
+
+            if (denied) failKey = IsAdmin ? "boost.skip.priorityDenied" : "boost.skip.priorityAdmin";
+            return false;
+        }
+
+        private bool TrySetHigh(int pid, out bool denied)
+        {
+            denied = false;
             IntPtr h = IntPtr.Zero;
             try
             {
-                h = Native.OpenProcess(Native.PROCESS_SET_INFORMATION | Native.PROCESS_QUERY_INFORMATION, false, pid);
-                if (h == IntPtr.Zero) return false;
-                prevPriority = Native.GetPriorityClass(h);
-                return Native.SetPriorityClass(h, Native.HIGH_PRIORITY_CLASS);
+                h = Native.OpenProcess(Native.PROCESS_SET_INFORMATION | Native.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+                if (h == IntPtr.Zero)
+                {
+                    // ERROR_ACCESS_DENIED:游戏比我们权限高,或被反作弊拦下。
+                    denied = Marshal.GetLastWin32Error() == 5;
+                    return false;
+                }
+
+                uint before = Native.GetPriorityClass(h);
+                if (!Native.SetPriorityClass(h, Native.HIGH_PRIORITY_CLASS))
+                {
+                    denied = Marshal.GetLastWin32Error() == 5;
+                    return false;
+                }
+
+                // 回读校验:返回 true 不代表值变了。
+                uint after_ = Native.GetPriorityClass(h);
+                if (after_ != 0 && after_ != Native.HIGH_PRIORITY_CLASS)
+                {
+                    denied = true;
+                    return false;
+                }
+
+                prevPriority = before;
+                return true;
             }
             catch { return false; }
             finally { if (h != IntPtr.Zero) Native.CloseHandle(h); }

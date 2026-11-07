@@ -197,6 +197,9 @@ namespace FrameForge
 
         public static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
         public const uint SWP_NOSIZE = 0x0001;
+
+        // SHQueryUserNotificationState:系统知道当前是不是有 D3D 应用在独占全屏。
+        public const int QUNS_RUNNING_D3D_FULL_SCREEN = 3;
         public const uint SWP_NOMOVE = 0x0002;
         public const uint SWP_NOACTIVATE = 0x0010;
         public const uint SWP_SHOWWINDOW = 0x0040;
@@ -357,6 +360,10 @@ namespace FrameForge
         // DWMWA_CLOAKED(14):UWP 挂起的窗口仍然"可见"但被系统隐藏,要排除掉。
         [DllImport("dwmapi.dll")]
         public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out int value, int size);
+
+        /// <summary>返回 0 表示成功,state 见 QUNS_* 常量。</summary>
+        [DllImport("shell32.dll")]
+        public static extern int SHQueryUserNotificationState(out int state);
 
         [DllImport("user32.dll")]
         public static extern int GetWindowLong(IntPtr hWnd, int index);

@@ -57,6 +57,7 @@ namespace FrameForge.UI
 
         private bool ovShown;
         private bool lastFullscreen;
+        private int exclusiveWarnPid = -1;
         private bool trimming;
         private bool downloading;
         private DateTime lastAutoTrim = DateTime.MinValue;
@@ -380,6 +381,20 @@ namespace FrameForge.UI
                 ApplyFilter();
             }
 
+            // 独占全屏的交换链绕过 DWM,再置顶的叠加层也会被游戏盖住。
+            // 检测到就提示一次(每局一次),把"看不到数据"变成可操作的提示,
+            // 而不是让用户以为叠加层坏了。
+            if (s.Fullscreen && St.OverlayOn && s.GamePid > 0 && exclusiveWarnPid != s.GamePid
+                && Monitor.IsExclusiveFullscreen())
+            {
+                exclusiveWarnPid = s.GamePid;
+                Toast(I18n.T("toast.overlay.exclusive"));
+            }
+            else if (!s.Fullscreen || !St.OverlayOn)
+            {
+                exclusiveWarnPid = -1;
+            }
+
             // 只要游戏进程还在就保持采集。GameRecent 在切窗口、加载、UAC 弹窗时会短暂变假,
             // 跟着它反复 Stop/Start 会让帧率断流好几秒,赛后记录也会被拆成两段。
             if (s.GamePid > 0) Fps.Track(s.GamePid);
@@ -638,6 +653,7 @@ namespace FrameForge.UI
             try { if (Ov != null) { Ov.Stop(); Ov.Dispose(); } } catch { }
             try { if (Boost != null) { Boost.Restore(); Boost.Dispose(); } } catch { }
             try { Sys.Filter.Shutdown(); } catch { }
+            try { Sys.Display.Shutdown(); } catch { }
 
             if (tray != null) { tray.Visible = false; tray.Dispose(); tray = null; }
             base.OnFormClosing(e);

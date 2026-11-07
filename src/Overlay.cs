@@ -114,11 +114,17 @@ namespace FrameForge
         {
             if (st.OverlayX >= 0 && st.OverlayY >= 0)
             {
-                Location = new Point(st.OverlayX, st.OverlayY);
-                return;
+                // 拔掉副屏、改过分辨率之后,旧坐标可能整个落在屏幕外——
+                // 窗口还在,但用户什么都看不到。落在屏幕外就按默认摆位重来。
+                var saved = new Rectangle(st.OverlayX, st.OverlayY, w, h);
+                if (SystemInformation.VirtualScreen.IntersectsWith(saved))
+                {
+                    Location = new Point(st.OverlayX, st.OverlayY);
+                    return;
+                }
             }
 
-            Rectangle wa = Screen.PrimaryScreen.WorkingArea;
+            Rectangle wa = TargetBounds();
             int margin = (int)Math.Round(24 * k);
             int x, y;
             if (st.OverlayStyle == "v")
@@ -134,6 +140,36 @@ namespace FrameForge
                 y = wa.Top + margin;
             }
             Location = new Point(x, y);
+        }
+
+        /// <summary>
+        /// 叠加层跟着前台窗口所在的显示器走:双屏时游戏在副屏,数据就摆在副屏,
+        /// 不会被固定摆到主屏上。配置界面在前台时,自然摆到主窗口那一块屏。
+        /// </summary>
+        private static Rectangle TargetBounds()
+        {
+            IntPtr fg = Native.GetForegroundWindow();
+            if (fg != IntPtr.Zero)
+            {
+                try { return Screen.FromHandle(fg).WorkingArea; }
+                catch { }
+            }
+            return Screen.PrimaryScreen.WorkingArea;
+        }
+
+        /// <summary>
+        /// 有些游戏会反复把自己的窗口提到最前,把第三方置顶窗口压到后面。
+        /// 每帧重新声明一次 TOPMOST(不移动、不缩放、不抢焦点),被压下去后能自己回来。
+        /// </summary>
+        private void KeepTopmost()
+        {
+            if (!IsHandleCreated) return;
+            try
+            {
+                Native.SetWindowPos(Handle, Native.HWND_TOPMOST, 0, 0, 0, 0,
+                    Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+            }
+            catch { }
         }
 
         protected override void WndProc(ref Message m)
@@ -224,6 +260,7 @@ namespace FrameForge
                 // 尺寸算出来后再摆放:居中要按实际宽高算。
                 // 用户正在拖动时不能改 Location,否则每 200ms 会被拉回原位置。
                 if (!moving) PlaceIfNeeded(w, h, k);
+                KeepTopmost();
 
                 using (Bitmap bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb))
                 {

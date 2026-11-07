@@ -2,22 +2,22 @@ VERIFICATION
 ====================
 
 Package: frameforge
-Version: 1.3.0
+Version: 1.3.2
 
 The install script downloads a single portable executable from the official
 GitHub Releases page of the project. No binaries are bundled in this package.
 
 Download URL
 ------------
-https://github.com/caijun-1/frameforge/releases/download/v1.3.0/FrameForge.exe
+https://github.com/caijun-1/frameforge/releases/download/v1.3.2/FrameForge.exe
 
 Official release page
 ---------------------
-https://github.com/caijun-1/frameforge/releases/tag/v1.3.0
+https://github.com/caijun-1/frameforge/releases/tag/v1.3.2
 
 Published checksum file (same value as below)
 ---------------------------------------------
-https://github.com/caijun-1/frameforge/releases/download/v1.3.0/FrameForge.exe.sha256
+https://github.com/caijun-1/frameforge/releases/download/v1.3.2/FrameForge.exe.sha256
 
 File details
 ------------

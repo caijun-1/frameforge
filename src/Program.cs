@@ -397,7 +397,7 @@ namespace FrameForge
             }
             catch (Exception ex) { check("health check", false, ex.Message); }
 
-            // 18. 优化页绘制:健康度环 + 分隔线 + 一键优化按钮,直接画到位图验证不抛异常
+            // 18. 优化页绘制:逐项开关 / 分段选择 + 预设按钮,直接画到位图验证不抛异常
             try
             {
                 using (var hp = new UI.HealthPage(null))
@@ -407,7 +407,7 @@ namespace FrameForge
                     using (var bmp = new System.Drawing.Bitmap(900, 620))
                         hp.DrawToBitmap(bmp, new System.Drawing.Rectangle(0, 0, 900, 620));
                 }
-                check("health paint", true, "ring + rows");
+                check("health paint", true, "rows + presets");
             }
             catch (Exception ex) { check("health paint", false, ex.Message); }
 
