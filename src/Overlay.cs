@@ -25,6 +25,9 @@ namespace FrameForge
         private DateTime upFrom = DateTime.Now;
 
         private bool moving;
+        // 上次画上去的内容。数值没变就不重画:UpdateLayeredWindow 每次都会让 DWM
+        // 重新合成一层,游戏里叠加层本来就在和游戏抢合成,能少一次是一次。
+        private string lastKey = "";
 
         // 每 200ms 重画一次,字体不能每次都 new:Font 带 GDI+ 句柄,不释放会一直涨。
         private readonly Dictionary<string, Font> fonts = new Dictionary<string, Font>();
@@ -70,7 +73,7 @@ namespace FrameForge
 
         public void Start()
         {
-            if (!Visible) { upFrom = DateTime.Now; Show(); }
+            if (!Visible) { upFrom = DateTime.Now; lastKey = ""; Show(); }
             ApplyInputMode();
             Render();
             timer.Start();
@@ -208,6 +211,16 @@ namespace FrameForge
                 if (labels.Length == 0) { Hide(); return; }
 
                 string style = st.OverlayStyle;
+                string key = style + "|" + st.OverlayScale.ToString("0.00", CultureInfo.InvariantCulture)
+                           + "|" + k.ToString("0.00", CultureInfo.InvariantCulture)
+                           + "|" + string.Join(",", labels) + "|" + string.Join(",", values);
+                if (key == lastKey)
+                {
+                    // 位置可能被游戏顶掉,内容没变也要重新声明置顶。
+                    if (!moving) KeepTopmost();
+                    return;
+                }
+                lastKey = key;
                 int pad = (int)Math.Round(12 * k);
                 float labelPt = 9.2f * k;
                 float valuePt = 12f * k;

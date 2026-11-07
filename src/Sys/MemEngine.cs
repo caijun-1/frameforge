@@ -70,7 +70,8 @@ namespace FrameForge.Sys
                 || n.StartsWith("tenprotect") || n.StartsWith("tensafe") || n.StartsWith("qqprotect")
                 || n.StartsWith("easyanticheat") || n.StartsWith("beservice") || n.StartsWith("battleye")
                 || n.StartsWith("vgc") || n.StartsWith("nprotect") || n.StartsWith("gameguard")
-                || n.StartsWith("xigncode");
+                || n.StartsWith("xigncode") || n.StartsWith("krsdk") || n.StartsWith("kuro")
+                || n.StartsWith("rockstar") || n.StartsWith("socialclub") || n.StartsWith("playgtav");
         }
 
         private const ulong MinWorkingSetBytes = 20UL << 20;
@@ -338,8 +339,12 @@ namespace FrameForge.Sys
 
         // ---------------- 主入口 ----------------
 
-        /// <summary>手动整理。gamePid 为当前游戏,永远不会被裁剪。</summary>
-        public static OptimizeResult Optimize(OptimizeLevel level, int gamePid, Action<string> progress)
+        /// <summary>
+        /// 手动整理。gamePid 为当前游戏,永远不会被裁剪。
+        /// systemWide=false 时只归还后台进程的空闲工作集,不清系统文件缓存——
+        /// 游戏运行中清缓存会把刚加载的资源全部赶出去,读盘抖动直接变成掉帧。
+        /// </summary>
+        public static OptimizeResult Optimize(OptimizeLevel level, int gamePid, Action<string> progress, bool systemWide)
         {
             var result = new OptimizeResult();
             result.Level = level;
@@ -371,14 +376,14 @@ namespace FrameForge.Sys
                 else skipped++;
             }
 
-            if (level != OptimizeLevel.Light)
+            if (level != OptimizeLevel.Light && systemWide)
             {
                 if (progress != null) progress("cache");
                 result.CacheCleared = ClearFileCache();
                 if (!result.CacheCleared && !admin) result.AdminRequired = true;
             }
 
-            if (level == OptimizeLevel.Deep)
+            if (level == OptimizeLevel.Deep && systemWide)
             {
                 if (progress != null) progress("deep");
                 SetMemoryList(Native.MemoryEmptyWorkingSets);
@@ -393,7 +398,10 @@ namespace FrameForge.Sys
             return result;
         }
 
-        /// <summary>自动维护:只清文件缓存与待命列表,代价接近零,不会影响任何进程。</summary>
+        /// <summary>
+        /// 自动维护:清文件缓存与待命列表。游戏运行中不要调用——
+        /// 缓存被清空后游戏要重新读盘,帧率会出现明显的一次性下跌。
+        /// </summary>
         public static OptimizeResult SmartClean(Action<string> progress)
         {
             var result = new OptimizeResult();

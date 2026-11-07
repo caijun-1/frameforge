@@ -20,7 +20,7 @@ namespace FrameForge.Sys
         public bool Background = false; // 进阶:暂停后台进程
         public bool Affinity = false;   // 进阶:游戏独占核心
         public bool Irq = false;        // 进阶:设备中断避让(重启生效)
-        public int Cores = 0;           // 0 = 自动(一半物理核心)
+        public int Cores = 0;           // 0 = 全部核心(不限制)
 
         public bool Any
         {
@@ -95,6 +95,11 @@ namespace FrameForge.Sys
 
         public int SuspendedCount { get { return suspended.Count; } }
 
+        /// <summary>核心独占的实际方式:0 未生效 / 1 软亲和 / 2 硬亲和。</summary>
+        public int AffinityMode { get { return affinity.Mode; } }
+        /// <summary>游戏当前占用的核心掩码,未启用核心独占时为 0。</summary>
+        public long AffinityMask { get { return affinity.Mask; } }
+
         public static bool IsAdmin
         {
             get { return MemEngine.IsAdmin; }
@@ -155,10 +160,15 @@ namespace FrameForge.Sys
                     if (p.MainWindowHandle != IntPtr.Zero) continue;
                     long ws = p.WorkingSet64;
                     if (ws < 80L << 20) continue;
+                    // 占用不到阈值的程序暂停了也省不下多少内存,反而容易弄坏输入法、
+                    // 更新器这类小组件,所以自动归入保护。占用涨过阈值后,下一次
+                    // 重新计算会自然掉出这档,重新回到候选列表。
+                    if (ws <= AutoWhitelistBytes) continue;
                     string name = p.ProcessName;
                     if (name.Length == 0) continue;
-                    // 内置保护(系统进程 + 平台/录制工具 + 反作弊组件)和用户白名单都不参与暂停。
-                    if (Protected.Contains(name) || MemEngine.IsProtectedName(name) || UserWhitelist.Contains(name)) continue;
+                    // 系统进程、自动启动的服务和开机自启程序,关掉会被系统拉起来,
+                    // 暂停没有意义;用户手动加的也不参与。
+                    if (IsPermanent(name) || UserWhitelist.Contains(name)) continue;
                     list.Add(new BackgroundProc { Pid = p.Id, Name = name, WorkingSet = (ulong)ws });
                 }
                 catch { }
@@ -175,6 +185,11 @@ namespace FrameForge.Sys
             "services", "lsass", "smss", "svchost", "MsMpEng", "MpDefenderCoreService",
             "dwm", "FrameForge", "audiodg", "SecurityHealthService", "WUDFHost", "fontdrvhost",
             "SystemSettings", "winlogon", "taskhostw", "ctfmon", "RuntimeBroker",
+            // 桌面外壳和系统界面:结束/暂停后 Windows 会自动把它们重新拉起来。
+            "explorer", "sihost", "ShellExperienceHost", "StartMenuExperienceHost",
+            "SearchApp", "SearchHost", "ApplicationFrameHost", "LockApp", "TextInputHost",
+            // WebView2 是宿主程序的内嵌组件,暂停后宿主会立刻重建,还容易白屏。
+            "msedgewebview2",
             // 游戏平台:暂停客户端会导致游戏掉线或无法启动,永远不碰。
             "steam", "steamwebhelper", "SteamService", "GameOverlayUI",
             "EpicGamesLauncher", "EpicWebHelper", "Battle.net", "BlizzardBrowser",
@@ -202,6 +217,117 @@ namespace FrameForge.Sys
             }
         }
 
+        /// <summary>低于这个内存的程序自动保护;超过后下一次计算会自动移出。</summary>
+        public const long AutoWhitelistBytes = 200L << 20;
+
+        private static readonly object permGate = new object();
+        private static HashSet<string> permNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private static DateTime permAt = DateTime.MinValue;
+        private const double PermRefreshSeconds = 300;
+
+        /// <summary>
+        /// 永久保护:系统关键进程、自动启动的 Windows 服务、注册表 Run 里的自启程序。
+        /// 这些进程被结束或暂停后都会被系统重新拉起来,暂停它们既省不到内存,
+        /// 又可能让桌面、显卡面板、输入法之类的东西失灵。
+        /// </summary>
+        public static bool IsPermanent(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return true;
+            if (Protected.Contains(name) || MemEngine.IsProtectedName(name)) return true;
+            RefreshPermanent();
+            lock (permGate) { return permNames.Contains(name); }
+        }
+
+        private static void RefreshPermanent()
+        {
+            lock (permGate)
+            {
+                // 服务/自启项可能被用户新装或卸载,每 5 分钟重新扫一次。
+                if (permNames.Count > 0 && (DateTime.UtcNow - permAt).TotalSeconds < PermRefreshSeconds) return;
+                HashSet<string> set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                AddAutoServices(set);
+                AddRunEntries(set);
+                permNames = set;
+                permAt = DateTime.UtcNow;
+            }
+        }
+
+        /// <summary>只收"自动启动"的服务(Start=2);驱动和手动服务不算关掉会回来。</summary>
+        private static void AddAutoServices(HashSet<string> set)
+        {
+            try
+            {
+                using (RegistryKey root = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services"))
+                {
+                    if (root == null) return;
+                    string[] keys = root.GetSubKeyNames();
+                    for (int i = 0; i < keys.Length; i++)
+                    {
+                        using (RegistryKey k = root.OpenSubKey(keys[i]))
+                        {
+                            if (k == null) continue;
+                            object start = k.GetValue("Start");
+                            if (!(start is int) || (int)start != 2) continue;
+                            string exe = ExeName(k.GetValue("ImagePath") as string);
+                            if (exe.Length > 0) set.Add(exe);
+                        }
+                    }
+                }
+            }
+            catch (Exception) { }
+        }
+
+        private static void AddRunEntries(HashSet<string> set)
+        {
+            RegistryKey[] roots = new RegistryKey[] { Registry.CurrentUser, Registry.LocalMachine };
+            for (int i = 0; i < roots.Length; i++)
+            {
+                using (RegistryKey k = roots[i].OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))
+                {
+                    if (k != null) AddRunValues(k, set);
+                }
+                using (RegistryKey k = roots[i].OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\RunOnce"))
+                {
+                    if (k != null) AddRunValues(k, set);
+                }
+            }
+        }
+
+        private static void AddRunValues(RegistryKey k, HashSet<string> set)
+        {
+            try
+            {
+                string[] vals = k.GetValueNames();
+                for (int i = 0; i < vals.Length; i++)
+                {
+                    string exe = ExeName(k.GetValue(vals[i]) as string);
+                    if (exe.Length > 0) set.Add(exe);
+                }
+            }
+            catch (Exception) { }
+        }
+
+        /// <summary>从服务路径或自启命令行里取出不带 .exe 的进程名。</summary>
+        private static string ExeName(string cmd)
+        {
+            if (string.IsNullOrEmpty(cmd)) return "";
+            string s = cmd.Trim();
+            if (s.StartsWith("\"", StringComparison.Ordinal))
+            {
+                int end = s.IndexOf('"', 1);
+                s = end > 1 ? s.Substring(1, end - 1) : s.Trim('"');
+            }
+            else
+            {
+                int sp = s.IndexOf(' ');
+                if (sp > 0) s = s.Substring(0, sp);
+            }
+            int slash = s.LastIndexOfAny(new char[] { '\\', '/' });
+            if (slash >= 0) s = s.Substring(slash + 1);
+            if (s.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) s = s.Substring(0, s.Length - 4);
+            return s.Trim();
+        }
+
         /// <summary>保护名单里的一行:给小白看的勾选项,不用手打进程名。</summary>
         public class AppChoice
         {
@@ -210,6 +336,8 @@ namespace FrameForge.Sys
             public ulong Memory;
             public bool Running;
             public bool BuiltIn;          // 游戏平台/录制工具,永远保护,不可取消
+            // 0 普通 / 1 永久(系统、服务、自启) / 2 自动(小内存) / 3 用户手动添加
+            public int Kind;
         }
 
         /// <summary>常见平台与录制工具:即使没在运行也列出来,方便提前保护。</summary>
@@ -234,7 +362,8 @@ namespace FrameForge.Sys
 
         /// <summary>
         /// 生成保护名单的可勾选列表:正在运行的程序(按内存排序) + 常用平台 + 已保存但没在跑的项。
-        /// 系统进程不出现,避免把用户吓到。
+        /// 每个条目带来源标记:永久(系统/服务/自启)、自动(小内存)、手动(用户勾选)。
+        /// 从没露过面的系统小进程不列出,避免把列表塞满。
         /// </summary>
         public static AppChoice[] ProtectChoices()
         {
@@ -253,7 +382,6 @@ namespace FrameForge.Sys
                     if (name.Length == 0) continue;
 
                     bool preset = IsPreset(name);
-                    if (!preset && Protected.Contains(name)) continue;
 
                     long ws = 0;
                     try { ws = p.WorkingSet64; } catch (Exception) { }
@@ -262,10 +390,17 @@ namespace FrameForge.Sys
                     // 只留用户能认出来的:有窗口的、吃过 120MB 的,以及固定预设。
                     if (!preset && !visible && ws < (120L << 20)) continue;
 
+                    bool permanent = preset || IsPermanent(name);
+                    // 小内存程序自动保护,不需要用户勾;内存涨过阈值后
+                    // 下一次打开列表就会变回普通项,想保护再手动勾。
+                    bool autoThin = !permanent && ws > 0 && ws <= AutoWhitelistBytes;
+
                     AppChoice c;
                     if (map.TryGetValue(name, out c))
                     {
                         if ((ulong)ws > c.Memory) c.Memory = (ulong)ws;
+                        if (permanent) { c.BuiltIn = true; c.Kind = 1; }
+                        else if (c.Kind == 0 && autoThin) c.Kind = 2;
                         continue;
                     }
                     map[name] = new AppChoice
@@ -274,7 +409,8 @@ namespace FrameForge.Sys
                         Label = name,
                         Memory = (ulong)ws,
                         Running = true,
-                        BuiltIn = preset
+                        BuiltIn = permanent,
+                        Kind = permanent ? 1 : (autoThin ? 2 : 0)
                     };
                 }
                 catch (Exception) { }
@@ -289,15 +425,22 @@ namespace FrameForge.Sys
                     Name = Presets[i][0],
                     Label = Presets[i][1],
                     Running = false,
-                    BuiltIn = true
+                    BuiltIn = true,
+                    Kind = 1
                 };
             }
 
-            // 用户之前保存过、但当前没在运行的程序也要留住,否则一保存就"消失"了。
+            // 用户手动加过、但当前没在运行的程序也要留住,否则一保存就"消失"了。
             foreach (string n in UserWhitelist)
             {
-                if (n.Length == 0 || map.ContainsKey(n)) continue;
-                map[n] = new AppChoice { Name = n, Label = n, BuiltIn = IsPreset(n) };
+                if (n.Length == 0) continue;
+                AppChoice c;
+                if (map.TryGetValue(n, out c))
+                {
+                    if (c.Kind == 0) c.Kind = 3;
+                    continue;
+                }
+                map[n] = new AppChoice { Name = n, Label = n, Kind = IsPreset(n) ? 1 : 3 };
             }
 
             var list = new List<AppChoice>(map.Values);
@@ -305,17 +448,19 @@ namespace FrameForge.Sys
             {
                 int ga = Group(a), gb = Group(b);
                 if (ga != gb) return ga.CompareTo(gb);
-                if (a.Running && b.Running) return b.Memory.CompareTo(a.Memory);
+                if (a.Running != b.Running) return a.Running ? -1 : 1;
+                if (a.Running) return b.Memory.CompareTo(a.Memory);
                 return string.Compare(a.Label, b.Label, StringComparison.OrdinalIgnoreCase);
             });
             return list.ToArray();
         }
 
-        /// <summary>排序分组:0 正在运行,1 常用软件,2 默认保护。</summary>
+        /// <summary>排序分组:0 永久保护,1 普通/手动,2 自动保护(小内存)。</summary>
         private static int Group(AppChoice c)
         {
-            if (c.BuiltIn) return 2;
-            return c.Running ? 0 : 1;
+            if (c.Kind == 1) return 0;
+            if (c.Kind == 2) return 2;
+            return 1;
         }
 
         // =================================================================
@@ -367,7 +512,8 @@ namespace FrameForge.Sys
             {
                 try
                 {
-                    OptimizeResult m = MemEngine.Optimize(OptimizeLevel.Standard, gamePid, null);
+                    // 游戏正在跑:只归还后台进程的空闲工作集,不动系统文件缓存和待命列表。
+                    OptimizeResult m = MemEngine.Optimize(OptimizeLevel.Standard, gamePid, null, false);
                     r.MemReleased = m.Released;
                     // 一个字节都没释放时不算生效,免得结果里出现虚的「已整理」。
                     r.MemoryOk = m.Released > 0 ? 1 : 0;

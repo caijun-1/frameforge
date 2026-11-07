@@ -6,6 +6,11 @@ namespace FrameForge.Sys
     /// <summary>
     /// 画面滤镜:通过 Windows 放大镜的全屏颜色矩阵实现,不需要注入、不需要驱动。
     /// 颜色矩阵作用于整个桌面,因此只在用户选择时启用,切出游戏会自动还原。
+    ///
+    /// 调色思路参考 ReShade 的 WhiteBalance 与 LiftGammaGain:
+    /// 色温/色调走黑体辐射曲线换算成三通道增益,而不是只拉红蓝两根轴;
+    /// 预设可在阴影里加一层薄色、在高光里加一层补色,做出胶片感的分割色调。
+    /// 受 5×5 矩阵限制,LUT / 锐化 / 去色带 / 幂曲线这类逐像素效果仍然做不了。
     /// </summary>
     public static class Filter
     {
@@ -116,7 +121,7 @@ namespace FrameForge.Sys
             if (st == null) return Identity();
             return Build(st.FilterPreset, st.FilterIntensity,
                 st.FilterContrast, st.FilterSaturation, st.FilterWarmth,
-                st.FilterDark, st.FilterVibrance);
+                st.FilterDark, st.FilterVibrance, st.FilterTint);
         }
 
         /// <summary>把 5×5 矩阵推给系统;已是最新则什么都不做。</summary>
@@ -148,23 +153,25 @@ namespace FrameForge.Sys
 
         /// <summary>
         /// 组合预设与自定义参数。intensity 0..100 把结果向恒等矩阵插值,
-        /// contrast/saturation/warmth 均为 -100..100;亮度改由显示器硬件背光负责。
+        /// contrast/saturation/warmth/tint 均为 -100..100;亮度改由显示器硬件背光负责。
         /// </summary>
         public static float[] Build(int preset, int intensity, int contrast, int saturation, int warmth,
-            int dark = 0, int vibrance = 0)
+            int dark = 0, int vibrance = 0, int tint = 0)
         {
             double sat = 1.0, con = 1.0, bri = 0.0, warm = 0.0; double shadow = 0.0;
+            // 分割色调:正值阴影偏青、高光偏暖,负值反过来。对应 ReShade 的 LiftGammaGain。
+            double split = 0.0;
             switch (preset)
             {
                 case 1: sat = 1.12; con = 1.04; break;                    // 鲜艳
                 case 2: sat = 0.98; con = 0.97; bri = 0.02; break;        // 柔和
                 case 3: con = 1.02; bri = 0.05; break;                    // 高亮
-                case 4: sat = 1.05; con = 1.03; warm = 0.06; shadow = 0.06; break; // 电影
+                case 4: sat = 1.05; con = 1.03; warm = 0.10; shadow = 0.06; split = 0.70; break; // 电影
                 case 5: con = 0.94; bri = -0.03; sat = 0.99; break;       // 防雪盲
                 case 6: con = 1.0; bri = 0.04; sat = 1.02; break;         // 白天
-                case 7: con = 0.96; bri = -0.02; warm = 0.16; break;      // 夜间护眼
+                case 7: con = 0.96; bri = -0.02; warm = 0.45; break;      // 夜间护眼
                 case 8: sat = 0.0; break;                                 // 灰度
-                case 9: con = 1.04; bri = 0.03; sat = 1.06; shadow = 0.06; break; // 明基亮丽
+                case 9: con = 1.04; bri = 0.03; sat = 1.06; shadow = 0.06; split = 0.25; break; // 明基亮丽
                 case 10: con = 0.92; bri = 0.01; sat = 0.94; shadow = 0.16; break; // 雾天增强
                 case 11: con = 1.06; sat = 1.04; shadow = 0.10; break;    // 竞技
                 case 12: sat = 1.12; con = 1.02; bri = 0.02; shadow = 0.06; break; // 二次元
@@ -181,8 +188,8 @@ namespace FrameForge.Sys
                 case 18: sat = 1.03; con = 0.98; bri = 0.02; warm = -0.03; shadow = 0.18; break; // PUBG
                 case 19: sat = 1.08; con = 1.03; bri = 0.01; warm = 0.08; shadow = 0.06; break;  // 永劫无间
                 case 20: sat = 1.06; con = 1.0; bri = 0.02; warm = 0.03; shadow = 0.04; break;   // 英雄联盟
-                case 21: sat = 1.03; con = 1.03; bri = 0.01; warm = -0.22; shadow = 0.08; break; // 冷色
-                case 22: sat = 1.03; con = 1.02; warm = 0.22; shadow = 0.06; break;              // 暖色
+                case 21: sat = 1.03; con = 1.03; bri = 0.01; warm = -0.55; shadow = 0.08; break; // 冷色
+                case 22: sat = 1.03; con = 1.02; warm = 0.55; shadow = 0.06; break;              // 暖色
             }
 
             // 自定义滑杆叠加在预设之上:倍率整体收窄,拉到顶也不会过曝或发灰。
@@ -196,6 +203,8 @@ namespace FrameForge.Sys
             if (con < 0.2) con = 0.2;
             if (shadow > 1) shadow = 1;
             if (shadow < 0) shadow = 0;
+            if (warm > 1) warm = 1;
+            if (warm < -1) warm = -1;
 
             // 饱和度矩阵
             double lr = 0.2126, lg = 0.7152, lb = 0.0722;
@@ -223,10 +232,31 @@ namespace FrameForge.Sys
                 m[4] += lift; m[9] += lift; m[14] += lift;
             }
 
-            // 色温:暖色抬高红、压低蓝
-            double rg = 1.0 + warm * 0.16;
-            double bg = 1.0 - warm * 0.16;
-            for (int j = 0; j < 5; j++) { m[0 * 5 + j] *= rg; m[2 * 5 + j] *= bg; }
+            // 分割色调:阴影加一层薄色(青),高光加一层补色(暖)。
+            // lift 是常量偏移、gain 是乘性缩放,两者叠加就能在矩阵里近似出电影调色。
+            if (split != 0.0)
+            {
+                m[4] += -0.020 * split;
+                m[9] += 0.004 * split;
+                m[14] += 0.032 * split;
+                double hot = 1.0 + 0.035 * split;
+                double cold = 1.0 - 0.040 * split;
+                for (int j = 0; j < 5; j++) { m[j] *= hot; m[10 + j] *= cold; }
+            }
+
+            // 白平衡(参考 ReShade 的 WhiteBalance):按黑体辐射曲线把色温和色调
+            // 换算成三通道增益,再归一化亮度,调整时不会顺带把画面压暗或提亮。
+            double tintVal = tint / 100.0;
+            if (tintVal > 1) tintVal = 1;
+            if (tintVal < -1) tintVal = -1;
+            double[] gains = new double[3];
+            WhiteBalance(warm, tintVal, gains);
+            for (int j = 0; j < 5; j++)
+            {
+                m[0 * 5 + j] *= gains[0];
+                m[1 * 5 + j] *= gains[1];
+                m[2 * 5 + j] *= gains[2];
+            }
 
             double t = Clamp01(intensity / 100.0);
             float[] identity = Identity();
@@ -234,6 +264,60 @@ namespace FrameForge.Sys
             for (int i = 0; i < 25; i++)
                 final[i] = (float)(identity[i] + (m[i] - identity[i]) * t);
             return final;
+        }
+
+        /// <summary>
+        /// 色温 -1..1 映射到 2000K..11000K(0 为 6500K 中性白),
+        /// 色调 -1..1 在绿与洋红之间偏移。输出为三通道增益。
+        /// </summary>
+        private static void WhiteBalance(double warm, double tint, double[] gains)
+        {
+            double kelvin = 6500.0 - warm * 4500.0;
+            if (kelvin < 2000.0) kelvin = 2000.0;
+            if (kelvin > 12000.0) kelvin = 12000.0;
+
+            double rr = BlackBodyR(kelvin) / BlackBodyR(6500.0);
+            double gg = BlackBodyG(kelvin) / BlackBodyG(6500.0);
+            double bb = BlackBodyB(kelvin) / BlackBodyB(6500.0);
+
+            // 色调:正值偏洋红(压绿),负值偏绿。
+            gg *= 1.0 - tint * 0.18;
+
+            // 归一化亮度:只改色相,不改整体明暗。
+            // 显示器是 gamma 编码的,先按 2.2 还原成线性光再算权重,否则暖色会顺带压暗。
+            double luma = 0.2126 * Math.Pow(rr, 2.2) + 0.7152 * Math.Pow(gg, 2.2) + 0.0722 * Math.Pow(bb, 2.2);
+            if (luma < 0.0001) luma = 0.0001;
+            luma = Math.Pow(luma, 1.0 / 2.2);
+            gains[0] = rr / luma;
+            gains[1] = gg / luma;
+            gains[2] = bb / luma;
+        }
+
+        // 黑体辐射色温到 sRGB 的近似( Tanner Helland ),只用其相对比例。
+        private static double BlackBodyR(double kelvin)
+        {
+            double t = kelvin / 100.0;
+            double v = t <= 66.0 ? 255.0 : 329.698727446 * Math.Pow(t - 60.0, -0.1332047592);
+            return Clamp01(v / 255.0);
+        }
+
+        private static double BlackBodyG(double kelvin)
+        {
+            double t = kelvin / 100.0;
+            double v = t <= 66.0
+                ? 99.4708025861 * Math.Log(t) - 161.1195681661
+                : 288.1221695283 * Math.Pow(t - 60.0, -0.0755148492);
+            return Clamp01(v / 255.0);
+        }
+
+        private static double BlackBodyB(double kelvin)
+        {
+            double t = kelvin / 100.0;
+            double v;
+            if (t >= 66.0) v = 255.0;
+            else if (t <= 19.0) v = 0.0;
+            else v = 138.5177312231 * Math.Log(t - 10.0) - 305.0447927307;
+            return Clamp01(v / 255.0);
         }
 
         /// <summary>用矩阵变换单个颜色,给界面上的预览条使用。</summary>

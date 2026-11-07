@@ -21,6 +21,8 @@ namespace FrameForge.UI
         public ProfileStore Profiles;
         public SessionStore Sessions;
         public SessionTracker Tracker;
+        /// <summary>加速前后帧率对比,只记录数据,不做系统修改。</summary>
+        public PerfCompare Perf = new PerfCompare();
 
         private const int WM_NCHITTEST = 0x0084;
         private const int WM_NCCALCSIZE = 0x0083;
@@ -87,7 +89,7 @@ namespace FrameForge.UI
             GC.KeepAlive(forceHandle);
             Ui.S = DpiScale();
 
-            MinimumSize = new Size(Ui.Px(840), Ui.Px(600));
+            MinimumSize = new Size(Ui.Px(840), Ui.Px(640));
             appIcon = LoadIcon(32);
             Icon = appIcon;
 
@@ -402,6 +404,7 @@ namespace FrameForge.UI
 
             Ov.Feed(s, Fps.Fps, Fps.Low1);
             Tracker.Feed(s, Fps.Fps, Fps.Low1);
+            Perf.Feed(Boost != null && Boost.Active, Fps.Fps, Fps.Low1);
             UpdateTrayTip(s);
 
             CheckBoostAlive();

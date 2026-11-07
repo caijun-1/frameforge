@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using System.Windows.Forms;
+using FrameForge.Sys;
 
 namespace FrameForge.UI
 {
@@ -505,6 +506,105 @@ namespace FrameForge.UI
                 using (var pen = new Pen(Theme.Border, 1f))
                     g.DrawLine(pen, pad, Height - 1, Width - pad, Height - 1);
             }
+        }
+    }
+
+    /// <summary>帧率折线图:退游报告卡和战绩详情共用同一套画法。</summary>
+    internal static class FpsChart
+    {
+        /// <summary>抽稀后的帧率序列;旧记录没有曲线时退回一条平均帧率水平线。</summary>
+        public static double[] Series(SessionRecord r)
+        {
+            if (r == null) return null;
+            if (r.FpsSeries != null && r.FpsSeries.Length >= 2)
+            {
+                int n = 0;
+                for (int i = 0; i < r.FpsSeries.Length; i++)
+                    if (r.FpsSeries[i] > 0) n++;
+                if (n >= 2)
+                {
+                    var list = new double[n];
+                    int k = 0;
+                    for (int i = 0; i < r.FpsSeries.Length; i++)
+                        if (r.FpsSeries[i] > 0) list[k++] = r.FpsSeries[i];
+                    return list;
+                }
+            }
+            if (r.FpsAvg > 0) return new double[] { r.FpsAvg, r.FpsAvg };
+            return null;
+        }
+
+        /// <summary>面积 + 折线 + 平均线 + 峰值点;plot 是曲线可用的矩形,不含标题。</summary>
+        public static void Plot(Graphics g, Rectangle plot, double[] series)
+        {
+            if (series == null || series.Length < 2) return;
+            if (plot.Width < 4 || plot.Height < 4) return;
+
+            double min = series[0], max = series[0];
+            int maxAt = 0;
+            for (int i = 1; i < series.Length; i++)
+            {
+                double v = series[i];
+                if (v < min) min = v;
+                if (v > max) { max = v; maxAt = i; }
+            }
+
+            // 纵轴留一点余量,曲线不会贴顶或贴底;下限不低于 0。
+            double span = Math.Max(4, max - min);
+            double lo = Math.Max(0, min - span * 0.15);
+            double hi = max + span * 0.15;
+            if (hi - lo < 1) hi = lo + 1;
+
+            using (var p = new Pen(Theme.Border, 1f))
+            {
+                for (int i = 1; i <= 3; i++)
+                {
+                    int gy = plot.Top + plot.Height * i / 4;
+                    g.DrawLine(p, plot.Left, gy, plot.Right, gy);
+                }
+            }
+
+            PointF[] pts = new PointF[series.Length];
+            for (int i = 0; i < series.Length; i++)
+            {
+                float x = plot.Left + (float)plot.Width * i / (series.Length - 1);
+                float v = plot.Bottom - (float)((series[i] - lo) / (hi - lo)) * plot.Height;
+                if (v < plot.Top) v = plot.Top;
+                if (v > plot.Bottom) v = plot.Bottom;
+                pts[i] = new PointF(x, v);
+            }
+
+            // 面积渐变:顶部强调色,向下淡出。
+            using (var path = new GraphicsPath())
+            {
+                path.AddLines(pts);
+                path.AddLine(pts[pts.Length - 1].X, plot.Bottom, pts[0].X, plot.Bottom);
+                path.CloseFigure();
+                using (var lg = new LinearGradientBrush(
+                    new Rectangle(plot.Left, plot.Top, Math.Max(1, plot.Width), Math.Max(1, plot.Height)),
+                    Color.FromArgb(96, Theme.Accent), Color.FromArgb(0, Theme.Accent), 90f))
+                    g.FillPath(lg, path);
+            }
+
+            using (var p = new Pen(Theme.Accent, 2f))
+            {
+                p.LineJoin = LineJoin.Round;
+                g.DrawLines(p, pts);
+            }
+
+            // 平均线
+            double sum = 0;
+            for (int i = 0; i < series.Length; i++) sum += series[i];
+            float ay = plot.Bottom - (float)((sum / series.Length - lo) / (hi - lo)) * plot.Height;
+            using (var p = new Pen(Color.FromArgb(150, Theme.Sub), 1f))
+            {
+                p.DashStyle = DashStyle.Dash;
+                g.DrawLine(p, plot.Left, ay, plot.Right, ay);
+            }
+
+            // 峰值点
+            using (var b = new SolidBrush(Theme.Accent))
+                g.FillEllipse(b, pts[maxAt].X - Ui.Px(3), pts[maxAt].Y - Ui.Px(3), Ui.Px(6), Ui.Px(6));
         }
     }
 }

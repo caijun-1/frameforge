@@ -44,7 +44,7 @@ namespace FrameForge
         public bool BoostIrq = false;
         public bool BoostProfile = true;
         public bool AutoBoost = true;         // 检测到游戏就自动套用加速(安全项)
-        public int AffinityCores = 0;         // 0 = 自动
+        public int AffinityCores = 0;         // 0 = 全部核心(不限制)
         public string BoostMode = "balanced"; // balanced | beast | custom
         // 保护名单:这些进程永远不会被「暂停后台进程」选中。逗号分隔,不含 .exe。
         public string BoostWhitelist = "";
@@ -56,6 +56,7 @@ namespace FrameForge
         public int FilterContrast = 0;
         public int FilterSaturation = 0;
         public int FilterWarmth = 0;
+        public int FilterTint = 0;            // 色调:负值偏绿、正值偏洋红 -100..100
         public int FilterDark = 0;            // 暗部场景平衡 0..100
         public int FilterVibrance = 0;        // 数字振动 0..100
 
@@ -133,6 +134,7 @@ namespace FrameForge
                 case "filtercontrast": FilterContrast = Int(v, 0); break;
                 case "filtersaturation": FilterSaturation = Int(v, 0); break;
                 case "filterwarmth": FilterWarmth = Int(v, 0); break;
+                case "filtertint": FilterTint = Int(v, 0); break;
                 case "filterdark": FilterDark = Int(v, 0); break;
                 case "filtervibrance": FilterVibrance = Int(v, 0); break;
                 case "reportauto": ReportAuto = Bool(v, true); break;
@@ -188,6 +190,7 @@ namespace FrameForge
                 sb.AppendLine("filterContrast=" + FilterContrast.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterSaturation=" + FilterSaturation.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterWarmth=" + FilterWarmth.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("filterTint=" + FilterTint.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterDark=" + FilterDark.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterVibrance=" + FilterVibrance.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("reportAuto=" + B(ReportAuto));

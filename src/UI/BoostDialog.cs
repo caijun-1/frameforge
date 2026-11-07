@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using System.Windows.Forms;
+using FrameForge.Sys;
 
 namespace FrameForge.UI
 {
@@ -18,11 +20,16 @@ namespace FrameForge.UI
             "priority", "power", "timer", "dvr", "mem", "bg", "affinity", "irq"
         };
 
-        public static bool[] Edit(IWin32Window owner, bool[] initial)
+        public static bool[] Edit(IWin32Window owner, bool[] initial, int cores, out int newCores)
         {
-            using (var box = new Box(initial))
+            using (var box = new Box(initial, cores))
             {
-                if (box.ShowDialog(owner) == DialogResult.OK) return box.Values;
+                if (box.ShowDialog(owner) == DialogResult.OK)
+                {
+                    newCores = box.Cores;
+                    return box.Values;
+                }
+                newCores = cores;
                 return null;
             }
         }
@@ -31,7 +38,18 @@ namespace FrameForge.UI
         {
             private readonly Toggle[] sw = new Toggle[Keys.Length];
             private readonly bool[] init = new bool[Keys.Length];
+            private readonly Segmented coreSeg;
+            private readonly int[] coreVals;
             private FlatButton btnOk, btnCancel;
+
+            public int Cores
+            {
+                get
+                {
+                    int i = coreSeg.Selected;
+                    return (i >= 0 && i < coreVals.Length) ? coreVals[i] : 0;
+                }
+            }
 
             public bool[] Values
             {
@@ -43,7 +61,7 @@ namespace FrameForge.UI
                 }
             }
 
-            public Box(bool[] initial)
+            public Box(bool[] initial, int cores)
             {
                 FormBorderStyle = FormBorderStyle.None;
                 StartPosition = FormStartPosition.CenterParent;
@@ -64,6 +82,31 @@ namespace FrameForge.UI
                     t.CheckedChanged += delegate { Invalidate(); };
                     Controls.Add(t);
                 }
+
+                // 核心数是"独占物理核心"的细项:默认不限制,想限制才选少一点。
+                int phys = CpuTopology.CoreCount(CpuTopology.AllMask());
+                var vals = new List<int>();
+                int q1 = phys / 4, q2 = phys / 2, q3 = (phys * 3) / 4;
+                if (q1 >= 2) vals.Add(q1);
+                if (q2 >= 2 && q2 != q1) vals.Add(q2);
+                if (q3 >= 2 && q3 != q2) vals.Add(q3);
+                vals.Add(0);
+                coreVals = vals.ToArray();
+
+                string[] coreItems = new string[coreVals.Length];
+                for (int i = 0; i < coreVals.Length; i++)
+                    coreItems[i] = coreVals[i] == 0
+                        ? I18n.T("boost.dialog.cores.all")
+                        : coreVals[i].ToString();
+
+                coreSeg = new Segmented();
+                coreSeg.Items = coreItems;
+                int sel = coreVals.Length - 1;
+                for (int i = 0; i < coreVals.Length; i++)
+                    if (cores > 0 && coreVals[i] == cores) sel = i;
+                coreSeg.SetSilent(sel);
+                coreSeg.Visible = coreVals.Length > 1;
+                Controls.Add(coreSeg);
 
                 btnCancel = new FlatButton();
                 btnCancel.Primary = false;
@@ -104,6 +147,9 @@ namespace FrameForge.UI
                     int y = top + row * rowH;
                     sw[i].SetBounds(x + colW - Ui.Px(46), y + Ui.Px(2), Ui.Px(46), Ui.Px(26));
                 }
+
+                int dividerY = top + 4 * rowH + Ui.Px(2);
+                coreSeg.SetBounds(Width - pad - Ui.Px(250), dividerY + Ui.Px(12), Ui.Px(250), Ui.Px(28));
 
                 int bh = Ui.Px(36), bwOk = Ui.Px(110), bwCancel = Ui.Px(92);
                 int bottom = Height - pad - bh;
@@ -180,6 +226,14 @@ namespace FrameForge.UI
                 int dividerY = top + 4 * rowH + Ui.Px(2);
                 using (var pen = new Pen(Theme.Border, 1f))
                     g.DrawLine(pen, pad, dividerY, Width - pad, dividerY);
+
+                if (coreSeg.Visible)
+                {
+                    var coreRect = new Rectangle(pad, dividerY + Ui.Px(12),
+                        Width - pad * 2 - Ui.Px(266), Ui.Px(28));
+                    TextRenderer.DrawText(g, I18n.T("boost.dialog.cores"), Theme.F(9.2f, FontStyle.Bold),
+                        coreRect, Theme.Text, Ui.Flags(ContentAlignment.MiddleLeft, false));
+                }
 
                 int count = 0;
                 for (int i = 0; i < sw.Length; i++) if (sw[i].Checked) count++;

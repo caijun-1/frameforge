@@ -10,6 +10,7 @@ namespace FrameForge.Sys
         public int Cores;
         public int Moved;
         public long Mask;
+        public bool Soft;
         public string Error = "";
     }
 
@@ -34,6 +35,11 @@ namespace FrameForge.Sys
         private long originalGameMask;
         private int gamePid = -1;
         private string gameName = "";
+        private int mode;
+
+        /// <summary>0 = 未生效,1 = 软亲和(CPU Sets),2 = 硬亲和(亲和掩码)。</summary>
+        public int Mode { get { return mode; } }
+        public long Mask { get { return gameMask; } }
 
         public int Cores { get { return CpuTopology.CoreCount(gameMask); } }
 
@@ -43,11 +49,23 @@ namespace FrameForge.Sys
             if (pid <= 0) { r.Error = "nopid"; return r; }
             Restore();
 
+            // 0 = 全部核心:不做任何绑定,也就没有需要还原的东西。
+            if (coresWanted <= 0)
+            {
+                r.Ok = true;
+                r.Cores = CpuTopology.CoreCount(CpuTopology.AllMask());
+                Log.Write("affinity unrestricted pid=" + pid + " cores=" + r.Cores);
+                return r;
+            }
+
             int cores;
             long wanted = CpuTopology.GameMask(coresWanted, out cores);
             if (wanted == 0) { r.Error = "notopology"; return r; }
 
-            IntPtr h = Native.OpenProcess(Native.PROCESS_SET_INFORMATION | Native.PROCESS_QUERY_INFORMATION, false, pid);
+            IntPtr h = Native.OpenProcess(Native.PROCESS_SET_INFORMATION | Native.PROCESS_QUERY_INFORMATION
+                | Native.PROCESS_SET_LIMITED_INFORMATION, false, pid);
+            if (h == IntPtr.Zero)
+                h = Native.OpenProcess(Native.PROCESS_SET_INFORMATION | Native.PROCESS_QUERY_INFORMATION, false, pid);
             if (h == IntPtr.Zero) { r.Error = "open"; return r; }
             try
             {
@@ -59,11 +77,43 @@ namespace FrameForge.Sys
                 if (usable == 0) { r.Error = "nomask"; return r; }
 
                 originalGameMask = procMask.ToInt64();
-                if (!Native.SetProcessAffinityMask(h, new IntPtr(usable))) { r.Error = "set"; return r; }
-
-                gameMask = usable;
                 gamePid = pid;
                 gameName = name ?? "";
+
+                // 软亲和优先:只改默认 CPU Sets,不动其它进程,也不需要管理员权限。
+                uint[] ids = CpuTopology.SetIdsForMask(usable);
+                bool soft = ids.Length > 0 && Native.SetProcessDefaultCpuSets(h, ids, (uint)ids.Length);
+                if (soft)
+                {
+                    // 回读一次,确认默认集合真的落进去了;没落进去就走硬亲和。
+                    uint need;
+                    Native.GetProcessDefaultCpuSets(h, null, 0, out need);
+                    soft = need > 0;
+                }
+                if (soft)
+                {
+                    mode = 1;
+                    gameMask = usable;
+                    r.Ok = true;
+                    r.Soft = true;
+                    r.Mask = usable;
+                    r.Cores = CpuTopology.CoreCount(usable);
+                    Log.Write("affinity soft pid=" + pid + " sets=" + ids.Length + " cores=" + r.Cores);
+                    return r;
+                }
+
+                // 老系统或接口被拒:退回亲和掩码,再挪走其它进程。
+                if (!Native.SetProcessAffinityMask(h, new IntPtr(usable)))
+                {
+                    r.Error = "set";
+                    gamePid = -1;
+                    gameName = "";
+                    originalGameMask = 0;
+                    return r;
+                }
+
+                mode = 2;
+                gameMask = usable;
                 r.Ok = true;
                 r.Mask = usable;
                 r.Cores = CpuTopology.CoreCount(usable);
@@ -71,7 +121,7 @@ namespace FrameForge.Sys
             finally { Native.CloseHandle(h); }
 
             MoveOthers(pid, ref r);
-            Log.Write("affinity pid=" + pid + " cores=" + r.Cores + " moved=" + r.Moved);
+            Log.Write("affinity hard pid=" + pid + " cores=" + r.Cores + " moved=" + r.Moved);
             return r;
         }
 
@@ -133,25 +183,31 @@ namespace FrameForge.Sys
             }
             saved.Clear();
 
-            if (gamePid > 0 && originalGameMask != 0)
+            if (gamePid > 0)
             {
                 IntPtr h = IntPtr.Zero;
                 try
                 {
-                    h = Native.OpenProcess(Native.PROCESS_SET_INFORMATION, false, gamePid);
+                    h = Native.OpenProcess(Native.PROCESS_SET_INFORMATION | Native.PROCESS_QUERY_INFORMATION
+                        | Native.PROCESS_SET_LIMITED_INFORMATION, false, gamePid);
                     if (h != IntPtr.Zero
                         && string.Equals(Native.ProcessName(gamePid), gameName, StringComparison.OrdinalIgnoreCase))
-                        Native.SetProcessAffinityMask(h, new IntPtr(originalGameMask));
+                    {
+                        // 软亲和:清空默认 CPU Sets 即恢复;硬亲和:写回原掩码。
+                        if (mode == 1) Native.SetProcessDefaultCpuSets(h, null, 0);
+                        else if (originalGameMask != 0) Native.SetProcessAffinityMask(h, new IntPtr(originalGameMask));
+                    }
                 }
                 catch { }
                 finally { if (h != IntPtr.Zero) Native.CloseHandle(h); }
             }
 
-            if (gamePid > 0) Log.Write("affinity restore pid=" + gamePid);
+            if (gamePid > 0) Log.Write("affinity restore pid=" + gamePid + " mode=" + mode);
             gamePid = -1;
             gameMask = 0;
             originalGameMask = 0;
             gameName = "";
+            mode = 0;
         }
     }
 }

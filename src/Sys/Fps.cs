@@ -28,12 +28,15 @@ namespace FrameForge.Sys
             "https://github.com/GameTechDev/PresentMon/releases/download/v" + Version + "/PresentMon-" + Version + "-x64.exe";
 
         private static readonly object Gate = new object();
+        private readonly object startGate = new object();
         private volatile Process proc;
         private Thread reader;
         private Thread errReader;
         private int trackedPid = -1;
         private DateTime lastTry = DateTime.MinValue;
         private DateTime nextRecoverAt = DateTime.MinValue;
+        private DateTime lastEtwReset = DateTime.MinValue;
+        private int watchFails;
         private long lastRowTicks;
         private volatile bool stopping;
         private volatile bool gotRow;
@@ -115,10 +118,12 @@ namespace FrameForge.Sys
             {
                 // PresentMon 有时"活着但不再输出":ETW 实时会话被系统诊断会话挤占时,
                 // 进程不退出、stderr 只刷 lost events,界面上的帧率就停在最后一个数字。
-                // 按"最近一行数据"做心跳,超过 8 秒没有新行就重启采集会话。
+                // 按"最近一行数据"做心跳,超过 15 秒没有新行才重启采集会话。
+                // 读盘/加载场景本来就不出帧,定得太短会在加载时反复重启,
+                // 每次重启都要拆一次 ETW 实时会话,那本身就是卡顿源。
                 long last = Interlocked.Read(ref lastRowTicks);
                 if (last == 0) return;
-                if ((DateTime.UtcNow - new DateTime(last, DateTimeKind.Utc)).TotalSeconds < 8) return;
+                if ((DateTime.UtcNow - new DateTime(last, DateTimeKind.Utc)).TotalSeconds < 15) return;
                 if (DateTime.UtcNow < nextRecoverAt) return;
                 nextRecoverAt = DateTime.UtcNow.AddSeconds(6);
                 Log.Write("presentmon stalled, restart pid=" + pid);
@@ -145,6 +150,19 @@ namespace FrameForge.Sys
         }
 
         private void Start(int pid)
+        {
+            lock (startGate)
+            {
+                if (pid != trackedPid) return;
+                // 界面心跳(Track)和看门狗会同时走到这里。两个 PresentMon 抢同一个
+                // ETW 会话名时,后启动的会把先启动的踢掉,日志里就是 start 紧跟一行
+                // exited code=0,帧率窗口被反复清空,叠加上层统计全是抖的。
+                if (proc != null && !proc.HasExited) return;
+                StartCore(pid);
+            }
+        }
+
+        private void StartCore(int pid)
         {
             if (pid != trackedPid) return;
             try
@@ -219,7 +237,7 @@ namespace FrameForge.Sys
         }
 
         /// <summary>
-        /// 启动后 6 秒还一行数据都没有,说明 PresentMon 的 ETW 会话抢不到事件
+        /// 启动后 10 秒还一行数据都没有,说明 PresentMon 的 ETW 会话抢不到事件
         /// (本机实测:系统诊断会话把实时缓冲占满时,它只会刷 "ETW events were lost")。
         /// 这时清理一次噪声会话并重启,而不是一直空转。
         /// </summary>
@@ -227,7 +245,12 @@ namespace FrameForge.Sys
         {
             Thread t = new Thread(delegate()
             {
-                for (int i = 0; i < 12; i++)
+                // 连续失败时退避:10 / 20 / 40 秒。以前固定 6 秒重试,
+                // 采集抢不到事件时会变成一直杀进程、反复跑 logman,抖动本身就是卡顿源。
+                // 另外游戏加载/编译着色器时本来就不出帧,首行常常要等十几秒。
+                int waitSec = 10;
+                for (int k = 0; k < watchFails && k < 2; k++) waitSec *= 2;
+                for (int i = 0; i < waitSec * 2; i++)
                 {
                     Thread.Sleep(500);
                     if (stopping || gotRow || proc == null || trackedPid != pid) return;
@@ -235,7 +258,8 @@ namespace FrameForge.Sys
                 if (stopping || gotRow || proc == null || trackedPid != pid) return;
                 if (Status == FpsStatus.NeedAdmin) return;
 
-                Log.Write("presentmon watchdog: no rows in 6s, resetting etw");
+                watchFails++;
+                Log.Write("presentmon watchdog: no rows in " + waitSec + "s, retry #" + watchFails);
                 Process p = proc;
                 proc = null;
                 try { if (!p.HasExited) p.Kill(); }
@@ -243,7 +267,12 @@ namespace FrameForge.Sys
                 try { p.Dispose(); }
                 catch { }
 
-                ResetEtw();
+                // 清理噪声会话要为每个会话起一次 logman,代价不小,10 分钟内只做一次。
+                if ((DateTime.UtcNow - lastEtwReset).TotalMinutes >= 10)
+                {
+                    lastEtwReset = DateTime.UtcNow;
+                    ResetEtw();
+                }
                 if (!stopping && trackedPid == pid) Start(pid);
             });
             t.IsBackground = true;
@@ -387,6 +416,7 @@ namespace FrameForge.Sys
             if (!gotRow)
             {
                 gotRow = true;
+                watchFails = 0;
                 Log.Write("presentmon first row t=" + t.ToString("0.00", CultureInfo.InvariantCulture));
             }
             lock (Gate)

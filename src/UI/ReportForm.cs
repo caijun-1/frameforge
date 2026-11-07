@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
 using FrameForge.Sys;
@@ -191,20 +190,6 @@ namespace FrameForge.UI
             }
         }
 
-        /// <summary>抽稀后的帧率序列;旧记录没有曲线时退回一条平均帧率水平线。</summary>
-        private double[] Series()
-        {
-            if (rec.FpsSeries != null && rec.FpsSeries.Length >= 2)
-            {
-                var list = new List<double>(rec.FpsSeries.Length);
-                for (int i = 0; i < rec.FpsSeries.Length; i++)
-                    if (rec.FpsSeries[i] > 0) list.Add(rec.FpsSeries[i]);
-                if (list.Count >= 2) return list.ToArray();
-            }
-            if (rec.FpsAvg > 0) return new double[] { rec.FpsAvg, rec.FpsAvg };
-            return null;
-        }
-
         /// <summary>本局帧率曲线:面积 + 折线,再叠一条平均线。</summary>
         private void Chart(Graphics g, Rectangle r)
         {
@@ -214,7 +199,7 @@ namespace FrameForge.UI
                 new Rectangle(r.Left + pad, r.Top + Ui.Px(10), r.Width - pad * 2, Ui.Px(18)),
                 TextFormatFlags.Left);
 
-            double[] series = Series();
+            double[] series = FpsChart.Series(rec);
             Rectangle plot = new Rectangle(r.Left + pad, r.Top + Ui.Px(36),
                 r.Width - pad * 2, r.Height - Ui.Px(52));
             if (series == null || series.Length < 2 || plot.Height < Ui.Px(30))
@@ -225,14 +210,11 @@ namespace FrameForge.UI
                 return;
             }
 
-            double min = series[0], max = series[0], sum = 0;
-            int maxAt = 0;
+            double max = series[0], sum = 0;
             for (int i = 0; i < series.Length; i++)
             {
-                double v = series[i];
-                if (v < min) min = v;
-                if (v > max) { max = v; maxAt = i; }
-                sum += v;
+                if (series[i] > max) max = series[i];
+                sum += series[i];
             }
             double avg = sum / series.Length;
 
@@ -242,60 +224,7 @@ namespace FrameForge.UI
                 new Rectangle(r.Left + pad, r.Top + Ui.Px(10), r.Width - pad * 2, Ui.Px(18)),
                 TextFormatFlags.Right);
 
-            // 纵轴留一点余量,曲线不会贴顶或贴底;下限不低于 0。
-            double span = Math.Max(4, max - min);
-            double lo = Math.Max(0, min - span * 0.15);
-            double hi = max + span * 0.15;
-            if (hi - lo < 1) hi = lo + 1;
-
-            using (var p = new Pen(Theme.Border, 1f))
-            {
-                for (int i = 1; i <= 3; i++)
-                {
-                    int gy = plot.Top + plot.Height * i / 4;
-                    g.DrawLine(p, plot.Left, gy, plot.Right, gy);
-                }
-            }
-
-            PointF[] pts = new PointF[series.Length];
-            for (int i = 0; i < series.Length; i++)
-            {
-                float x = plot.Left + (float)plot.Width * i / (series.Length - 1);
-                float v = plot.Bottom - (float)((series[i] - lo) / (hi - lo)) * plot.Height;
-                if (v < plot.Top) v = plot.Top;
-                if (v > plot.Bottom) v = plot.Bottom;
-                pts[i] = new PointF(x, v);
-            }
-
-            // 面积渐变:顶部强调色,向下淡出。
-            using (var path = new System.Drawing.Drawing2D.GraphicsPath())
-            {
-                path.AddLines(pts);
-                path.AddLine(pts[pts.Length - 1].X, plot.Bottom, pts[0].X, plot.Bottom);
-                path.CloseFigure();
-                using (var lg = new System.Drawing.Drawing2D.LinearGradientBrush(
-                    new Rectangle(plot.Left, plot.Top, Math.Max(1, plot.Width), Math.Max(1, plot.Height)),
-                    Color.FromArgb(96, Theme.Accent), Color.FromArgb(0, Theme.Accent), 90f))
-                    g.FillPath(lg, path);
-            }
-
-            using (var p = new Pen(Theme.Accent, 2f))
-            {
-                p.LineJoin = System.Drawing.Drawing2D.LineJoin.Round;
-                g.DrawLines(p, pts);
-            }
-
-            // 平均线
-            float ay = plot.Bottom - (float)((avg - lo) / (hi - lo)) * plot.Height;
-            using (var p = new Pen(Color.FromArgb(150, Theme.Sub), 1f))
-            {
-                p.DashStyle = System.Drawing.Drawing2D.DashStyle.Dash;
-                g.DrawLine(p, plot.Left, ay, plot.Right, ay);
-            }
-
-            // 峰值点
-            using (var b = new SolidBrush(Theme.Accent))
-                g.FillEllipse(b, pts[maxAt].X - Ui.Px(3), pts[maxAt].Y - Ui.Px(3), Ui.Px(6), Ui.Px(6));
+            FpsChart.Plot(g, plot, series);
         }
 
         private void Stat(Graphics g, int x, int y, int w, int h, string caption, string avg, string max)

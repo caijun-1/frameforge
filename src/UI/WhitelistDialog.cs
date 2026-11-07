@@ -56,10 +56,13 @@ namespace FrameForge.UI
                 var row = new CheckRow();
                 row.Proc = c.Name;
                 row.Label = c.Label;
-                row.Locked = c.BuiltIn;
-                row.Checked = c.BuiltIn || picked.Contains(c.Name);
+                // 永久(系统/自启)和自动(小内存)都由程序判定,不允许取消勾选。
+                row.Locked = c.BuiltIn || c.Kind == 2;
+                row.Checked = row.Locked || picked.Contains(c.Name);
                 row.IconPath = c.Running ? GameDb.PathFor(c.Name) : "";
-                row.Note = c.BuiltIn ? I18n.T("wl.locked")
+                row.Note = c.Kind == 1 ? I18n.T("wl.permanent")
+                    : c.Kind == 2 ? I18n.T("wl.auto")
+                    : c.Kind == 3 ? I18n.T("wl.manual")
                     : c.Running ? Fmt.Bytes(c.Memory) : I18n.T("wl.offline");
                 rows.Add(row);
                 list.Controls.Add(row);

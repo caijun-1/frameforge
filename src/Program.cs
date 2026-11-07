@@ -196,6 +196,21 @@ namespace FrameForge
                 check("core mask", mask != 0 && CpuTopology.PopCount(mask) >= used,
                     "cores=" + used + " cpu=" + CpuTopology.PopCount(mask)
                     + " mask=0x" + mask.ToString("X", CultureInfo.InvariantCulture));
+
+                CpuSetInfo[] sets = CpuTopology.CpuSets();
+                check("cpu sets", true, CpuTopology.SoftSupported
+                    ? sets.Length + " set(s)" : "unsupported, hard affinity only");
+                int pc = 0, ec = 0, ccd = 0;
+                for (int i = 0; i < cores.Length; i++)
+                {
+                    if (cores[i].Efficient) ec++; else pc++;
+                    bool seen = false;
+                    for (int j = 0; j < i; j++)
+                        if (cores[j].Llc == cores[i].Llc) { seen = true; break; }
+                    if (!seen) ccd++;
+                }
+                check("p/e cores", pc + ec > 0, pc + "P/" + ec + "E hybrid=" + CpuTopology.IsHybrid
+                    + " ccd=" + ccd);
             }
             catch (Exception ex) { check("cpu topology", false, ex.Message); }
 

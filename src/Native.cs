@@ -171,6 +171,7 @@ namespace FrameForge
         public const uint TH32CS_SNAPPROCESS = 0x00000002;
         public const uint PROCESS_QUERY_INFORMATION = 0x0400;
         public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+        public const uint PROCESS_SET_LIMITED_INFORMATION = 0x2000;
         public const uint PROCESS_SET_QUOTA = 0x0100;
         public const uint PROCESS_SET_INFORMATION = 0x0200;
         public const uint PROCESS_SUSPEND_RESUME = 0x0800;
@@ -291,6 +292,18 @@ namespace FrameForge
 
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool GetProcessAffinityMask(IntPtr hProcess, out IntPtr processMask, out IntPtr systemMask);
+
+        // CPU Sets(Win10 1703+):比 64 位掩码更细的亲和性,也是 P/E 核信息的来源。
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool GetSystemCpuSetInformation(IntPtr info, int infoLength, out int returnedLength,
+            IntPtr process, uint flags);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool SetProcessDefaultCpuSets(IntPtr hProcess, uint[] cpuSetIds, uint idCount);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool GetProcessDefaultCpuSets(IntPtr hProcess, uint[] cpuSetIds, uint idCount,
+            out uint requiredIdCount);
 
         [DllImport("ntdll.dll")]
         public static extern int NtSuspendProcess(IntPtr hProcess);

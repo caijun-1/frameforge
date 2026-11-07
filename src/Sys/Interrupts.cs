@@ -23,16 +23,17 @@ namespace FrameForge.Sys
     }
 
     /// <summary>
-    /// 设备中断避让:把网卡/显卡的 MSI 中断亲和性挪到游戏不用的核心上,
+    /// 设备中断避让:把网卡的 MSI 中断亲和性挪到游戏不用的核心上,
     /// 减少游戏核上的 DPC/ISR 抖动。写入的是设备的中断亲和策略,
     /// 由内核在下次启动时应用,所以必须重启才生效。
-    /// 只处理已经启用 MSI 的设备,且记录原值以便还原。
+    /// 只处理已经启用 MSI 的网卡,且记录原值以便还原。
+    /// 显卡不参与:MSI 亲和策略会把显卡中断钉死在少数核心上,
+    /// 驱动侧没有为此做保证,是明确的掉驱动/设备挂起风险。
     /// </summary>
     public sealed class InterruptEngine
     {
         private const string EnumRoot = @"SYSTEM\CurrentControlSet\Enum\PCI";
         private const string NetClass = "4d36e972-e325-11ce-bfc1-08002be10318";
-        private const string DisplayClass = "4d36e968-e325-11ce-bfc1-08002be10318";
         private const int PolicySpecifiedProcessors = 4;
 
         private sealed class IrqSaved
@@ -71,7 +72,7 @@ namespace FrameForge.Sys
                                     string cls = Str(dev.GetValue("ClassGUID")).Trim().ToLowerInvariant();
                                     // 注册表里是带花括号的 {4d36e972-...},统一去掉再比。
                                     cls = cls.Trim('{', '}');
-                                    if (cls != NetClass && cls != DisplayClass) continue;
+                                    if (cls != NetClass) continue;
 
                                     using (RegistryKey im = dev.OpenSubKey(@"Device Parameters\Interrupt Management"))
                                     {

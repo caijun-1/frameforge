@@ -265,6 +265,7 @@ namespace FrameForge.UI
             suppressAutoPid = Boost != null ? Boost.GamePid : -1;
             try { if (Boost != null) Boost.Restore(); }
             catch (Exception ex) { Log.Write("restore: " + ex.Message); }
+            Perf.Reset();
 
             if (boostPage != null)
             {
@@ -325,7 +326,10 @@ namespace FrameForge.UI
                         boostPage.SyncState();
                         if (r != null) boostPage.SetResult(ComposeResult(r));
                     }
-                    if (r != null && r.Ok) Toast(I18n.T("toast.auto", gameName));
+                    if (r != null && r.Ok)
+                    {
+                        Toast(I18n.T("toast.auto", gameName));
+                    }
                 });
             });
         }
@@ -477,7 +481,7 @@ namespace FrameForge.UI
             ThreadPool.QueueUserWorkItem(delegate
             {
                 OptimizeResult r = null;
-                try { r = MemEngine.Optimize(OptimizeLevel.Standard, gamePid, null); }
+                try { r = MemEngine.Optimize(OptimizeLevel.Standard, gamePid, null, gamePid <= 0); }
                 catch (Exception ex) { Log.Write("trim: " + ex.Message); }
 
                 string text;
@@ -502,6 +506,9 @@ namespace FrameForge.UI
         private void AutoTrim(SysSample s)
         {
             if (!St.MemAuto || trimming || s.RamPct < 0) return;
+            // 游戏在跑时不清缓存、不清待命列表:刚加载的资源被赶出去后要重新读盘,
+            // 表现就是每隔两分钟卡一下。等退出游戏后再维护。
+            if (s.GameRecent || (Boost != null && Boost.Active)) return;
             if (s.RamPct < St.MemThreshold) return;
             if ((DateTime.UtcNow - lastAutoTrim).TotalSeconds < 120) return;
             lastAutoTrim = DateTime.UtcNow;

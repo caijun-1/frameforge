@@ -55,6 +55,8 @@ namespace FrameForge.UI
         private readonly ArcGauge ramArc;
         private readonly InfoStrip strip;
         private readonly ChipStrip chips;
+        private readonly TextLabel perfLbl;
+        private readonly CoreMap coreMap;
 
         private readonly ToolTip tips;
 
@@ -110,6 +112,14 @@ namespace FrameForge.UI
                 I18n.T("boost.chip.timer"), I18n.T("boost.chip.dvr")
             };
             chips.On = new bool[4];
+
+            // 加速前后对比与核心拓扑都放在 Hero 内,不再新增导航页。
+            perfLbl = new TextLabel();
+            perfLbl.Size = 8.5f;
+            perfLbl.ForeColor = Theme.Sub;
+            perfLbl.Ellipsis = true;
+
+            coreMap = new CoreMap();
 
             modes = new TabBar();
             modes.Items = new string[]
@@ -191,6 +201,8 @@ namespace FrameForge.UI
             hero.Controls.Add(gameSub);
             hero.Controls.Add(hint);
             hero.Controls.Add(chips);
+            hero.Controls.Add(perfLbl);
+            hero.Controls.Add(coreMap);
             hero.Controls.Add(mainBtn);
             hero.Controls.Add(trimBtn);
             hero.Controls.Add(tgAuto);
@@ -272,6 +284,7 @@ namespace FrameForge.UI
             gpuRing.AccentColor = Theme.Accent;
             radar.AccentColor = Theme.Accent;
             ramArc.AccentColor = Theme.Accent;
+            coreMap.Accent = Theme.Accent;
             stateLbl.ForeColor = lastBoosted ? Theme.Accent : Theme.Sub;
             Invalidate(true);
         }
@@ -338,9 +351,11 @@ namespace FrameForge.UI
                 p.Priority, p.PowerPlan, p.Timer, p.Dvr,
                 p.Memory, p.Background, p.Affinity, p.Irq
             };
-            bool[] r = BoostDialog.Edit(FindForm(), v);
+            int cores;
+            bool[] r = BoostDialog.Edit(FindForm(), v, Host.St.AffinityCores, out cores);
             if (r == null) return;
 
+            Host.St.AffinityCores = cores;
             Host.St.ApplyCustom(r);
             Host.SaveSettingsSoon();
 
@@ -416,6 +431,54 @@ namespace FrameForge.UI
                       (s.VramTotal / 1073741824.0).ToString("0.0") + " GB"
                     : "—"
             });
+
+            SyncPerf();
+            SyncCoreMap();
+        }
+
+        /// <summary>加速后的帧率对比:拿到结果才显示,平时不占位。</summary>
+        private void SyncPerf()
+        {
+            string t = Host.Perf != null ? Host.Perf.Text() : "";
+            if (perfLbl.Text != t) perfLbl.Text = t;
+            perfLbl.Visible = t.Length > 0;
+        }
+
+        /// <summary>核心带:标出 P/E、CCD 间隔,以及游戏实际占用的核心。</summary>
+        private void SyncCoreMap()
+        {
+            CpuCore[] cores = CpuTopology.Cores();
+            bool boosting = Host.Boost != null && Host.Boost.Active;
+            long mask = boosting ? Host.Boost.AffinityMask : 0;
+            // 核心数选「全部」时不写亲和掩码,但界面不能因此变成一整条暗带——
+            // 那看起来像没生效。全部可用同样算生效,按全部核心点亮。
+            bool allCores = boosting && mask == 0;
+            if (allCores) mask = CpuTopology.AllMask();
+            bool active = boosting && mask != 0;
+            coreMap.UsedMask = active ? mask : 0;
+            coreMap.Mode = allCores ? 1 : (active ? Host.Boost.AffinityMode : 0);
+
+            string cap = "";
+            if (cores.Length > 0)
+            {
+                int p = 0, e = 0;
+                for (int i = 0; i < cores.Length; i++)
+                {
+                    if (cores[i].Efficient) e++; else p++;
+                }
+                cap = e > 0 ? I18n.T("core.summary", p, e) : I18n.T("core.summary.plain", cores.Length);
+                if (allCores)
+                {
+                    cap += " · " + I18n.T("core.all");
+                }
+                else if (active)
+                {
+                    int used = CpuTopology.CoreCount(Host.Boost.AffinityMask);
+                    string how = I18n.T(Host.Boost.AffinityMode == 1 ? "core.soft" : "core.hard");
+                    cap += " · " + I18n.T("core.assigned", used, how);
+                }
+            }
+            if (coreMap.Caption != cap) coreMap.Caption = cap;
         }
 
         private static double N01(double v)
@@ -450,7 +513,7 @@ namespace FrameForge.UI
             if (Width <= 0 || Height <= 0) return;
             int pad = Ui.Px(20);
             int gap = Ui.Px(12);
-            int heroH = Math.Max(Ui.Px(132), Math.Min(Ui.Px(150), Height / 5));
+            int heroH = Math.Max(Ui.Px(160), Math.Min(Ui.Px(178), Height / 5));
             int stripH = Ui.Px(46);
             int modeH = Ui.Px(56);
             int bodyW = Width - pad * 2;
@@ -491,6 +554,8 @@ namespace FrameForge.UI
             gameSub.SetBounds(hp, Ui.Px(62), textW, Ui.Px(16));
             // 状态胶囊移到标题下方:四种生效项一眼看全,也不再和"未加速"挤在同一行。
             chips.SetBounds(hp, Ui.Px(84), textW, Ui.Px(22));
+            perfLbl.SetBounds(hp, Ui.Px(106), textW, Ui.Px(16));
+            coreMap.SetBounds(hp, Ui.Px(124), textW, Math.Max(Ui.Px(24), heroH - Ui.Px(130)));
 
             strip.SetBounds(Ui.Px(16), 0, bodyW - Ui.Px(32), stripH);
             // 右列:一键加速 + "自动优化"文字标签和开关并排,内存整理在下方同宽铺满。
@@ -585,6 +650,81 @@ namespace FrameForge.UI
                         TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
 
                     x += w + gap;
+                }
+            }
+        }
+
+        /// <summary>Hero 里的核心带:P/E 分色、CCD 之间留缝、游戏占用高亮。</summary>
+        private sealed class CoreMap : Ctl
+        {
+            private long usedMask;
+            private int mode;
+            private string caption = "";
+            public Color Accent = Color.Empty;
+
+            public long UsedMask
+            {
+                get { return usedMask; }
+                set { if (usedMask != value) { usedMask = value; Invalidate(); } }
+            }
+
+            public int Mode
+            {
+                get { return mode; }
+                set { if (mode != value) { mode = value; Invalidate(); } }
+            }
+
+            public string Caption
+            {
+                get { return caption; }
+                set { if (caption != value) { caption = value ?? ""; Invalidate(); } }
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                Graphics g = e.Graphics;
+                Prep(g);
+                if (Width <= 0 || Height <= 0) return;
+
+                CpuCore[] cores = CpuTopology.Cores();
+                int capH = Ui.Px(15);
+                float bandH = Height - capH;
+                Color acc = Accent.A == 0 ? Theme.Accent : Accent;
+
+                // 每个物理核心一格;末级缓存编号变化处多留一段缝,CCD 边界一眼可见。
+                if (cores.Length > 0 && bandH >= Ui.Px(6))
+                {
+                    float gap = Ui.Fp(2);
+                    float total = 0;
+                    for (int i = 1; i < cores.Length; i++)
+                        total += cores[i].Llc != cores[i - 1].Llc ? gap * 3 : gap;
+                    float cell = (Width - total) / cores.Length;
+                    if (cell < Ui.Fp(2)) cell = Ui.Fp(2);
+
+                    float x = 0;
+                    float radius = Math.Max(2f, cell / 3f);
+                    for (int i = 0; i < cores.Length; i++)
+                    {
+                        if (i > 0) x += cores[i].Llc != cores[i - 1].Llc ? gap * 3 : gap;
+
+                        bool used = UsedMask != 0 && (cores[i].Mask & UsedMask) != 0;
+                        Color fill;
+                        if (used) fill = Mode == 1 ? Theme.Alpha(acc, 150) : acc;
+                        else if (cores[i].Parked) fill = Theme.Alpha(Theme.Track, Theme.Dark ? 120 : 90);
+                        else if (cores[i].Efficient) fill = Theme.Alpha(Theme.Faint, Theme.Dark ? 110 : 80);
+                        else fill = Theme.Alpha(acc, Theme.Dark ? 80 : 46);
+
+                        Ui.Fill(g, new RectangleF(x, 0, cell, bandH), radius, fill);
+                        x += cell;
+                    }
+                }
+
+                if (Caption.Length > 0)
+                {
+                    TextRenderer.DrawText(g, Caption, Theme.F(8f, FontStyle.Regular),
+                        new Rectangle(0, (int)bandH, Width, capH), Theme.Sub,
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine
+                        | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
                 }
             }
         }
@@ -1716,7 +1856,7 @@ namespace FrameForge.UI
         private readonly Segmented mode, presetGroup;
         private readonly Chip[] chips = new Chip[Filter.PresetKeys.Length];
         private readonly FilterPreview preview;
-        private readonly Slider sIntensity, sBright, sContrast, sSat, sWarm, sDark, sVibrance;
+        private readonly Slider sIntensity, sBright, sContrast, sSat, sWarm, sTint, sDark, sVibrance;
         private readonly FlatButton resetBtn;
         private readonly ToolTip tips;
         private readonly Timer brightTimer;
@@ -1821,6 +1961,7 @@ namespace FrameForge.UI
             sContrast = MakeSlider(I18n.T("flt.contrast"), -100, 100, "", host.St.FilterContrast);
             sSat = MakeSlider(I18n.T("flt.saturation"), -100, 100, "", host.St.FilterSaturation);
             sWarm = MakeSlider(I18n.T("flt.warmth"), -100, 100, "", host.St.FilterWarmth);
+            sTint = MakeSlider(I18n.T("flt.tint"), -100, 100, "", host.St.FilterTint);
             sDark = MakeSlider(I18n.T("flt.dark"), 0, 100, "", host.St.FilterDark);
             sVibrance = MakeSlider(I18n.T("flt.vibrance"), 0, 100, "", host.St.FilterVibrance);
 
@@ -1831,6 +1972,7 @@ namespace FrameForge.UI
             customCard.Controls.Add(sContrast);
             customCard.Controls.Add(sSat);
             customCard.Controls.Add(sWarm);
+            customCard.Controls.Add(sTint);
             customCard.Controls.Add(sDark);
             customCard.Controls.Add(sVibrance);
 
@@ -1926,6 +2068,7 @@ namespace FrameForge.UI
             Host.St.FilterContrast = sContrast.Value;
             Host.St.FilterSaturation = sSat.Value;
             Host.St.FilterWarmth = sWarm.Value;
+            Host.St.FilterTint = sTint.Value;
             Host.St.FilterDark = sDark.Value;
             Host.St.FilterVibrance = sVibrance.Value;
             Host.SaveSettingsSoon();
@@ -1939,6 +2082,7 @@ namespace FrameForge.UI
             sContrast.SetSilent(0);
             sSat.SetSilent(0);
             sWarm.SetSilent(0);
+            sTint.SetSilent(0);
             sDark.SetSilent(0);
             sVibrance.SetSilent(0);
             CommitCustom();
@@ -2020,7 +2164,7 @@ namespace FrameForge.UI
             int bw = Ui.Px(96), bh = Ui.Px(26);
             resetBtn.SetBounds(Width - pad - bw, Ui.Px(9), bw, bh);
 
-            Slider[] all = { sIntensity, sBright, sContrast, sDark, sSat, sWarm, sVibrance };
+            Slider[] all = { sIntensity, sBright, sContrast, sWarm, sTint, sDark, sSat, sVibrance };
             int rows = (all.Length + 1) / 2;
             int colGap = Ui.Px(26);
             int colW = (Width - pad * 2 - colGap) / 2;
@@ -2350,7 +2494,8 @@ namespace FrameForge.UI
             int gap = Ui.Px(12);
             int optH = Ui.Px(64);
             int avail = Height - optH - gap * 2;
-            int detailH = Math.Min(Ui.Px(312), avail * 3 / 5);
+            // 详情里多了一张帧率曲线,给它留出空间;列表仍保证至少 120px。
+            int detailH = Math.Min(Ui.Px(400), avail * 72 / 100);
             int listH = avail - detailH;
             if (listH < Ui.Px(120)) { listH = Ui.Px(120); detailH = Math.Max(Ui.Px(120), avail - listH); }
 
@@ -2403,7 +2548,7 @@ namespace FrameForge.UI
             }
 
             int gap = Ui.Px(8);
-            int heroH = Ui.Px(78);
+            int heroH = Ui.Px(60);
             int heroW = (Width - gap * 2) / 3;
             Hero(g, 0, 0, heroW, heroH, I18n.T("report.stat.fps"), Num(rec.FpsAvg, "0"), I18n.T("report.fps.unit"));
             Hero(g, heroW + gap, 0, heroW, heroH, I18n.T("report.stat.low"), Num(rec.Low1, "0"), I18n.T("report.fps.unit"));
@@ -2411,8 +2556,18 @@ namespace FrameForge.UI
                 I18n.T("report.duration"), rec.Duration, "");
 
             int y = heroH + gap;
-            int th = Ui.Px(62);
+            int th = Ui.Px(48);
             int tw = (Width - gap * 2) / 3;
+
+            // 曲线吃掉剩余高度;窗口压得很矮时整块让给数字,保证指标先看得清。
+            int reserved = heroH + gap + th + gap + th + Ui.Px(6) + Ui.Px(18);
+            int chartH = Height - reserved - gap;
+            if (chartH >= Ui.Px(48))
+            {
+                Chart(g, new Rectangle(0, y, Width, chartH));
+                y += chartH + gap;
+            }
+
             Tile(g, 0, y, tw, th, I18n.T("report.stat.cpu"), Pct(rec.CpuAvg) + " / " + I18n.T("report.max") + " " + Pct(rec.CpuMax));
             Tile(g, tw + gap, y, tw, th, I18n.T("report.stat.gpu"), Pct(rec.GpuAvg) + " / " + I18n.T("report.max") + " " + Pct(rec.GpuMax));
             Tile(g, (tw + gap) * 2, y, Width - (tw + gap) * 2, th, I18n.T("report.stat.temp"),
@@ -2432,6 +2587,46 @@ namespace FrameForge.UI
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
         }
 
+        /// <summary>本局帧率曲线:和退游报告卡用同一套画法。</summary>
+        private void Chart(Graphics g, Rectangle r)
+        {
+            var box = new RectangleF(r.X, r.Y, r.Width, r.Height);
+            Ui.Fill(g, box, Ui.Fp(10), Theme.Bg);
+            Ui.Stroke(g, new RectangleF(box.X + 0.5f, box.Y + 0.5f, box.Width - 1f, box.Height - 1f),
+                Ui.Fp(10), Theme.Border, 1f);
+
+            int pad = Ui.Px(14);
+            TextRenderer.DrawText(g, I18n.T("report.chart"), Theme.Bold(8.6f),
+                new Rectangle(r.Left + pad, r.Top + Ui.Px(5), r.Width - pad * 2, Ui.Px(16)), Theme.Sub,
+                TextFormatFlags.Left | TextFormatFlags.NoPrefix);
+
+            double[] series = FpsChart.Series(rec);
+            Rectangle plot = new Rectangle(r.Left + pad, r.Top + Ui.Px(23),
+                r.Width - pad * 2, r.Height - Ui.Px(31));
+            if (series == null || series.Length < 2 || plot.Height < Ui.Px(12))
+            {
+                TextRenderer.DrawText(g, I18n.T("report.chart.none"), Theme.Regular(8.2f),
+                    new Rectangle(r.Left + pad, r.Top + Ui.Px(18), r.Width - pad * 2, r.Height - Ui.Px(22)),
+                    Theme.Faint,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+                return;
+            }
+
+            double max = series[0], sum = 0;
+            for (int i = 0; i < series.Length; i++)
+            {
+                if (series[i] > max) max = series[i];
+                sum += series[i];
+            }
+            TextRenderer.DrawText(g, I18n.T("report.chart.avg") + " " + (sum / series.Length).ToString("0")
+                    + "      " + I18n.T("report.chart.peak") + " " + max.ToString("0"),
+                Theme.Regular(8.2f),
+                new Rectangle(r.Left + pad, r.Top + Ui.Px(5), r.Width - pad * 2, Ui.Px(16)), Theme.Faint,
+                TextFormatFlags.Right | TextFormatFlags.NoPrefix);
+
+            FpsChart.Plot(g, plot, series);
+        }
+
         private void Hero(Graphics g, int x, int y, int w, int h, string caption, string value, string unit)
         {
             Tile(g, x, y, w, h, caption, value);
@@ -2449,11 +2644,12 @@ namespace FrameForge.UI
             Ui.Fill(g, r, Ui.Fp(10), Theme.Bg);
             Ui.Stroke(g, new RectangleF(r.X + 0.5f, r.Y + 0.5f, r.Width - 1f, r.Height - 1f), Ui.Fp(10), Theme.Border, 1f);
             TextRenderer.DrawText(g, caption, Theme.Regular(8.4f),
-                new Rectangle(x + Ui.Px(14), y + Ui.Px(9), w - Ui.Px(28), Ui.Px(16)), Theme.Sub,
+                new Rectangle(x + Ui.Px(14), y + Ui.Px(7), w - Ui.Px(28), Ui.Px(16)), Theme.Sub,
                 TextFormatFlags.Left | TextFormatFlags.NoPrefix);
-            bool big = h >= Ui.Px(70);
+            // 曲线占了一部分高度,数字块压到 48px 也能完整显示。
+            bool big = h >= Ui.Px(56);
             TextRenderer.DrawText(g, value, big ? Theme.Num(24f) : Theme.Num(14f),
-                new Rectangle(x + Ui.Px(14), y + Ui.Px(big ? 26 : 28), w - Ui.Px(28), big ? Ui.Px(40) : Ui.Px(26)),
+                new Rectangle(x + Ui.Px(14), y + Ui.Px(big ? 22 : 24), w - Ui.Px(28), big ? Ui.Px(36) : Ui.Px(22)),
                 Theme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
         }
 
