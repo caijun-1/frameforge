@@ -59,23 +59,23 @@
 
 ## 截图
 
-以下为浅色主题界面（优化与滤镜页截图取自 v1.3.2，其余取自 v1.3.0）。加速页的模式条为铺满整卡的三等分色块，「编辑选项」只在自定义模式下出现。
+以下为浅色主题界面，全部取自 v1.3.5。加速页的模式条为铺满整卡的三等分色块，「编辑选项」只在自定义模式下出现；战绩详情里可直接查看本局帧率折线。
 
 | 加速（均衡模式） | 加速（自定义模式） |
 | --- | --- |
-| ![加速](docs/screenshots/v1.3.0/boost.png) | ![自定义模式](docs/screenshots/v1.3.0/boost-custom.png) |
+| ![加速](docs/screenshots/v1.3.5/boost.png) | ![自定义模式](docs/screenshots/v1.3.5/boost-custom.png) |
 
 | 滤镜 | 叠加层 |
 | --- | --- |
-| ![滤镜](docs/screenshots/v1.3.2/filter.png) | ![叠加层](docs/screenshots/v1.3.0/overlay.png) |
+| ![滤镜](docs/screenshots/v1.3.5/filter.png) | ![叠加层](docs/screenshots/v1.3.5/overlay.png) |
 
 | 战绩 | 优化（系统体检） |
 | --- | --- |
-| ![战绩](docs/screenshots/v1.3.0/report.png) | ![优化](docs/screenshots/v1.3.2/health.png) |
+| ![战绩](docs/screenshots/v1.3.5/report.png) | ![优化](docs/screenshots/v1.3.5/health.png) |
 
 | 设置 |
 | --- |
-| ![设置](docs/screenshots/v1.3.0/settings.png) |
+| ![设置](docs/screenshots/v1.3.5/settings.png) |
 
 <details>
 <summary>旧版界面（v1.1.1，对比用）</summary>
@@ -260,7 +260,7 @@ frameforge/
 
 ## English
 
-**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay, desktop-wide screen filters, and an automatic post-game performance report. It ships as a single 386 KB executable with about 20 MB of resident memory, and it never injects into games or installs a driver.
+**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay, desktop-wide screen filters, and an automatic post-game performance report. It ships as a single 402 KB executable with about 20 MB of resident memory, and it never injects into games or installs a driver.
 
 ### Highlights
 
@@ -269,7 +269,7 @@ frameforge/
 - **Real game names** — a three-layer lookup (user `games.ini` → built-in library of 200+ titles → install folder / file version info) turns `client-win64-shipping.exe` into the actual game title instead of showing a raw process name.
 - **Screen filters** — fifteen general presets plus eight tuned per-game looks (Delta Force, VALORANT, Genshin, Apex, CS2, PUBG, Naraka, League of Legends), with intensity, brightness, contrast, shadow lift, saturation, digital vibrance and warmth sliders, applied through the Windows Magnification color matrix (game-only or always). Hold the A/B button to compare against the original image. The brightness slider drives the monitor's hardware backlight (DDC/CI, or WMI on laptop panels), so it stays out of the color matrix and out of screenshots.
 - **In-game overlay** — top-most layered window with three layouts, eight selectable stats, scaling and position lock. It follows the monitor the game is on and re-asserts top-most every frame, so games that grab the top spot cannot bury it; if the game runs in exclusive fullscreen, the app tells you to switch to borderless instead of silently showing nothing.
-- **Post-game report & records** — a report card pops up when a game exits with average/max/min FPS, 1% low, CPU/GPU/temperature/memory/VRAM/power, plus energy and CO₂ estimates. The Records page keeps the last 300 sessions with per-session detail, delete, clear, and CSV export.
+- **Post-game report & records** — a report card pops up when a game exits with average/max/min FPS, 1% low, CPU/GPU/temperature/memory/VRAM/power, plus energy and CO₂ estimates. The Records page keeps the last 300 sessions with per-session detail (including an FPS chart), delete, clear, and CSV export.
 - **System check-up** — the Optimize page lists the settings that quietly cost frames (admin rights, VBS, hardware-accelerated GPU scheduling, Game DVR, power plan, MSI interrupt affinity, GPU driver) with the recommended state for gaming, inline toggles, and two one-click presets.
 - **Compatibility first** — anti-cheat components (ACE, EAC, BattlEye, Vanguard…) are never suspended or memory-trimmed, and if a game rejects the priority change the app says so instead of claiming success. Anything on the protected list (OBS, Discord, recording tools…) is left alone too.
 - Bilingual UI (Chinese / English), dark and light themes, tray mode, autostart, optional update check.
