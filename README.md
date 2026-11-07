@@ -59,7 +59,7 @@
 
 ## 截图
 
-以下为浅色主题界面（截图取自 v1.3.0；优化页在 v1.3.2 中已去掉底部按钮，推荐状态前移到每一项）。加速页的模式条为铺满整卡的三等分色块，「编辑选项」只在自定义模式下出现。
+以下为浅色主题界面（优化与滤镜页截图取自 v1.3.2，其余取自 v1.3.0）。加速页的模式条为铺满整卡的三等分色块，「编辑选项」只在自定义模式下出现。
 
 | 加速（均衡模式） | 加速（自定义模式） |
 | --- | --- |
@@ -67,11 +67,11 @@
 
 | 滤镜 | 叠加层 |
 | --- | --- |
-| ![滤镜](docs/screenshots/v1.3.0/filter.png) | ![叠加层](docs/screenshots/v1.3.0/overlay.png) |
+| ![滤镜](docs/screenshots/v1.3.2/filter.png) | ![叠加层](docs/screenshots/v1.3.0/overlay.png) |
 
 | 战绩 | 优化（系统体检） |
 | --- | --- |
-| ![战绩](docs/screenshots/v1.3.0/report.png) | ![优化](docs/screenshots/v1.3.0/health.png) |
+| ![战绩](docs/screenshots/v1.3.0/report.png) | ![优化](docs/screenshots/v1.3.2/health.png) |
 
 | 设置 |
 | --- |
