@@ -104,6 +104,15 @@ namespace FrameForge
                 sb.AppendLine((ok ? "PASS  " : "FAIL  ") + name + (detail.Length > 0 ? "  (" + detail + ")" : ""));
             };
 
+            // 虚拟机、远程桌面、CI 机器上拿不到显卡信息/显卡计数器是正常的,
+            // 这种情况记为 SKIP 而不是 FAIL,免得环境问题挡住真正的故障。
+            int skipped = 0;
+            Action<string, string> skip = delegate(string name, string reason)
+            {
+                skipped++;
+                sb.AppendLine("SKIP  " + name + (reason.Length > 0 ? "  (" + reason + ")" : ""));
+            };
+
             sb.AppendLine("FrameForge self test  " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
             sb.AppendLine("os: " + Environment.OSVersion.VersionString + "  x64=" + Environment.Is64BitProcess);
             sb.AppendLine("admin: " + MemEngine.IsAdmin);
@@ -142,9 +151,14 @@ namespace FrameForge
                     s == null ? "null" : s.Cpu.ToString("0.0", CultureInfo.InvariantCulture) + "%");
                 check("ram sample", s != null && s.RamPct >= 0,
                     s == null ? "null" : s.RamPct.ToString("0.0", CultureInfo.InvariantCulture) + "%");
-                check("gpu name", s != null && s.GpuName.Length > 0, s == null ? "null" : s.GpuName);
-                check("gpu load", s != null && s.Gpu >= 0,
-                    s == null ? "null" : s.Gpu.ToString("0.0", CultureInfo.InvariantCulture) + "%" +
+                if (s == null) check("gpu name", false, "null");
+                else if (s.GpuName.Length == 0) skip("gpu name", "no display adapter reported");
+                else check("gpu name", true, s.GpuName);
+
+                if (s == null) check("gpu load", false, "null");
+                else if (s.Gpu < 0) skip("gpu load", "no GPU performance counters");
+                else check("gpu load", true,
+                    s.Gpu.ToString("0.0", CultureInfo.InvariantCulture) + "%" +
                         (s.GpuFromNvml ? " nvml" : " pdh"));
             }
             catch (Exception ex) { check("monitor", false, ex.Message); }
@@ -435,7 +449,9 @@ namespace FrameForge
             catch (Exception ex) { check("app icon", false, ex.Message); }
 
             sb.AppendLine();
-            sb.AppendLine(fail == 0 ? "RESULT: OK" : "RESULT: " + fail + " failure(s)");
+            sb.AppendLine(fail == 0
+                ? "RESULT: OK" + (skipped > 0 ? " (" + skipped + " skipped)" : "")
+                : "RESULT: " + fail + " failure(s)");
 
             string path = Path.Combine(Path.GetTempPath(), "frameforge_selftest.log");
             try { File.WriteAllText(path, sb.ToString(), new UTF8Encoding(false)); }

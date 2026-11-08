@@ -23,6 +23,23 @@ jobs:
         shell: pwsh
         run: ./build.ps1
 
+      # 自检不通过就不发布:能编译但一跑就崩的包不该流到 Release。
+      - name: Self test
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:TEMP "frameforge_selftest.log"
+          Remove-Item $log -ErrorAction SilentlyContinue
+          $p = Start-Process -FilePath ./FrameForge.exe -ArgumentList "--selftest" -Wait -PassThru
+          if (Test-Path $log) { Get-Content $log -Encoding UTF8 }
+          if ($p.ExitCode -ne 0) { throw "self test failed (exit $($p.ExitCode))" }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selftest-log
+          path: ${{ runner.temp }}/frameforge_selftest.log
+          if-no-files-found: warn
+
       - id: upload
         uses: actions/upload-artifact@v4
         with:

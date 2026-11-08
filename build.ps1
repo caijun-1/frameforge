@@ -1,13 +1,36 @@
-# FrameForge build script: compile every source file with the .NET Framework csc.
+﻿# FrameForge build script: compile every source file with the .NET Framework csc.
 # The shipped csc only understands C# 5, so never add /langversion:latest.
 
 $ErrorActionPreference = "Stop"
 
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+# $PSScriptRoot 在"按文件执行"时一定有值;通过管道/表达式喂进来时为空,
+# 这时退回当前目录,免得 Join-Path 拿到 $null 直接失败。
+$root = $PSScriptRoot
+if (-not $root) { $root = (Get-Location).Path }
 $csc  = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 $out  = Join-Path $root "FrameForge.exe"
 
 if (-not (Test-Path $csc)) { throw "csc.exe not found: $csc" }
+
+# 版本号只以 src/Version.cs 为准。manifest 与关于页文案要跟它一致,
+# 不一致就在这里失败,而不是等打完 tag 才发现界面还写着旧版本。
+$verFile = Join-Path $root "src\Version.cs"
+$verMatch = [regex]::Match((Get-Content $verFile -Raw -Encoding UTF8),
+    'AssemblyInformationalVersion\("([0-9]+\.[0-9]+\.[0-9]+)"\)')
+if (-not $verMatch.Success) { throw "cannot read AssemblyInformationalVersion from src/Version.cs" }
+$ver = $verMatch.Groups[1].Value
+
+$manifest = Get-Content (Join-Path $root "app.manifest") -Raw -Encoding UTF8
+if ($manifest -notmatch ('version="' + [regex]::Escape($ver) + '\.0"')) {
+    throw "app.manifest version mismatch: expected $ver.0"
+}
+
+$i18n = Get-Content (Join-Path $root "src\I18n.cs") -Raw -Encoding UTF8
+if ($i18n -notmatch ('"FrameForge ' + [regex]::Escape($ver) + '"')) {
+    throw "src/I18n.cs set.version mismatch: expected FrameForge $ver"
+}
+
+Write-Host ("version: " + $ver)
 
 $src = @(Get-ChildItem -Path (Join-Path $root "src") -Filter *.cs -Recurse |
          Sort-Object FullName | ForEach-Object { $_.FullName })

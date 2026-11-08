@@ -638,8 +638,9 @@ namespace FrameForge.Sys
             try
             {
                 if (Native.timeBeginPeriod(1) == 0) { timerSet = true; return true; }
+                Log.Write("boost timer: timeBeginPeriod(1) refused");
             }
-            catch { }
+            catch (Exception ex) { Log.Write("boost timer: " + ex.Message); }
             return false;
         }
 
@@ -687,8 +688,13 @@ namespace FrameForge.Sys
         {
             if (!Active) return;
 
-            try { irq.Restore(); } catch { }
-            try { affinity.Restore(); } catch { }
+            // 还原失败不能只是"什么也没发生":用户的电源计划、注册表就停在加速状态了。
+            // 记进日志,并且保留日志文件,下次启动还能再还原一次。
+            bool clean = true;
+            try { irq.Restore(); }
+            catch (Exception ex) { clean = false; Log.Write("boost restore irq: " + ex.Message); }
+            try { affinity.Restore(); }
+            catch (Exception ex) { clean = false; Log.Write("boost restore affinity: " + ex.Message); }
 
             for (int i = suspended.Count - 1; i >= 0; i--)
             {
@@ -707,15 +713,17 @@ namespace FrameForge.Sys
 
             if (timerSet)
             {
-                try { Native.timeEndPeriod(1); } catch { }
+                try { Native.timeEndPeriod(1); }
+                catch (Exception ex) { clean = false; Log.Write("boost restore timer: " + ex.Message); }
                 timerSet = false;
             }
 
-            RestoreRegistry();
+            if (!RestoreRegistry()) clean = false;
 
             if (prevScheme.Length > 0)
             {
-                try { SetScheme(prevScheme); } catch { }
+                try { SetScheme(prevScheme); }
+                catch (Exception ex) { clean = false; Log.Write("boost restore power plan: " + ex.Message); }
                 prevScheme = "";
             }
 
@@ -727,7 +735,7 @@ namespace FrameForge.Sys
                     h = Native.OpenProcess(Native.PROCESS_SET_INFORMATION, false, GamePid);
                     if (h != IntPtr.Zero) Native.SetPriorityClass(h, prevPriority);
                 }
-                catch { }
+                catch (Exception ex) { Log.Write("boost restore priority: " + ex.Message); }
                 finally { if (h != IntPtr.Zero) Native.CloseHandle(h); }
                 prevPriority = 0;
             }
@@ -737,8 +745,15 @@ namespace FrameForge.Sys
             GamePid = -1;
             GameName = "";
             // 全部恢复完成才删日志:删早了中途崩溃就再也没机会自愈。
-            try { BoostJournal.Clear(); } catch { }
-            Log.Write("boost restore");
+            if (clean)
+            {
+                try { BoostJournal.Clear(); } catch { }
+            }
+            else
+            {
+                Log.Write("boost restore incomplete, journal kept for next start");
+            }
+            Log.Write(clean ? "boost restore" : "boost restore (incomplete)");
         }
 
         /// <summary>把当前这次改动整理成可落盘的原始值,供崩溃后恢复。</summary>
@@ -783,8 +798,9 @@ namespace FrameForge.Sys
             }
         }
 
-        private void RestoreRegistry()
+        private bool RestoreRegistry()
         {
+            bool ok = true;
             for (int i = regSaved.Count - 1; i >= 0; i--)
             {
                 RegSaved s = regSaved[i];
@@ -797,9 +813,14 @@ namespace FrameForge.Sys
                         else k.DeleteValue(s.Name, false);
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    ok = false;
+                    Log.Write("boost restore registry " + s.Path + "\\" + s.Name + ": " + ex.Message);
+                }
             }
             regSaved.Clear();
+            return ok;
         }
 
         // =================================================================
