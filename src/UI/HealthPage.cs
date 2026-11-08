@@ -12,11 +12,11 @@ namespace FrameForge.UI
     /// </summary>
     public class HealthPage : Page
     {
-        private const int Rows = 7;
+        private const int Rows = 10;
 
         private readonly Card card;
         private readonly TextLabel head, sub;
-        private readonly FlatButton btnGame, btnDaily;
+        private readonly FlatButton btnGame, btnDaily, btnAudit;
         private readonly Hairline[] lines;
         private readonly StatusDot[] dots = new StatusDot[Rows];
         private readonly TextLabel[] titles = new TextLabel[Rows];
@@ -29,6 +29,8 @@ namespace FrameForge.UI
         private List<HealthItem> items = new List<HealthItem>();
         private bool syncing;
         private bool checking;
+        // 用户最后点过的预设;点过之后高亮就以它为准,不再靠读状态反推。
+        private string activePreset = "";
 
         public HealthPage(MainForm host) : base(host)
         {
@@ -99,7 +101,7 @@ namespace FrameForge.UI
 
             btnGame = new FlatButton();
             btnGame.FontPt = 8.8f;
-            btnGame.Primary = true;
+            btnGame.Primary = false;
             btnGame.Text = I18n.T("health.preset.game");
             btnGame.Click += delegate { ApplyPreset("game"); };
             card.Controls.Add(btnGame);
@@ -110,6 +112,14 @@ namespace FrameForge.UI
             btnDaily.Text = I18n.T("health.preset.daily");
             btnDaily.Click += delegate { ApplyPreset("daily"); };
             card.Controls.Add(btnDaily);
+
+            btnAudit = new FlatButton();
+            btnAudit.FontPt = 8.8f;
+            btnAudit.Primary = false;
+            btnAudit.Ghost = true;
+            btnAudit.Text = I18n.T("health.audit");
+            btnAudit.Click += delegate { OpenAudit(); };
+            card.Controls.Add(btnAudit);
 
             // 行与行之间的细分隔线,让每一项设置看起来是一条条独立的记录。
             lines = new Hairline[Rows - 1];
@@ -188,7 +198,31 @@ namespace FrameForge.UI
             }
             finally { syncing = false; }
 
+            // 预设按钮的高亮:点过哪个就亮哪个;没点过时按系统当前状态推断。
+            string preset = activePreset.Length > 0 ? activePreset : ActivePreset();
+            btnGame.Primary = preset == "game";
+            btnDaily.Primary = preset == "daily";
+            btnGame.Invalidate();
+            btnDaily.Invalidate();
+
+            LayoutRows();
             Invalidate();
+        }
+
+        /// <summary>按当前三项关键设置判断更接近哪个预设,都不是就不高亮。</summary>
+        private string ActivePreset()
+        {
+            bool hasPower = false, high = false, hagsOn = false, dvrOn = false;
+            foreach (HealthItem it in items)
+            {
+                if (it.Id == "power") { hasPower = true; high = it.Selected == 0; }
+                else if (it.Id == "hags") hagsOn = it.On;
+                else if (it.Id == "dvr") dvrOn = it.On;
+            }
+            if (!hasPower) return "";
+            if (hagsOn && !dvrOn && high) return "game";
+            if (hagsOn && dvrOn && !high) return "daily";
+            return "";
         }
 
         private void ApplyToggle(int i, bool on)
@@ -200,7 +234,16 @@ namespace FrameForge.UI
                 Reload();
                 return;
             }
+            if (it.Id == "fse")
+            {
+                // 「全屏优化」开关:开=保留系统优化,关=为该游戏写入禁用标记。
+                Report(Tune.SetFullscreenOpt(it.Path, !on));
+                Reload();
+                return;
+            }
             Report(Tune.SetToggle(it.Id, on));
+            // 预设只包含电源 / HAGS / DVR,这三项被单独改过就不再高亮预设。
+            if (it.Id == "power" || it.Id == "hags" || it.Id == "dvr") activePreset = "";
             Reload();
         }
 
@@ -209,14 +252,24 @@ namespace FrameForge.UI
             if (i >= items.Count) return;
             HealthItem it = items[i];
             if (it.Id != "power") return;
+            activePreset = "";
             Report(Tune.SetPower(selected == 0));
             Reload();
         }
 
         private void ApplyPreset(string preset)
         {
+            activePreset = preset;
             Report(Tune.ApplyPreset(preset));
             Reload();
+        }
+
+        /// <summary>硬件与游戏目录只做体检,不写任何设置。</summary>
+        private void OpenAudit()
+        {
+            SysSample s = Host == null || Host.Mon == null ? null : Host.Mon.Current;
+            List<SessionRecord> all = Host == null || Host.Sessions == null ? null : Host.Sessions.All;
+            AuditDialog.Show(this, s, all);
         }
 
         /// <summary>说明行:推荐状态 + 现状影响,需要重启的再补一句。</summary>
@@ -280,16 +333,27 @@ namespace FrameForge.UI
 
             int w = Width - pad * 2;
 
-            // 顶部右侧两个预设按钮,标题和说明让开它们,不压字。
+            // 顶部右侧两个预设按钮 + 体检入口,标题和说明让开它们,不压字。
             int pbw = Ui.Px(104), pbh = Ui.Px(30), pgap = Ui.Px(8);
             int pbx = pad + w - pbw;
             btnGame.SetBounds(pbx, Ui.Px(14), pbw, pbh);
             btnDaily.SetBounds(pbx - pbw - pgap, Ui.Px(14), pbw, pbh);
+            btnAudit.SetBounds(pbx - (pbw + pgap) * 2, Ui.Px(14), pbw, pbh);
 
-            int headW = Math.Max(Ui.Px(120), w - pbw * 2 - pgap - Ui.Px(16));
+            int headW = Math.Max(Ui.Px(120), w - pbw * 3 - pgap * 2 - Ui.Px(16));
             head.SetBounds(pad, Ui.Px(16), headW, Ui.Px(26));
             sub.SetBounds(pad, Ui.Px(45), headW, Ui.Px(36));
 
+            LayoutRows();
+        }
+
+        /// <summary>逐行摆位。没有右侧控件的行(如显卡),数值和说明可以一直用到卡片右边,长名字不会被省略。</summary>
+        private void LayoutRows()
+        {
+            if (Width <= 0 || Height <= 0) return;
+
+            int pad = Ui.Px(20);
+            int w = Width - pad * 2;
             int top = Ui.Px(92);
             int bottom = pad;
             int rowH = Math.Max(Ui.Px(46), (Height - top - bottom) / Rows);
@@ -309,11 +373,30 @@ namespace FrameForge.UI
                 int y = top + rowH * i;
                 // 行高随窗口拉伸,文字上下居中才不会把空白全堆在标题下面。
                 int off = Math.Max(0, (rowH - Ui.Px(41)) / 2);
+
+                bool hasCtrl = true;
+                if (i < items.Count)
+                    hasCtrl = items[i].CanToggle || items[i].CanChoose || items[i].Action.Length > 0;
+                // 数值右边缘所有行统一对齐;没有右侧控件时按文字实际宽度向左让出空间,显卡全名不会被省略。
+                int valueRight = valueX + valueW;
+                int valueW2 = valueW;
+                int valueLeft = valueX;
+                if (!hasCtrl)
+                {
+                    int titleNeed = TextRenderer.MeasureText(titles[i].Text ?? "",
+                        Theme.F(titles[i].Size, titles[i].Style)).Width + Ui.Px(12);
+                    int textNeed = TextRenderer.MeasureText(values[i].Text ?? "",
+                        Theme.F(values[i].Size, values[i].Style)).Width + Ui.Px(6);
+                    int avail = Math.Max(Ui.Px(80), valueRight - titleX - titleNeed);
+                    valueW2 = Math.Min(Math.Max(valueW, textNeed), avail);
+                    valueLeft = valueRight - valueW2;
+                }
+
                 dots[i].SetBounds(pad, y + off + (Ui.Px(20) - dotW) / 2, dotW, dotW);
                 titles[i].SetBounds(titleX, y + off, titleW, Ui.Px(20));
-                values[i].SetBounds(valueX, y + off, valueW, Ui.Px(20));
+                values[i].SetBounds(valueLeft, y + off, valueW2, Ui.Px(20));
                 notes[i].SetBounds(titleX, y + off + Ui.Px(21),
-                    Math.Max(Ui.Px(120), valueX - titleX - Ui.Px(8)), Ui.Px(18));
+                    Math.Max(Ui.Px(120), valueRight - titleX - Ui.Px(8)), Ui.Px(18));
 
                 int cy = y + (rowH - ctrlH) / 2;
                 int tgW = Ui.Px(56);

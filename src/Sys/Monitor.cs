@@ -573,6 +573,25 @@ namespace FrameForge.Sys
                 case "obs32":
                 case "camtasia":
                 case "bandicam":
+                // 游戏平台 / 启动器:商店界面一全屏就会被当成游戏,但真正在跑的游戏是它另外拉起的进程
+                case "wegame":
+                case "wegamelauncher":
+                case "tgp":
+                case "tencentdl":
+                case "steam":
+                case "steamwebhelper":
+                case "epicgameslauncher":
+                case "battle.net":
+                case "blizzardbrowser":
+                case "galaxyclient":
+                case "ubisoftconnect":
+                case "upc":
+                case "eadesktop":
+                case "origin":
+                case "goggalaxy":
+                case "xboxpcapp":
+                case "riotclientservices":
+                case "riotclientux":
                 // 截图 / 标注类不在这里列:CaptureTools 已经统一处理,见 IsCaptureTool。
                 // 系统外壳
                 case "applicationframehost":

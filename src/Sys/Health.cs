@@ -24,6 +24,7 @@ namespace FrameForge.Sys
         public string Rec = "";      // 已经本地化的游戏推荐,如「游戏时推荐关闭」
         public string Action = "";   // "" / "admin" / "power" / "url:<协议地址>"
         public string ActKey = "";   // 按钮文字 i18n 键
+        public string Path = "";     // 按游戏调节时目标 exe 的完整路径
 
         public bool CanToggle;       // 右侧给开关
         public bool On;              // 开关当前状态
@@ -54,7 +55,10 @@ namespace FrameForge.Sys
             list.Add(Admin());
             list.Add(MemoryIntegrity());
             list.Add(Hags());
+            list.Add(Mpo());
             list.Add(Dvr());
+            list.Add(FullscreenOpt(s));
+            list.Add(WindowedOpt());
             list.Add(Power());
             list.Add(Msi());
             list.Add(Gpu(s));
@@ -164,6 +168,70 @@ namespace FrameForge.Sys
             return it;
         }
 
+        /// <summary>MPO 多平面叠加:少数显卡上会导致窗口化卡顿,禁用需重启;只作为实验项。</summary>
+        private static HealthItem Mpo()
+        {
+            bool on = Compat.MpoEnabled();
+
+            var it = new HealthItem();
+            it.Key = "health.mpo";
+            it.Id = "mpo";
+            it.CanToggle = true;
+            it.On = on;
+            it.NeedAdmin = true;
+            it.NeedReboot = true;
+            it.Rec = I18n.T("health.rec.try");
+            it.Level = HealthLevel.Info;
+            it.Value = I18n.T(on ? "health.val.on" : "health.val.off");
+            it.Note = I18n.T(on ? "health.mpo.on" : "health.mpo.off");
+            return it;
+        }
+
+        /// <summary>按当前游戏关闭全屏优化:写的是该 exe 的兼容性标记,不影响其他程序。</summary>
+        private static HealthItem FullscreenOpt(SysSample s)
+        {
+            var it = new HealthItem();
+            it.Key = "health.fse";
+            it.Id = "fse";
+            it.Rec = I18n.T("health.rec.off");
+
+            string exe = "";
+            if (s != null && s.GamePid > 0) exe = Compat.GameExePath(s.GamePid);
+            if (exe.Length == 0)
+            {
+                it.Level = HealthLevel.Info;
+                it.Value = I18n.T("health.val.none");
+                it.Note = I18n.T("health.fse.nogame");
+                return it;
+            }
+
+            bool off = Compat.FullscreenOptOff(exe);
+            it.Path = exe;
+            it.CanToggle = true;
+            it.On = !off;   // 开关表示「全屏优化」本身是否开启
+            it.Level = off ? HealthLevel.Ok : HealthLevel.Info;
+            it.Value = I18n.T(off ? "health.val.off" : "health.val.on");
+            it.Note = I18n.T(off ? "health.fse.off" : "health.fse.on");
+            return it;
+        }
+
+        /// <summary>Windows 11 的窗口化游戏优化:关掉后窗口化游戏会退回桌面合成器。</summary>
+        private static HealthItem WindowedOpt()
+        {
+            bool on = Compat.WindowedOptOn();
+
+            var it = new HealthItem();
+            it.Key = "health.windowed";
+            it.Id = "windowed";
+            it.CanToggle = true;
+            it.On = on;
+            it.Rec = I18n.T("health.rec.on");
+            it.Level = on ? HealthLevel.Ok : HealthLevel.Warn;
+            it.Value = I18n.T(on ? "health.val.on" : "health.val.off");
+            it.Note = I18n.T(on ? "health.windowed.on" : "health.windowed.off");
+            return it;
+        }
+
         private static HealthItem Power()
         {
             string guid = BoostEngine.ActiveSchemeGuid();
@@ -195,7 +263,7 @@ namespace FrameForge.Sys
             if (n > 0)
             {
                 it.Level = HealthLevel.Ok;
-                it.Value = n.ToString(CultureInfo.InvariantCulture);
+                it.Value = string.Format(CultureInfo.InvariantCulture, I18n.T("health.msi.count"), n);
                 it.Note = I18n.T("health.msi.on");
             }
             else
@@ -222,7 +290,8 @@ namespace FrameForge.Sys
             }
 
             it.Level = s.GpuFromNvml ? HealthLevel.Ok : HealthLevel.Info;
-            it.Value = s.GpuName;
+            // NVML 的名字去掉了厂商前缀,这里补回来,显示完整的显卡型号。
+            it.Value = s.GpuFromNvml ? "NVIDIA " + s.GpuName : s.GpuName;
             it.Note = I18n.T(s.GpuFromNvml ? "health.gpu.ready" : "health.gpu.pdh");
             return it;
         }

@@ -2,28 +2,28 @@ VERIFICATION
 ====================
 
 Package: frameforge
-Version: 1.3.5
+Version: 1.3.9
 
 The install script downloads a single portable executable from the official
 GitHub Releases page of the project. No binaries are bundled in this package.
 
 Download URL
 ------------
-https://github.com/caijun-1/frameforge/releases/download/v1.3.5/FrameForge.exe
+https://github.com/caijun-1/frameforge/releases/download/v1.3.9/FrameForge.exe
 
 Official release page
 ---------------------
-https://github.com/caijun-1/frameforge/releases/tag/v1.3.5
+https://github.com/caijun-1/frameforge/releases/tag/v1.3.9
 
 Published checksum file (same value as below)
 ---------------------------------------------
-https://github.com/caijun-1/frameforge/releases/download/v1.3.5/FrameForge.exe.sha256
+https://github.com/caijun-1/frameforge/releases/download/v1.3.9/FrameForge.exe.sha256
 
 File details
 ------------
 File name:  FrameForge.exe
-File size:  412160 bytes (402.5 KB)
-SHA256:     08ECF19FDC7B4709F3109A030A2147BB4C50914937E460CC7953EEC4220D04A9
+File size:  435200 bytes (425 KB)
+SHA256:     5581218A9439005AEF6562648FF65BB081EB7009B6CAE4E3711CCB0FDCDCC807
 
 How to verify manually
 ----------------------

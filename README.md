@@ -5,15 +5,15 @@
 <p align="center"><b>轻量级 FPS 游戏增效工具 · A lightweight FPS toolkit for Windows</b><br>
 一键加速 + 实时帧率监测 + 游戏内叠加层 + 画面滤镜 + 赛后性能报告 + 系统优化</p>
 
-<p align="center">单文件 · 免安装 · 402 KB · 不注入游戏 · 不装驱动</p>
+<p align="center">单文件 · 免安装 · 425 KB · 不注入游戏 · 不装驱动</p>
 
 <p align="center">
   <img src="https://github.com/caijun-1/frameforge/actions/workflows/build.yml/badge.svg" alt="build">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue" alt="platform">
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
-  <img src="https://img.shields.io/badge/size-402%20KB-brightgreen" alt="size 402 KB">
+  <img src="https://img.shields.io/badge/size-425%20KB-brightgreen" alt="size 425 KB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.3.5-orange" alt="1.3.5">
+  <img src="https://img.shields.io/badge/version-1.3.9-orange" alt="1.3.9">
 </p>
 
 <p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
@@ -52,30 +52,30 @@
 | 游戏内叠加层 | 置顶半透明小窗，横向 / 纵向 / 简洁三种样式，8 种指标（FPS / 1% Low / CPU / GPU / 温度 / 内存 / 时钟 / 时长）可自选，可缩放、可锁定位置；跟随游戏所在显示器，并周期重申请置顶以对抗抢占置顶的游戏；检测到独占全屏时提示改用无边框窗口 |
 | 赛后报告 | 退出游戏自动弹出性能报告：平均 / 最高 / 最低帧率、1% Low、CPU / GPU / 温度 / 内存 / 显存 / 功耗，以及耗时电量与碳排估算 |
 | 战绩历史 | 每局自动归档（最多 300 条），可回看任意一局详情（含帧率折线图）、删除单局、清空或导出 CSV，名字与图标取自游戏本体 |
-| 系统优化 | 「优化」页逐项列出会影响帧率的设置（管理员权限、VBS、硬件加速 GPU 计划、Game DVR、电源计划、MSI 中断、显卡与驱动），每项标明游戏时的推荐状态，开关 / 分段选择直接改；顶部「游戏优先」「日常均衡」一键套用 |
+| 系统优化 | 「优化」页逐项列出会影响帧率的设置（管理员权限、VBS、硬件加速 GPU 计划、窗口叠加 MPO、Game DVR、全屏优化、窗口化游戏优化、电源计划、MSI 中断、显卡与驱动），每项标明游戏时的推荐状态，开关 / 分段选择直接改；顶部「游戏优先」「日常均衡」一键套用，「游戏体检」可查看每一项的实际取值与改动记录 |
 | 其他 | 中英双语、深浅双主题、托盘常驻、开机自启、内存阈值自动整理、三档保护名单（系统与自启项永久保护 / 小内存自动保护 / 手动添加）、可选「检查更新」 |
 
 所有加速项都是**可回滚**的系统设置，点「还原设置」或关闭游戏后逐项恢复原状。
 
 ## 截图
 
-以下为浅色主题界面，全部取自 v1.3.5。加速页的模式条为铺满整卡的三等分色块，「编辑选项」只在自定义模式下出现；战绩详情里可直接查看本局帧率折线。
+以下为浅色主题界面，全部取自 v1.3.9。加速页的模式条为铺满整卡的三等分色块，「编辑选项」只在自定义模式下出现；战绩详情里可直接查看本局帧率折线。
 
 | 加速（均衡模式） | 加速（自定义模式） |
 | --- | --- |
-| ![加速](docs/screenshots/v1.3.5/boost.png) | ![自定义模式](docs/screenshots/v1.3.5/boost-custom.png) |
+| ![加速](docs/screenshots/v1.3.9/boost.png) | ![自定义模式](docs/screenshots/v1.3.9/boost-custom.png) |
 
 | 滤镜 | 叠加层 |
 | --- | --- |
-| ![滤镜](docs/screenshots/v1.3.5/filter.png) | ![叠加层](docs/screenshots/v1.3.5/overlay.png) |
+| ![滤镜](docs/screenshots/v1.3.9/filter.png) | ![叠加层](docs/screenshots/v1.3.9/overlay.png) |
 
 | 战绩 | 优化（系统体检） |
 | --- | --- |
-| ![战绩](docs/screenshots/v1.3.5/report.png) | ![优化](docs/screenshots/v1.3.5/health.png) |
+| ![战绩](docs/screenshots/v1.3.9/report.png) | ![优化](docs/screenshots/v1.3.9/health.png) |
 
 | 设置 |
 | --- |
-| ![设置](docs/screenshots/v1.3.5/settings.png) |
+| ![设置](docs/screenshots/v1.3.9/settings.png) |
 
 <details>
 <summary>旧版界面（v1.1.1，对比用）</summary>
@@ -128,7 +128,7 @@
 
 「优化」页把「哪些设置正在拖慢帧率」做成一张可操作的清单，不再只给一个分数：
 
-- 逐项检查：管理员权限、VBS 虚拟化安全（`DeviceGuard`）、硬件加速 GPU 计划（HAGS）、Game DVR 后台录制、电源计划、网卡 / 显卡 MSI 中断亲和性、显卡与驱动状态；
+- 逐项检查：管理员权限、VBS 虚拟化安全（`DeviceGuard`）、硬件加速 GPU 计划（HAGS）、窗口叠加 MPO、Game DVR 后台录制、全屏优化、窗口化游戏优化、电源计划、网卡 / 显卡 MSI 中断亲和性、显卡与驱动状态；
 - 每项都写清「为什么会影响帧率」，能直接改的右侧给开关或高性能 / 平衡分段选择，改完立即写回系统；
 - 顶部两个预设一键套用：**游戏优先**（高性能电源 + HAGS 开 + Game DVR 关）、**日常均衡**（平衡电源 + HAGS 开 + Game DVR 开）；
 - 改动前先把原值写进 `tune.journal`，需要回溯时可按记录逐项写回，不依赖记忆；
@@ -216,7 +216,8 @@ frameforge/
 │   │   ├── Sessions.cs    # 单局战绩采集、归档与 CSV 导出
 │   │   ├── Boost.cs       # 加速项与回滚
 │   │   ├── BoostJournal.cs# 加速前原值落盘，崩溃后自动还原
-│   │   ├── Health.cs      # 系统设置检查（VBS / HAGS / Game DVR / 电源 / MSI / 显卡）
+│   │   ├── Health.cs      # 系统设置检查（VBS / HAGS / MPO / Game DVR / 全屏优化 / 电源 / MSI / 显卡）
+│   │   ├── Compat.cs      # 兼容性标记：按游戏关闭全屏优化、窗口化游戏优化
 │   │   ├── Tune.cs        # 设置调节与原值日志（预设、推荐值）
 │   │   ├── Display.cs     # 显示器硬件亮度（DDC/CI）
 │   │   ├── Update.cs      # 只读查询 GitHub 最新版本
@@ -231,6 +232,7 @@ frameforge/
 │       ├── MainForm.Actions.cs# 业务动作：加速、叠加层、热键
 │       ├── Pages.cs           # 六个页面（加速 / 滤镜 / 叠加层 / 战绩 / 优化 / 设置）
 │       ├── HealthPage.cs      # 优化页：逐项调节、推荐状态与预设
+│       ├── AuditDialog.cs     # 优化页的「配置审计」弹窗（实际取值与改动记录）
 │       ├── TrayMenu.cs        # 自绘托盘菜单（显示主界面 / 退出）
 │       ├── WhitelistDialog.cs # 保护名单：勾选不参与加速的程序
 │       ├── UpdateDialog.cs    # 检查更新弹窗
@@ -260,7 +262,7 @@ frameforge/
 
 ## English
 
-**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay, desktop-wide screen filters, and an automatic post-game performance report. It ships as a single 402 KB executable with about 20 MB of resident memory, and it never injects into games or installs a driver.
+**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay, desktop-wide screen filters, and an automatic post-game performance report. It ships as a single 425 KB executable with about 20 MB of resident memory, and it never injects into games or installs a driver.
 
 ### Highlights
 
@@ -270,7 +272,7 @@ frameforge/
 - **Screen filters** — fifteen general presets plus eight tuned per-game looks (Delta Force, VALORANT, Genshin, Apex, CS2, PUBG, Naraka, League of Legends), with intensity, brightness, contrast, shadow lift, saturation, digital vibrance and warmth sliders, applied through the Windows Magnification color matrix (game-only or always). Hold the A/B button to compare against the original image. The brightness slider drives the monitor's hardware backlight (DDC/CI, or WMI on laptop panels), so it stays out of the color matrix and out of screenshots.
 - **In-game overlay** — top-most layered window with three layouts, eight selectable stats, scaling and position lock. It follows the monitor the game is on and re-asserts top-most every frame, so games that grab the top spot cannot bury it; if the game runs in exclusive fullscreen, the app tells you to switch to borderless instead of silently showing nothing.
 - **Post-game report & records** — a report card pops up when a game exits with average/max/min FPS, 1% low, CPU/GPU/temperature/memory/VRAM/power, plus energy and CO₂ estimates. The Records page keeps the last 300 sessions with per-session detail (including an FPS chart), delete, clear, and CSV export.
-- **System check-up** — the Optimize page lists the settings that quietly cost frames (admin rights, VBS, hardware-accelerated GPU scheduling, Game DVR, power plan, MSI interrupt affinity, GPU driver) with the recommended state for gaming, inline toggles, and two one-click presets.
+- **System check-up** — the Optimize page lists the settings that quietly cost frames (admin rights, VBS, hardware-accelerated GPU scheduling, MPO overlay, Game DVR, fullscreen optimization, windowed-game optimization, power plan, MSI interrupt affinity, GPU driver) with the recommended state for gaming, inline toggles, two one-click presets, and a “PC check-up” view that shows the actual value and change journal for every row.
 - **Compatibility first** — anti-cheat components (ACE, EAC, BattlEye, Vanguard…) are never suspended or memory-trimmed, and if a game rejects the priority change the app says so instead of claiming success. Anything on the protected list (OBS, Discord, recording tools…) is left alone too.
 - Bilingual UI (Chinese / English), dark and light themes, tray mode, autostart, optional update check.
 

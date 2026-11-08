@@ -27,6 +27,15 @@ namespace FrameForge.Sys
         private const string DownloadUrl =
             "https://github.com/GameTechDev/PresentMon/releases/download/v" + Version + "/PresentMon-" + Version + "-x64.exe";
 
+        // GitHub 在国内经常连不上(部分用户会看到"无法连接到远程服务器"),
+        // 按顺序依次尝试,前一个失败就换下一个,而不是让用户自己去捣鼓网络。
+        private static readonly string[] DownloadUrls = new string[]
+        {
+            DownloadUrl,
+            "https://gh-proxy.com/" + DownloadUrl,
+            "https://ghfast.top/" + DownloadUrl
+        };
+
         private static readonly object Gate = new object();
         private readonly object startGate = new object();
         private volatile Process proc;
@@ -86,28 +95,74 @@ namespace FrameForge.Sys
         /// <summary>下载 PresentMon 到 %LOCALAPPDATA%\FrameForge\bin。返回空串表示成功。</summary>
         public static string Download(Action<int> progress)
         {
+            string temp = Path.Combine(BinDir, "presentmon.exe.tmp");
+            string last = "";
             try
             {
                 if (!Directory.Exists(BinDir)) Directory.CreateDirectory(BinDir);
                 string target = Path.Combine(BinDir, "presentmon.exe");
-                string temp = target + ".tmp";
                 ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
-                using (var wc = new WebClient())
+
+                for (int i = 0; i < DownloadUrls.Length; i++)
                 {
-                    wc.Headers.Add("User-Agent", "FrameForge/1.0");
-                    if (progress != null) wc.DownloadProgressChanged += delegate(object s, DownloadProgressChangedEventArgs e)
-                    { try { progress(e.ProgressPercentage); } catch { } };
-                    wc.DownloadFile(new Uri(DownloadUrl), temp);
+                    try
+                    {
+                        Fetch(DownloadUrls[i], temp, progress);
+                        // 代理站点出错时可能回一个网页,按大小和 PE 头挡掉,别把垃圾当引擎装进去。
+                        var fi = new FileInfo(temp);
+                        if (fi.Length < 200 * 1024) throw new Exception("downloaded file is too small (" + fi.Length + " bytes)");
+                        using (var fs = new FileStream(temp, FileMode.Open, FileAccess.Read))
+                        {
+                            if (fs.ReadByte() != 'M' || fs.ReadByte() != 'Z') throw new Exception("downloaded file is not an exe");
+                        }
+                        if (File.Exists(target)) File.Delete(target);
+                        File.Move(temp, target);
+                        Log.Write("presentmon downloaded from " + (i + 1) + ". source, " + fi.Length + " bytes");
+                        return "";
+                    }
+                    catch (Exception ex)
+                    {
+                        last = ex.Message;
+                        Log.Write("presentmon download try " + (i + 1) + ": " + ex.Message);
+                        try { if (File.Exists(temp)) File.Delete(temp); } catch { }
+                        if (progress != null) { try { progress(0); } catch { } }
+                    }
                 }
-                if (File.Exists(target)) File.Delete(target);
-                File.Move(temp, target);
-                Log.Write("presentmon downloaded " + new FileInfo(target).Length + " bytes");
-                return "";
             }
             catch (Exception ex)
             {
-                Log.Write("presentmon download: " + ex.Message);
-                return ex.Message;
+                last = ex.Message;
+            }
+            if (last.Length == 0) last = I18n.T("err.net");
+            Log.Write("presentmon download failed: " + last);
+            return last;
+        }
+
+        /// <summary>下载单个地址。带超时,否则连不上的源会让按钮一直转圈。</summary>
+        private static void Fetch(string url, string temp, Action<int> progress)
+        {
+            var req = (HttpWebRequest)WebRequest.Create(url);
+            req.UserAgent = "FrameForge/1.0";
+            req.Timeout = 12000;
+            req.ReadWriteTimeout = 20000;
+            req.AllowAutoRedirect = true;
+            using (var resp = (HttpWebResponse)req.GetResponse())
+            using (Stream src = resp.GetResponseStream())
+            using (var dst = new FileStream(temp, FileMode.Create, FileAccess.Write))
+            {
+                long total = resp.ContentLength;
+                byte[] buf = new byte[65536];
+                long got = 0;
+                int n;
+                while ((n = src.Read(buf, 0, buf.Length)) > 0)
+                {
+                    dst.Write(buf, 0, n);
+                    got += n;
+                    if (progress != null && total > 0)
+                    {
+                        try { progress((int)(got * 100 / total)); } catch { }
+                    }
+                }
             }
         }
 

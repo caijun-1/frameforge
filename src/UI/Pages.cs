@@ -2548,7 +2548,8 @@ namespace FrameForge.UI
             }
 
             int gap = Ui.Px(8);
-            int heroH = Ui.Px(60);
+            // 卡片留出更宽松的上下边距,标题和小字之间才有呼吸空间。
+            int heroH = Ui.Px(76);
             int heroW = (Width - gap * 2) / 3;
             Hero(g, 0, 0, heroW, heroH, I18n.T("report.stat.fps"), Num(rec.FpsAvg, "0"), I18n.T("report.fps.unit"));
             Hero(g, heroW + gap, 0, heroW, heroH, I18n.T("report.stat.low"), Num(rec.Low1, "0"), I18n.T("report.fps.unit"));
@@ -2556,7 +2557,7 @@ namespace FrameForge.UI
                 I18n.T("report.duration"), rec.Duration, "");
 
             int y = heroH + gap;
-            int th = Ui.Px(48);
+            int th = Ui.Px(58);
             int tw = (Width - gap * 2) / 3;
 
             // 曲线吃掉剩余高度;窗口压得很矮时整块让给数字,保证指标先看得清。
@@ -2568,14 +2569,14 @@ namespace FrameForge.UI
                 y += chartH + gap;
             }
 
-            Tile(g, 0, y, tw, th, I18n.T("report.stat.cpu"), Pct(rec.CpuAvg) + " / " + I18n.T("report.max") + " " + Pct(rec.CpuMax));
-            Tile(g, tw + gap, y, tw, th, I18n.T("report.stat.gpu"), Pct(rec.GpuAvg) + " / " + I18n.T("report.max") + " " + Pct(rec.GpuMax));
+            Tile(g, 0, y, tw, th, I18n.T("report.stat.cpu"), Pct(rec.CpuAvg), Pct(rec.CpuMax));
+            Tile(g, tw + gap, y, tw, th, I18n.T("report.stat.gpu"), Pct(rec.GpuAvg), Pct(rec.GpuMax));
             Tile(g, (tw + gap) * 2, y, Width - (tw + gap) * 2, th, I18n.T("report.stat.temp"),
-                Temp(rec.GpuTempAvg) + " / " + I18n.T("report.max") + " " + Temp(rec.GpuTempMax));
+                Temp(rec.GpuTempAvg), Temp(rec.GpuTempMax));
             y += th + gap;
-            Tile(g, 0, y, tw, th, I18n.T("report.stat.ram"), Mb(rec.RamAvg) + " / " + I18n.T("report.max") + " " + Mb(rec.RamMax));
-            Tile(g, tw + gap, y, tw, th, I18n.T("report.stat.vram"), Mb(rec.VramMax));
-            Tile(g, (tw + gap) * 2, y, Width - (tw + gap) * 2, th, I18n.T("report.stat.power"), I18n.T("report.w", rec.Power.ToString("0")));
+            Tile(g, 0, y, tw, th, I18n.T("report.stat.ram"), Mb(rec.RamAvg), Mb(rec.RamMax));
+            Tile(g, tw + gap, y, tw, th, I18n.T("report.stat.vram"), Mb(rec.VramMax), "");
+            Tile(g, (tw + gap) * 2, y, Width - (tw + gap) * 2, th, I18n.T("report.stat.power"), I18n.T("report.w", rec.Power.ToString("0")), "");
             y += th + Ui.Px(6);
 
             string energy = I18n.T("report.energy", rec.Wh.ToString("0.0"))
@@ -2618,7 +2619,9 @@ namespace FrameForge.UI
                 if (series[i] > max) max = series[i];
                 sum += series[i];
             }
-            TextRenderer.DrawText(g, I18n.T("report.chart.avg") + " " + (sum / series.Length).ToString("0")
+            // 平均值优先用记录里的统计值,和上面的大数字保持一致,不会出现 110 / 109 打架。
+            double avg = rec.FpsAvg > 0 ? rec.FpsAvg : sum / series.Length;
+            TextRenderer.DrawText(g, I18n.T("report.chart.avg") + " " + avg.ToString("0")
                     + "      " + I18n.T("report.chart.peak") + " " + max.ToString("0"),
                 Theme.Regular(8.2f),
                 new Rectangle(r.Left + pad, r.Top + Ui.Px(5), r.Width - pad * 2, Ui.Px(16)), Theme.Faint,
@@ -2629,28 +2632,60 @@ namespace FrameForge.UI
 
         private void Hero(Graphics g, int x, int y, int w, int h, string caption, string value, string unit)
         {
-            Tile(g, x, y, w, h, caption, value);
-            if (unit.Length > 0)
+            var r = new RectangleF(x, y, w, h);
+            Ui.Fill(g, r, Ui.Fp(10), Theme.Bg);
+            Ui.Stroke(g, new RectangleF(r.X + 0.5f, r.Y + 0.5f, r.Width - 1f, r.Height - 1f), Ui.Fp(10), Theme.Border, 1f);
+
+            int pad = Ui.Px(14);
+            TextRenderer.DrawText(g, caption, Theme.Regular(8.4f),
+                new Rectangle(x + pad, y + Ui.Px(8), w - pad * 2, Ui.Px(16)), Theme.Sub,
+                TextFormatFlags.Left | TextFormatFlags.NoPrefix);
+
+            // 大数字统一贴底,单位紧跟在数字后面、与数字同一条基线,不再孤零零落在卡片右下角。
+            // 数值框高度按字体实际行高留足,避免高 DPI 下把字形下半截裁掉。
+            int bottom = y + h - Ui.Px(9);
+            int top = y + Ui.Px(24);
+            int unitW = unit.Length > 0 ? Ui.Px(36) : 0;
+            int avail = Math.Max(Ui.Px(40), w - pad * 2 - unitW);
+            Font big = Theme.Num(22f);
+            Size vs = TextRenderer.MeasureText(value, big);
+            if (vs.Width > avail)
             {
-                TextRenderer.DrawText(g, unit, Theme.Regular(8f),
-                    new Rectangle(x + Ui.Px(14), y + h - Ui.Px(22), w - Ui.Px(28), Ui.Px(16)), Theme.Faint,
-                    TextFormatFlags.Right | TextFormatFlags.NoPrefix);
+                float size = 22f * avail / vs.Width;
+                if (size < 13f) size = 13f;
+                big = Theme.Num(size);
+                vs = TextRenderer.MeasureText(value, big);
             }
+            TextRenderer.DrawText(g, value, big,
+                new Rectangle(x + pad, top, avail, Math.Max(Ui.Px(12), bottom - top)), Theme.Text,
+                TextFormatFlags.Left | TextFormatFlags.Bottom | TextFormatFlags.NoPrefix);
+            if (unit.Length > 0)
+                TextRenderer.DrawText(g, unit, Theme.Regular(9f),
+                    new Rectangle(x + pad + vs.Width + Ui.Px(5), bottom - Ui.Px(20), unitW, Ui.Px(17)), Theme.Faint,
+                    TextFormatFlags.Left | TextFormatFlags.Bottom | TextFormatFlags.NoPrefix);
         }
 
-        private void Tile(Graphics g, int x, int y, int w, int h, string caption, string value)
+        /// <summary>指标格:标题在上,主数值贴底靠左,「最高」弱化成小字靠右,两者共用一条基线。</summary>
+        private void Tile(Graphics g, int x, int y, int w, int h, string caption, string value, string peak)
         {
             var r = new RectangleF(x, y, w, h);
             Ui.Fill(g, r, Ui.Fp(10), Theme.Bg);
             Ui.Stroke(g, new RectangleF(r.X + 0.5f, r.Y + 0.5f, r.Width - 1f, r.Height - 1f), Ui.Fp(10), Theme.Border, 1f);
+
+            int pad = Ui.Px(14);
+            int bottom = y + h - Ui.Px(7);
+            // 数值框按字体实际行高留足高度,否则高 DPI 下字形下半截会被裁掉。
+            int top = y + Ui.Px(24);
             TextRenderer.DrawText(g, caption, Theme.Regular(8.4f),
-                new Rectangle(x + Ui.Px(14), y + Ui.Px(7), w - Ui.Px(28), Ui.Px(16)), Theme.Sub,
+                new Rectangle(x + pad, y + Ui.Px(6), w - pad * 2, Ui.Px(16)), Theme.Sub,
                 TextFormatFlags.Left | TextFormatFlags.NoPrefix);
-            // 曲线占了一部分高度,数字块压到 48px 也能完整显示。
-            bool big = h >= Ui.Px(56);
-            TextRenderer.DrawText(g, value, big ? Theme.Num(24f) : Theme.Num(14f),
-                new Rectangle(x + Ui.Px(14), y + Ui.Px(big ? 22 : 24), w - Ui.Px(28), big ? Ui.Px(36) : Ui.Px(22)),
-                Theme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+            if (peak.Length > 0)
+                TextRenderer.DrawText(g, I18n.T("report.max") + " " + peak, Theme.Regular(8.2f),
+                    new Rectangle(x + pad, bottom - Ui.Px(19), w - pad * 2, Ui.Px(17)), Theme.Faint,
+                    TextFormatFlags.Right | TextFormatFlags.Bottom | TextFormatFlags.NoPrefix);
+            TextRenderer.DrawText(g, value, Theme.Num(14f),
+                new Rectangle(x + pad, top, w - pad * 2, Math.Max(Ui.Px(12), bottom - top)), Theme.Text,
+                TextFormatFlags.Left | TextFormatFlags.Bottom | TextFormatFlags.NoPrefix);
         }
 
         private static string Num(double v, string f) { return v > 0 ? v.ToString(f) : I18n.T("report.none"); }

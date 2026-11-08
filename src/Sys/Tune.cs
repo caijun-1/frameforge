@@ -37,6 +37,9 @@ namespace FrameForge.Sys
             public string Name = "";
             public bool Exists;
             public int Value;
+            // 注册表里除了 DWORD,全屏优化与窗口化优化存的是字符串,日志要能原样写回。
+            public string Type = "dword";   // "dword" / "sz"
+            public string Text = "";
         }
 
         private static readonly List<Saved> saved = new List<Saved>();
@@ -109,10 +112,61 @@ namespace FrameForge.Sys
                 if (a && b) { r.Ok = true; r.Applied = 1; }
                 else return Fail(r, false);
             }
+            else if (id == "windowed")
+            {
+                // 窗口化游戏优化默认就是开的,缺省值按「开」处理,不要一上来就报「已关闭」。
+                string cur = ReadSz(RegistryHive.CurrentUser, Compat.GpuPrefsPath, Compat.GpuPrefsName);
+                bool onNow = !Compat.HasPair(cur, Compat.SwapKey)
+                    || Compat.PairValue(cur, Compat.SwapKey) != "0";
+                if (onNow == on) { r.Ok = true; return r; }
+
+                string next = Compat.SetPair(cur, Compat.SwapKey, on ? "1" : "0");
+                RememberSz(RegistryHive.CurrentUser, Compat.GpuPrefsPath, Compat.GpuPrefsName);
+                bool admin;
+                if (!WriteSz(RegistryHive.CurrentUser, Compat.GpuPrefsPath, Compat.GpuPrefsName, next, out admin))
+                    return Fail(r, admin);
+                r.Ok = true; r.Applied = 1;
+            }
+            else if (id == "mpo")
+            {
+                // OverlayTestMode=5 表示禁用 MPO;删除该值即恢复系统默认调度。
+                if (!MemEngine.IsAdmin) return Admin(r);
+                bool offNow = ReadValue(RegistryHive.LocalMachine, Compat.DwmPath, Compat.MpoName, 0) == 5;
+                if (offNow == !on) { r.Ok = true; return r; }
+
+                Remember(RegistryHive.LocalMachine, Compat.DwmPath, Compat.MpoName);
+                bool admin;
+                bool ok;
+                if (on) ok = Write(RegistryHive.LocalMachine, Compat.DwmPath, Compat.MpoName, 5, out admin);
+                else ok = DeleteValue(RegistryHive.LocalMachine, Compat.DwmPath, Compat.MpoName, out admin);
+                if (!ok) return Fail(r, admin);
+                r.Ok = true; r.Applied = 1; r.NeedReboot = true;
+            }
             else
             {
                 r.Error = "failed";
             }
+            return r;
+        }
+
+        /// <summary>按游戏关闭全屏优化:只改该 exe 的兼容性标记,不影响其他程序。</summary>
+        public static TuneResult SetFullscreenOpt(string exe, bool off)
+        {
+            var r = new TuneResult();
+            if (string.IsNullOrEmpty(exe)) { r.Error = "failed"; return r; }
+
+            string cur = ReadSz(RegistryHive.CurrentUser, Compat.LayersPath, exe);
+            bool offNow = Compat.HasToken(cur, Compat.FseToken);
+            if (offNow == off) { r.Ok = true; return r; }
+
+            string next = Compat.ToggleToken(cur, Compat.FseToken, off);
+            RememberSz(RegistryHive.CurrentUser, Compat.LayersPath, exe);
+            bool admin;
+            bool ok = next.Length == 0
+                ? DeleteValue(RegistryHive.CurrentUser, Compat.LayersPath, exe, out admin)
+                : WriteSz(RegistryHive.CurrentUser, Compat.LayersPath, exe, next, out admin);
+            if (!ok) return Fail(r, admin);
+            r.Ok = true; r.Applied = 1;
             return r;
         }
 
@@ -185,8 +239,16 @@ namespace FrameForge.Sys
                 }
                 bool admin;
                 bool ok;
-                if (s.Exists) ok = Write(hive, s.Path, s.Name, s.Value, out admin);
-                else ok = DeleteValue(hive, s.Path, s.Name, out admin);
+                if (s.Type == "sz")
+                {
+                    if (s.Exists) ok = WriteSz(hive, s.Path, s.Name, s.Text, out admin);
+                    else ok = DeleteValue(hive, s.Path, s.Name, out admin);
+                }
+                else
+                {
+                    if (s.Exists) ok = Write(hive, s.Path, s.Name, s.Value, out admin);
+                    else ok = DeleteValue(hive, s.Path, s.Name, out admin);
+                }
                 if (ok) done++;
                 if (admin) needAdmin = true;
             }
@@ -309,6 +371,55 @@ namespace FrameForge.Sys
             catch { return fallback; }
         }
 
+        private static bool WriteSz(RegistryHive hive, string path, string name, string value, out bool admin)
+        {
+            admin = false;
+            if (hive == RegistryHive.LocalMachine && !MemEngine.IsAdmin)
+            {
+                admin = true;
+                return false;
+            }
+            try
+            {
+                using (RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, RegistryView.Registry64))
+                {
+                    using (RegistryKey k = baseKey.CreateSubKey(path))
+                    {
+                        if (k == null) return false;
+                        k.SetValue(name, value ?? "", RegistryValueKind.String);
+                    }
+                }
+                return true;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                admin = true;
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Log.Write("tune write sz: " + path + "\\" + name + " " + ex.Message);
+                return false;
+            }
+        }
+
+        private static string ReadSz(RegistryHive hive, string path, string name)
+        {
+            try
+            {
+                using (RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, RegistryView.Registry64))
+                {
+                    using (RegistryKey k = baseKey.OpenSubKey(path))
+                    {
+                        if (k == null) return null;
+                        object v = k.GetValue(name, null);
+                        return v == null ? null : Convert.ToString(v, CultureInfo.InvariantCulture);
+                    }
+                }
+            }
+            catch { return null; }
+        }
+
         /// <summary>记下第一次改之前的值;之后再改不会覆盖原始值。</summary>
         private static void Remember(RegistryHive hive, string path, string name)
         {
@@ -336,6 +447,26 @@ namespace FrameForge.Sys
             n.Name = name;
             n.Exists = v != null;
             n.Value = Int(v);
+            saved.Add(n);
+            SaveJournal();
+        }
+
+        /// <summary>字符串值的原值记录:全屏优化标记与窗口化优化开关都走这里。</summary>
+        private static void RememberSz(RegistryHive hive, string path, string name)
+        {
+            Load();
+            string hiveName = hive == RegistryHive.LocalMachine ? "HKLM" : "HKCU";
+            foreach (Saved s in saved)
+                if (s.Hive == hiveName && s.Path == path && s.Name == name) return;
+
+            string v = ReadSz(hive, path, name);
+            var n = new Saved();
+            n.Hive = hiveName;
+            n.Path = path;
+            n.Name = name;
+            n.Type = "sz";
+            n.Exists = v != null;
+            n.Text = v ?? "";
             saved.Add(n);
             SaveJournal();
         }
@@ -369,7 +500,16 @@ namespace FrameForge.Sys
                         s.Path = p[1];
                         s.Name = p[2];
                         s.Exists = p[3] == "1";
-                        s.Value = Int(p[4]);
+                        if (p.Length >= 6)
+                        {
+                            s.Type = p[4] == "sz" ? "sz" : "dword";
+                            if (s.Type == "sz") s.Text = Unescape(p[5]);
+                            else s.Value = Int(p[5]);
+                        }
+                        else
+                        {
+                            s.Value = Int(p[4]);
+                        }
                         saved.Add(s);
                     }
                 }
@@ -389,7 +529,12 @@ namespace FrameForge.Sys
                 {
                     sb.Append("reg=").Append(s.Hive).Append('|').Append(s.Path).Append('|')
                         .Append(s.Name).Append('|').Append(s.Exists ? "1" : "0").Append('|')
-                        .Append(s.Value.ToString(CultureInfo.InvariantCulture)).AppendLine();
+                        .Append(s.Type).Append('|');
+                    if (s.Type == "sz")
+                        sb.Append(Escape(s.Text));
+                    else
+                        sb.Append(s.Value.ToString(CultureInfo.InvariantCulture));
+                    sb.AppendLine();
                 }
                 string tmp = JournalPath + ".tmp";
                 File.WriteAllText(tmp, sb.ToString(), Encoding.UTF8);
@@ -397,6 +542,19 @@ namespace FrameForge.Sys
                 File.Move(tmp, JournalPath);
             }
             catch (Exception ex) { Log.Write("tune journal save: " + ex.Message); }
+        }
+
+        /// <summary>日志用 | 分隔,字符串值里的 | 与换行先转义,恢复时再还原。</summary>
+        private static string Escape(string s)
+        {
+            if (s == null) return "";
+            return s.Replace("%", "%25").Replace("|", "%7C").Replace("\r", "%0D").Replace("\n", "%0A");
+        }
+
+        private static string Unescape(string s)
+        {
+            if (s == null) return "";
+            return s.Replace("%0A", "\n").Replace("%0D", "\r").Replace("%7C", "|").Replace("%25", "%");
         }
 
         private static void ClearJournal()

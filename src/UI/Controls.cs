@@ -177,6 +177,8 @@ namespace FrameForge.UI
     public class FlatButton : Ctl
     {
         public bool Primary = true;
+        /// <summary>幽灵按钮:无底色,只描边 + 强调色文字,和实心/普通按钮区分开。</summary>
+        public bool Ghost;
         public float Radius = -1;
         public float FontPt = 10.5f;
         /// <summary>主按钮强调色,为空时用主题色(野兽模式会改成红色)。</summary>
@@ -239,6 +241,11 @@ namespace FrameForge.UI
             {
                 fill = down ? Theme.Track : (hover ? Theme.Hover : Theme.Card);
                 fg = Enabled ? Theme.Text : Theme.Sub;
+                if (Ghost)
+                {
+                    fill = hover || down ? Theme.Hover : Theme.Card;
+                    fg = Enabled ? Theme.Accent : Theme.Sub;
+                }
             }
             if (Primary)
             {
@@ -249,33 +256,31 @@ namespace FrameForge.UI
             else
             {
                 Ui.Fill(g, r, rad, fill);
-                Ui.Stroke(g, r, rad, Theme.Border, 1f);
+                Ui.Stroke(g, r, rad, Ghost ? Theme.Mix(Theme.Border, Theme.Accent, 0.45) : Theme.Border, 1f);
             }
 
-            // 转圈画在右侧,文字区域必须整段让出去,否则窄按钮(如"内存整理")的文字会被圆弧压住。
+            // 转圈固定画在按钮右侧留白里。
             float d = Height * 0.42f;
             RectangleF sr = new RectangleF(Width - d - Ui.Fp(14), (Height - d) / 2f, d, d);
 
-            Rectangle textRect = ClientRectangle;
-            bool showText = true;
-            if (busy)
-            {
-                int left = Ui.Px(8);
-                int right = (int)Math.Floor(sr.X - Ui.Fp(6));
-                showText = right - left > Ui.Px(24);
-                if (showText) textRect = new Rectangle(left, 0, right - left, Height);
-            }
-            if (showText)
-                TextRenderer.DrawText(g, Text ?? "", Theme.F(FontPt, FontStyle.Bold), textRect, fg,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+            // 文字始终在整颗按钮里居中:忙碌时也不缩小文字区域,避免点下去文字突然前移。
+            Font font = Theme.F(FontPt, FontStyle.Bold);
+            TextRenderer.DrawText(g, Text ?? "", font, ClientRectangle, fg,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
 
+            // 转圈只放在文字右侧的空白里:挤不下就跳过,绝不压住或推走文字。
             if (busy)
             {
-                using (var pen = new Pen(Color.FromArgb(160, fg), Math.Max(1.5f, d * 0.14f)))
+                int tw = TextRenderer.MeasureText(Text ?? "", font).Width;
+                bool room = (Width + tw) / 2 + Ui.Px(6) <= sr.X;
+                if (room)
                 {
-                    pen.StartCap = LineCap.Round;
-                    pen.EndCap = LineCap.Round;
-                    g.DrawArc(pen, sr, spin, 260);
+                    using (var pen = new Pen(Color.FromArgb(160, fg), Math.Max(1.5f, d * 0.14f)))
+                    {
+                        pen.StartCap = LineCap.Round;
+                        pen.EndCap = LineCap.Round;
+                        g.DrawArc(pen, sr, spin, 260);
+                    }
                 }
             }
         }
