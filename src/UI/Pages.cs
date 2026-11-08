@@ -1857,7 +1857,8 @@ namespace FrameForge.UI
         private readonly Chip[] chips = new Chip[Filter.PresetKeys.Length];
         private readonly FilterPreview preview;
         private readonly Slider sIntensity, sBright, sContrast, sSat, sWarm, sTint, sDark, sVibrance;
-        private readonly FlatButton resetBtn;
+        private readonly FlatButton resetBtn, iccBtn, iccClear;
+        private readonly TextLabel iccLabel;
         private readonly ToolTip tips;
         private readonly Timer brightTimer;
         private int brightPending;
@@ -1935,6 +1936,24 @@ namespace FrameForge.UI
             resetBtn.Text = I18n.T("flt.reset");
             resetBtn.Click += delegate { ResetCustom(); };
 
+            // ICC 单独占一行:路径可能很长,和标题挤在一起会把"恢复默认"顶出去。
+            iccLabel = new TextLabel();
+            iccLabel.Size = 8.5f;
+            iccLabel.ForeColor = Theme.Sub;
+            iccLabel.Ellipsis = true;
+
+            iccBtn = new FlatButton();
+            iccBtn.Primary = false;
+            iccBtn.FontPt = 8.5f;
+            iccBtn.Text = I18n.T("flt.icc.import");
+            iccBtn.Click += delegate { ImportIcc(); };
+
+            iccClear = new FlatButton();
+            iccClear.Primary = false;
+            iccClear.FontPt = 8.5f;
+            iccClear.Text = I18n.T("flt.icc.clear");
+            iccClear.Click += delegate { ClearIcc(); };
+
             sIntensity = MakeSlider(I18n.T("flt.intensity"), 0, 100, "%", host.St.FilterIntensity);
 
             // 亮度直接写显示器硬件背光(DDC/CI),不再进滤镜矩阵。
@@ -1967,6 +1986,9 @@ namespace FrameForge.UI
 
             customCard.Controls.Add(customTitle);
             customCard.Controls.Add(resetBtn);
+            customCard.Controls.Add(iccLabel);
+            customCard.Controls.Add(iccBtn);
+            customCard.Controls.Add(iccClear);
             customCard.Controls.Add(sIntensity);
             customCard.Controls.Add(sBright);
             customCard.Controls.Add(sContrast);
@@ -1982,6 +2004,7 @@ namespace FrameForge.UI
 
             UpdateNote();
             UpdatePreview();
+            UpdateIcc();
             LayoutCards();
         }
 
@@ -2093,6 +2116,58 @@ namespace FrameForge.UI
             preview.SetMatrix(Filter.Current(Host.St));
         }
 
+        /// <summary>选一个 .icc/.icm,解析成功才写进设置;失败只提示,不动当前状态。</summary>
+        private void ImportIcc()
+        {
+            using (var dlg = new OpenFileDialog())
+            {
+                dlg.Title = I18n.T("flt.icc.import");
+                dlg.Filter = I18n.T("flt.icc.filter");
+                dlg.CheckFileExists = true;
+                if (dlg.ShowDialog(Host) != DialogResult.OK) return;
+
+                string err;
+                float[] m = Icc.Load(dlg.FileName, out err);
+                if (m == null)
+                {
+                    Host.Toast(I18n.T("flt.icc.bad") + " " + err);
+                    return;
+                }
+                Host.St.FilterIcc = dlg.FileName;
+                Host.St.Save();
+                Host.ApplyFilter();
+                UpdatePreview();
+                UpdateIcc();
+                Host.Toast(I18n.T("flt.icc.ok", System.IO.Path.GetFileName(dlg.FileName)));
+            }
+        }
+
+        private void ClearIcc()
+        {
+            if (string.IsNullOrEmpty(Host.St.FilterIcc)) return;
+            Host.St.FilterIcc = "";
+            Host.St.Save();
+            Host.ApplyFilter();
+            UpdatePreview();
+            UpdateIcc();
+        }
+
+        private void UpdateIcc()
+        {
+            string path = Host.St.FilterIcc;
+            if (string.IsNullOrEmpty(path))
+            {
+                iccLabel.Text = I18n.T("flt.icc.none");
+                iccLabel.ForeColor = Theme.Faint;
+                iccClear.Visible = false;
+                return;
+            }
+            iccLabel.Text = I18n.T("flt.icc.loaded", System.IO.Path.GetFileName(path));
+            // 文件可能被删掉或换成了 LUT 型 profile,这时用警示色,别让用户以为还生效着。
+            iccLabel.ForeColor = Icc.For(path) != null ? Theme.Sub : Theme.Warn;
+            iccClear.Visible = true;
+        }
+
         private void UpdateNote()
         {
             bool ok = Filter.Supported;
@@ -2164,11 +2239,19 @@ namespace FrameForge.UI
             int bw = Ui.Px(96), bh = Ui.Px(26);
             resetBtn.SetBounds(Width - pad - bw, Ui.Px(9), bw, bh);
 
+            // ICC 占标题下一行:左边是状态/文件名,右边是「清除」和「导入」。
+            int iy = Ui.Px(36), ih = Ui.Px(24), iw = Ui.Px(116), cw2 = Ui.Px(60), bgap = Ui.Px(8);
+            iccClear.SetBounds(Width - pad - cw2, iy, cw2, ih);
+            iccBtn.SetBounds(Width - pad - cw2 - bgap - iw, iy, iw, ih);
+            int lblW = Width - pad * 2 - iw - cw2 - bgap * 2;
+            if (lblW < Ui.Px(80)) lblW = Ui.Px(80);
+            iccLabel.SetBounds(pad, iy + Ui.Px(2), lblW, ih);
+
             Slider[] all = { sIntensity, sBright, sContrast, sWarm, sTint, sDark, sSat, sVibrance };
             int rows = (all.Length + 1) / 2;
             int colGap = Ui.Px(26);
             int colW = (Width - pad * 2 - colGap) / 2;
-            int sh = Ui.Px(42), sy = Ui.Px(40);
+            int sh = Ui.Px(42), sy = Ui.Px(70);
             // 间距按卡片剩余高度分摊,避免自定义卡底部留出大片空白。
             int sgap = (customH - sy - sh * rows - Ui.Px(12)) / (rows - 1);
             if (sgap > Ui.Px(22)) sgap = Ui.Px(22);

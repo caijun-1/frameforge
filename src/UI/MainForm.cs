@@ -210,19 +210,22 @@ namespace FrameForge.UI
             tips.SetToolTip(btnClose, I18n.T("title.close"));
         }
 
+        /// <summary>
+        /// 只建首屏:其余 5 页标成待建,第一次切过去再建。
+        /// 启动时省掉 5 棵控件树的构造和字体测量,常驻内存也少一截。
+        /// </summary>
         private void BuildPages()
         {
-            // 先在局部数组里建完再整体发布:页面构造期间可能回调 Host.ApplyModeTheme,
+            // 先建好首屏再整体发布:页面构造期间可能回调 Host.ApplyModeTheme,
             // 那时 pages 里还是空位,提前发布会让它命中 null。
-            Page[] built = new Page[6];
-            for (int i = 0; i < built.Length; i++)
-            {
-                built[i] = CreatePage(i);
-                built[i].Visible = false;
-                Controls.Add(built[i]);
-            }
-            pageDirty = new bool[built.Length];
-            pages = built;
+            Page first = CreatePage(0);
+            first.Visible = false;
+
+            pages = new Page[6];
+            pageDirty = new bool[6];
+            for (int i = 0; i < pageDirty.Length; i++) pageDirty[i] = i != 0;
+            pages[0] = first;
+            Controls.Add(first);
             ShowPage(0);
         }
 
@@ -248,13 +251,17 @@ namespace FrameForge.UI
         {
             if (pages == null || i < 0 || i >= pages.Length) return;
             Page old = pages[i];
-            old.Visible = false;
-            Controls.Remove(old);
-            old.Dispose();
-            if (ReferenceEquals(boostPage, old)) boostPage = null;
-            if (ReferenceEquals(setPage, old)) setPage = null;
-            if (ReferenceEquals(reportPage, old)) reportPage = null;
-            if (ReferenceEquals(healthPage, old)) healthPage = null;
+            // 惰性建页时这里本来就是空的(第一次切过去),只有已经建过的才需要拆。
+            if (old != null)
+            {
+                old.Visible = false;
+                Controls.Remove(old);
+                old.Dispose();
+                if (ReferenceEquals(boostPage, old)) boostPage = null;
+                if (ReferenceEquals(setPage, old)) setPage = null;
+                if (ReferenceEquals(reportPage, old)) reportPage = null;
+                if (ReferenceEquals(healthPage, old)) healthPage = null;
+            }
             // 新页构造期间可能回调 Host.ApplyModeTheme 遍历 pages,不能让它碰到已销毁的旧页。
             pages[i] = null;
 

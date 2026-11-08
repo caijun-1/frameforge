@@ -5,13 +5,13 @@
 <p align="center"><b>轻量级 FPS 游戏增效工具 · A lightweight FPS toolkit for Windows</b><br>
 一键加速 + 实时帧率监测 + 游戏内叠加层 + 画面滤镜 + 赛后性能报告 + 系统优化</p>
 
-<p align="center">单文件 · 免安装 · 425 KB · 不注入游戏 · 不装驱动</p>
+<p align="center">单文件 · 免安装 · 442 KB · 不注入游戏 · 不装驱动</p>
 
 <p align="center">
   <img src="https://github.com/caijun-1/frameforge/actions/workflows/build.yml/badge.svg" alt="build">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue" alt="platform">
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
-  <img src="https://img.shields.io/badge/size-425%20KB-brightgreen" alt="size 425 KB">
+  <img src="https://img.shields.io/badge/size-442%20KB-brightgreen" alt="size 442 KB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
   <img src="https://img.shields.io/badge/version-1.3.9-orange" alt="1.3.9">
 </p>
@@ -151,7 +151,8 @@ PresentMon 是在运行时按需下载的独立 exe（MIT 协议），不随本�
 - 8 款游戏专用预设：三角洲行动、无畏契约、原神、Apex 英雄、CS2、PUBG、永劫无间、英雄联盟，每款都针对该作场景单独调过；
 - 六维微调：强度、对比度、**暗部平衡**（压高光 + 抬黑位，暗处看得更清）、饱和度、**数字振动**（类似 NVIDIA 数字振动，提升色彩浓艳度）、色温；
 - 亮度滑块直接调硬件背光：外接显示器走 DDC/CI（VCP 0x10），笔记本内置屏改走 WMI 背光接口；不进滤镜矩阵，也不会出现在截图 / 录屏里；两者都不支持时滑块置灰并给出提示；
-- **A/B 对比**：按预览图上的按钮（或长按）即可临时查看未加滤镜的原图，随手对比效果。
+- **A/B 对比**：按预览图上的按钮（或长按）即可临时查看未加滤镜的原图，随手对比效果；
+- **ICC 配置文件**：可导入显示器 / 校色仪提供的 `.icc` / `.icm`（RGB 矩阵 + 曲线），叠加在校正链末端，让滤镜与广色域屏上的实际显示对齐；解析全程在本机完成，文件不可用时明确报错而不是硬套一个错误矩阵。
 
 ## 赛后报告与战绩
 
@@ -226,7 +227,8 @@ frameforge/
 │   │   ├── Interrupts.cs  # 网卡 / 显卡中断亲和性
 │   │   ├── Profiles.cs    # 按游戏保存的加速策略
 │   │   ├── MemEngine.cs   # 内存整理与提权
-│   │   └── Filter.cs      # 全屏颜色矩阵滤镜
+│   │   ├── Filter.cs      # 全屏颜色矩阵滤镜
+│   │   └── Icc.cs         # ICC 配置文件解析与矩阵拟合
 │   └── UI/
 │       ├── MainForm.cs        # 外壳：标题栏、导航、托盘
 │       ├── MainForm.Actions.cs# 业务动作：加速、叠加层、热键
@@ -262,14 +264,14 @@ frameforge/
 
 ## English
 
-**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay, desktop-wide screen filters, and an automatic post-game performance report. It ships as a single 425 KB executable with about 20 MB of resident memory, and it never injects into games or installs a driver.
+**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay, desktop-wide screen filters, and an automatic post-game performance report. It ships as a single 442 KB executable with about 20 MB of resident memory, and it never injects into games or installs a driver.
 
 ### Highlights
 
 - **One-click boost** — process priority, high-performance power plan, 1 ms timer resolution, Game DVR / fullscreen optimization off, working-set trim, plus opt-in advanced steps: suspend background hogs (with confirmation), reserve physical cores for the game, move NIC/GPU interrupts off those cores, and remember options per game. Every change is reversible.
 - **Live monitoring** — a dashboard built into the Boost page: CPU/GPU rings, a five-axis radar (CPU / GPU / RAM / FPS / temperature), a RAM arc, and a GPU temperature / clock / power / VRAM strip.
 - **Real game names** — a three-layer lookup (user `games.ini` → built-in library of 200+ titles → install folder / file version info) turns `client-win64-shipping.exe` into the actual game title instead of showing a raw process name.
-- **Screen filters** — fifteen general presets plus eight tuned per-game looks (Delta Force, VALORANT, Genshin, Apex, CS2, PUBG, Naraka, League of Legends), with intensity, brightness, contrast, shadow lift, saturation, digital vibrance and warmth sliders, applied through the Windows Magnification color matrix (game-only or always). Hold the A/B button to compare against the original image. The brightness slider drives the monitor's hardware backlight (DDC/CI, or WMI on laptop panels), so it stays out of the color matrix and out of screenshots.
+- **Screen filters** — fifteen general presets plus eight tuned per-game looks (Delta Force, VALORANT, Genshin, Apex, CS2, PUBG, Naraka, League of Legends), with intensity, brightness, contrast, shadow lift, saturation, digital vibrance and warmth sliders, applied through the Windows Magnification color matrix (game-only or always). Hold the A/B button to compare against the original image. The brightness slider drives the monitor's hardware backlight (DDC/CI, or WMI on laptop panels), so it stays out of the color matrix and out of screenshots. You can also import an ICC profile (`.icc` / `.icm`, RGB matrix + curves) and it is chained onto the end of the correction chain, so the look matches what your calibrated or wide-gamut panel actually shows.
 - **In-game overlay** — top-most layered window with three layouts, eight selectable stats, scaling and position lock. It follows the monitor the game is on and re-asserts top-most every frame, so games that grab the top spot cannot bury it; if the game runs in exclusive fullscreen, the app tells you to switch to borderless instead of silently showing nothing.
 - **Post-game report & records** — a report card pops up when a game exits with average/max/min FPS, 1% low, CPU/GPU/temperature/memory/VRAM/power, plus energy and CO₂ estimates. The Records page keeps the last 300 sessions with per-session detail (including an FPS chart), delete, clear, and CSV export.
 - **System check-up** — the Optimize page lists the settings that quietly cost frames (admin rights, VBS, hardware-accelerated GPU scheduling, MPO overlay, Game DVR, fullscreen optimization, windowed-game optimization, power plan, MSI interrupt affinity, GPU driver) with the recommended state for gaming, inline toggles, two one-click presets, and a “PC check-up” view that shows the actual value and change journal for every row.

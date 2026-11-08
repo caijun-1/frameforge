@@ -252,6 +252,32 @@ namespace FrameForge
             }
             catch (Exception ex) { check("boost registry round trip", false, ex.Message); }
 
+            // 8.2 配置/会话文件的原子写往返:先写临时文件再替换,写到一半断电也只丢这次改动
+            try
+            {
+                string p = Path.Combine(Path.GetTempPath(), "frameforge_selftest_atomic.ini");
+                string tmp = p + ".tmp";
+                try { File.Delete(p); } catch { }
+                try { File.Delete(tmp); } catch { }
+                SafeFile.WriteAllText(p, "one", new UTF8Encoding(false));
+                string first = File.ReadAllText(p);
+                SafeFile.WriteAllText(p, "two", new UTF8Encoding(false));
+                string second = File.ReadAllText(p);
+                bool leftTmp = File.Exists(tmp);
+                check("atomic write", first == "one" && second == "two" && !leftTmp,
+                    "replace + overwrite, tmp=" + (leftTmp ? "left" : "clean"));
+                try { File.Delete(p); } catch { }
+            }
+            catch (Exception ex) { check("atomic write", false, ex.Message); }
+
+            // 8.3 ICC 解析:现造一份 sRGB profile,sRGB 进 sRGB 出必须接近恒等
+            try
+            {
+                string iccNote;
+                check("icc profile", Icc.SelfTest(out iccNote), iccNote);
+            }
+            catch (Exception ex) { check("icc profile", false, ex.Message); }
+
             // 9. 帧率组件
             try
             {

@@ -261,6 +261,22 @@ namespace FrameForge.Sys
         private static readonly Dictionary<string, string> paths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         // 进程名 → 上次没找到的时刻。列表每次重绘都要图标,找不到时别反复扫进程。
         private static readonly Dictionary<string, DateTime> miss = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        // pid → exe 路径。读 MainModule 要跨进程枚举模块,空闲扫描每 1.5 秒就会把
+        // 所有有窗口的进程问一遍,缓存下来能把这部分开销抹掉。
+        private static readonly Dictionary<int, CacheEntry> pidPaths = new Dictionary<int, CacheEntry>();
+        // 进程名 → 认不出来时的兜底名字。目录名/窗口标题短时间内不会变。
+        private static readonly Dictionary<string, CacheEntry> fallback = new Dictionary<string, CacheEntry>(StringComparer.OrdinalIgnoreCase);
+        private const int PathTtlSec = 20;
+        private const int FallbackTtlSec = 8;
+
+        /// <summary>带时刻的缓存值。pid 会被复用,靠启动时刻识别出来的是不是同一个进程。</summary>
+        private sealed class CacheEntry
+        {
+            public string Text;
+            public long Start;
+            public DateTime At;
+        }
+
         // exe 文件名 → 完整路径,来自资源管理器缓存(旧战绩记录只有进程名时靠它补图标)。
         private static Dictionary<string, string> mui;
         private static Dictionary<string, string> user;
@@ -306,6 +322,8 @@ namespace FrameForge.Sys
             cache.Clear();
             paths.Clear();
             miss.Clear();
+            pidPaths.Clear();
+            fallback.Clear();
             mui = null;
             user = null;
             userLoaded = false;
@@ -343,11 +361,24 @@ namespace FrameForge.Sys
 
             // 真不认识:先看安装目录,再读窗口标题(鸣潮这类 Unreal 游戏的窗口标题
             // 就是游戏名),最后按用户要求退回进程名——总比显示"当前游戏"好。
-            // 这几层结果随进程变化,不写缓存,避免污染同名进程(Client-Win64-Shipping)。
+            // 结果随进程变化,不写长效缓存,避免污染同名进程(Client-Win64-Shipping);
+            // 但窗口标题要跨进程读,同一个进程短时间内重复问没有意义,只留几秒。
+            CacheEntry fb;
+            if (fallback.TryGetValue(key, out fb) && (DateTime.UtcNow - fb.At).TotalSeconds < FallbackTtlSec)
+                return fb.Text;
+
             string pretty = IsGeneric(key) ? FolderName(path) : "";
             if (Junk(pretty, key)) pretty = "";
             if (pretty.Length == 0) pretty = WindowName(pid, key);
             if (pretty.Length == 0) pretty = ExeLabel(exe);
+            if (pretty.Length > 0)
+            {
+                if (fallback.Count > 64) fallback.Clear();
+                var e = new CacheEntry();
+                e.Text = pretty;
+                e.At = DateTime.UtcNow;
+                fallback[key] = e;
+            }
             return pretty;
         }
 
@@ -404,12 +435,54 @@ namespace FrameForge.Sys
         private static string ProcessPath(int pid)
         {
             if (pid <= 0) return "";
+
+            CacheEntry hit;
+            if (pidPaths.TryGetValue(pid, out hit) && (DateTime.UtcNow - hit.At).TotalSeconds < PathTtlSec)
+            {
+                // pid 会被复用:启动时刻对得上才说明还是同一个进程。
+                try
+                {
+                    using (Process p = Process.GetProcessById(pid))
+                        if (p.StartTime.ToUniversalTime().Ticks == hit.Start) return hit.Text;
+                }
+                catch { return ""; }
+                pidPaths.Remove(pid);
+            }
+
+            string path = "";
+            long start = 0;
             try
             {
                 using (Process p = Process.GetProcessById(pid))
-                    return p.MainModule.FileName;
+                {
+                    start = p.StartTime.ToUniversalTime().Ticks;
+                    path = p.MainModule.FileName;
+                }
             }
-            catch { return ""; }
+            catch { }
+
+            // 只缓存读成功的:权限不足之类的失败下次可能就好了,别把它记成结论。
+            if (path != null && path.Length > 0 && start != 0)
+            {
+                if (pidPaths.Count > 96) PrunePidPaths();
+                var e = new CacheEntry();
+                e.Text = path;
+                e.Start = start;
+                e.At = DateTime.UtcNow;
+                pidPaths[pid] = e;
+            }
+            return path == null ? "" : path;
+        }
+
+        /// <summary>清掉过期的 pid 缓存;进程实在太多时整体丢弃，下次重新读。</summary>
+        private static void PrunePidPaths()
+        {
+            DateTime now = DateTime.UtcNow;
+            List<int> drop = new List<int>();
+            foreach (KeyValuePair<int, CacheEntry> kv in pidPaths)
+                if ((now - kv.Value.At).TotalSeconds >= PathTtlSec) drop.Add(kv.Key);
+            for (int i = 0; i < drop.Count; i++) pidPaths.Remove(drop[i]);
+            if (pidPaths.Count > 128) pidPaths.Clear();
         }
 
         /// <summary>取某个进程的 exe 路径,取不到返回空。</summary>

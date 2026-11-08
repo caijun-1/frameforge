@@ -59,6 +59,7 @@ namespace FrameForge
         public int FilterTint = 0;            // 色调:负值偏绿、正值偏洋红 -100..100
         public int FilterDark = 0;            // 暗部场景平衡 0..100
         public int FilterVibrance = 0;        // 数字振动 0..100
+        public string FilterIcc = "";         // 导入的 ICC 配置文件路径,空 = 只用 sRGB
 
         // 战绩报告
         public bool ReportAuto = true;        // 退出游戏后自动弹出本局报告
@@ -137,6 +138,7 @@ namespace FrameForge
                 case "filtertint": FilterTint = Int(v, 0); break;
                 case "filterdark": FilterDark = Int(v, 0); break;
                 case "filtervibrance": FilterVibrance = Int(v, 0); break;
+                case "filtericc": FilterIcc = v; break;
                 case "reportauto": ReportAuto = Bool(v, true); break;
                 case "reportminsec": ReportMinSec = Int(v, 30); break;
                 case "memauto": MemAuto = Bool(v, false); break;
@@ -193,6 +195,7 @@ namespace FrameForge
                 sb.AppendLine("filterTint=" + FilterTint.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterDark=" + FilterDark.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterVibrance=" + FilterVibrance.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("filterIcc=" + FilterIcc);
                 sb.AppendLine("reportAuto=" + B(ReportAuto));
                 sb.AppendLine("reportMinSec=" + ReportMinSec.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("memAuto=" + B(MemAuto));
