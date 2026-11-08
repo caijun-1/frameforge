@@ -25,6 +25,10 @@ namespace FrameForge
         private DateTime upFrom = DateTime.Now;
 
         private bool moving;
+        // 用户是否打开了叠加层。窗口被隐藏(内容清空、被游戏压掉)后靠它自愈显示,
+        // 否则 Hide 之后没有任何东西会把窗口叫回来,开关看着还是"开"的却永远不出现。
+        private bool wanted;
+        private Rectangle lastWa = Rectangle.Empty;
         // 上次画上去的内容。数值没变就不重画:UpdateLayeredWindow 每次都会让 DWM
         // 重新合成一层,游戏里叠加层本来就在和游戏抢合成,能少一次是一次。
         private string lastKey = "";
@@ -73,6 +77,7 @@ namespace FrameForge
 
         public void Start()
         {
+            wanted = true;
             if (!Visible) { upFrom = DateTime.Now; lastKey = ""; Show(); }
             ApplyInputMode();
             Render();
@@ -81,6 +86,7 @@ namespace FrameForge
 
         public void Stop()
         {
+            wanted = false;
             timer.Stop();
             if (Visible) Hide();
         }
@@ -115,19 +121,20 @@ namespace FrameForge
         /// </summary>
         private void PlaceIfNeeded(int w, int h, float k)
         {
+            Rectangle wa = TargetBounds();
             if (st.OverlayX >= 0 && st.OverlayY >= 0)
             {
-                // 拔掉副屏、改过分辨率之后,旧坐标可能整个落在屏幕外——
-                // 窗口还在,但用户什么都看不到。落在屏幕外就按默认摆位重来。
+                // 用户拖动过就沿用他的位置;但拔掉副屏、改分辨率、把游戏挪到另一块屏之后,
+                // 旧坐标可能整个落在目标屏外——只在整个虚拟桌面里判断不够,
+                // 那样窗口会停在用户压根看不到的地方。落在目标屏外就按默认摆位重来。
                 var saved = new Rectangle(st.OverlayX, st.OverlayY, w, h);
-                if (SystemInformation.VirtualScreen.IntersectsWith(saved))
+                if (wa.IntersectsWith(saved))
                 {
                     Location = new Point(st.OverlayX, st.OverlayY);
                     return;
                 }
             }
 
-            Rectangle wa = TargetBounds();
             int margin = (int)Math.Round(24 * k);
             int x, y;
             if (st.OverlayStyle == "v")
@@ -169,8 +176,11 @@ namespace FrameForge
             if (!IsHandleCreated) return;
             try
             {
-                Native.SetWindowPos(Handle, Native.HWND_TOPMOST, 0, 0, 0, 0,
-                    Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+                uint flags = Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE;
+                // 游戏切全屏/切分辨率时可能把窗口顺手收起来,带上 SHOWWINDOW 再声明一次,
+                // 内容没变也能重新上屏。
+                if (wanted) flags |= Native.SWP_SHOWWINDOW;
+                Native.SetWindowPos(Handle, Native.HWND_TOPMOST, 0, 0, 0, 0, flags);
             }
             catch { }
         }
@@ -197,7 +207,7 @@ namespace FrameForge
 
         private void Render()
         {
-            if (!IsHandleCreated || !Visible) return;
+            if (!IsHandleCreated) return;
             try
             {
                 double dpi = 96;
@@ -208,7 +218,24 @@ namespace FrameForge
 
                 string[] labels = BuildLabels();
                 string[] values = BuildValues();
-                if (labels.Length == 0) { Hide(); return; }
+                // 一个显示项都没勾时窗口收起,但这只是"暂时没内容",开关并没有关。
+                // 这里不 Show,否则会和下面的 Hide 每 200ms 来回切,画面一直闪。
+                if (labels.Length == 0) { lastKey = ""; if (Visible) Hide(); return; }
+
+                // 开关还开着却看不见窗口(内容清空过、或被游戏切全屏时系统收走了),
+                // 先自愈:重新 Show 并清掉缓存,下一帧全量重画。
+                if (wanted && !Visible)
+                {
+                    lastKey = "";
+                    try { Show(); }
+                    catch { }
+                }
+                if (!Visible) return;
+
+                // 前台换到另一块屏、或者游戏改了分辨率:工作区变了就强制重新排版,
+                // 否则内容没变时会一直沿用旧位置,用户看到的可能是屏外的一条边。
+                Rectangle wa = TargetBounds();
+                if (wa != lastWa) { lastWa = wa; lastKey = ""; }
 
                 string style = st.OverlayStyle;
                 string key = style + "|" + st.OverlayScale.ToString("0.00", CultureInfo.InvariantCulture)

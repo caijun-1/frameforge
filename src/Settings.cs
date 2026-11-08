@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -59,7 +60,15 @@ namespace FrameForge
         public int FilterTint = 0;            // 色调:负值偏绿、正值偏洋红 -100..100
         public int FilterDark = 0;            // 暗部场景平衡 0..100
         public int FilterVibrance = 0;        // 数字振动 0..100
-        public string FilterIcc = "";         // 导入的 ICC 配置文件路径,空 = 只用 sRGB
+        public string FilterIcc = "";         // 当前生效的 ICC 配置文件路径,空 = 只用 sRGB
+
+        /// <summary>导入过的 ICC 配置文件:路径固定,名字由用户自己起。</summary>
+        public class IccEntry
+        {
+            public string Name;
+            public string Path;
+        }
+        public readonly List<IccEntry> IccList = new List<IccEntry>();
 
         // 战绩报告
         public bool ReportAuto = true;        // 退出游戏后自动弹出本局报告
@@ -93,7 +102,36 @@ namespace FrameForge
                 }
             }
             catch (Exception ex) { Log.Write("settings load: " + ex.Message); }
+            s.EnsureIccEntry();
             return s;
+        }
+
+        /// <summary>旧配置里只存了路径:补一条默认名字的条目,列表里才看得到在用的 profile。</summary>
+        public void EnsureIccEntry()
+        {
+            if (string.IsNullOrEmpty(FilterIcc)) return;
+            for (int i = 0; i < IccList.Count; i++)
+                if (string.Equals(IccList[i].Path, FilterIcc, StringComparison.OrdinalIgnoreCase)) return;
+            IccList.Insert(0, new IccEntry { Name = CleanIccName(Path.GetFileNameWithoutExtension(FilterIcc)), Path = FilterIcc });
+        }
+
+        /// <summary>名字写进 ini 的一行,去掉分隔符与换行,并限长。</summary>
+        public static string CleanIccName(string n)
+        {
+            if (n == null) return "";
+            n = n.Replace('|', ' ').Replace('\r', ' ').Replace('\n', ' ').Trim();
+            if (n.Length > 40) n = n.Substring(0, 40).Trim();
+            return n;
+        }
+
+        private void AddIccProfile(string v)
+        {
+            int bar = v.IndexOf('|');
+            if (bar <= 0) return;
+            string name = CleanIccName(v.Substring(0, bar));
+            string path = v.Substring(bar + 1).Trim();
+            if (name.Length == 0 || path.Length == 0) return;
+            IccList.Add(new IccEntry { Name = name, Path = path });
         }
 
         private void Apply(string k, string v)
@@ -139,6 +177,7 @@ namespace FrameForge
                 case "filterdark": FilterDark = Int(v, 0); break;
                 case "filtervibrance": FilterVibrance = Int(v, 0); break;
                 case "filtericc": FilterIcc = v; break;
+                case "iccprofile": AddIccProfile(v); break;
                 case "reportauto": ReportAuto = Bool(v, true); break;
                 case "reportminsec": ReportMinSec = Int(v, 30); break;
                 case "memauto": MemAuto = Bool(v, false); break;
@@ -196,6 +235,8 @@ namespace FrameForge
                 sb.AppendLine("filterDark=" + FilterDark.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterVibrance=" + FilterVibrance.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterIcc=" + FilterIcc);
+                for (int i = 0; i < IccList.Count; i++)
+                    sb.AppendLine("iccProfile=" + IccList[i].Name + "|" + IccList[i].Path);
                 sb.AppendLine("reportAuto=" + B(ReportAuto));
                 sb.AppendLine("reportMinSec=" + ReportMinSec.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("memAuto=" + B(MemAuto));

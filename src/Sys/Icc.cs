@@ -8,12 +8,13 @@ namespace FrameForge.Sys
     /// <summary>
     /// ICC 配置文件 → 5×5 颜色矩阵。
     ///
-    /// 只处理显示类 profile 最常见的一种写法:rXYZ/gXYZ/bXYZ 三组色度标签 + rTRC/gTRC/bTRC
-    /// 三条传递曲线。系统里的显示器 profile 基本都是这个格式;少数 LUT 型(打印机偏色文件,
-    /// mft1/mft2)会被明确拒绝——用 3×3 线性矩阵去拟合一张任意 LUT 只会把画面弄得更花。
+    /// 支持两种写法:
+    /// 1) 矩阵型:rXYZ/gXYZ/bXYZ 三组色度标签 + rTRC/gTRC/bTRC 传递曲线,显示器 profile 最常见;
+    /// 2) LUT 型:mAB/mBA 查找表(曲线 + 3×3 矩阵 + CLUT),sRGB v4 偏好这类文件就是这种。
     ///
     /// 没走系统的 mscms.dll:OpenColorProfile 的文件名模式在本机始终返回
     /// ERROR_INVALID_PARAMETER,内存缓冲模式能建出句柄但 TranslateColors 结果错乱还会崩进程。
+    /// WIC 的 ColorContext 也试过:它按感知意图做色域映射,纯色会被改得面目全非。
     ///
     /// 做法是在 9×9×9 的 sRGB 网格上把每个颜色按 profile 定义映射一遍
     /// (sRGB 编码 → 线性 → XYZ → profile 线性 → profile 编码),再用最小二乘拟合 3×3 + 偏移。
@@ -100,6 +101,7 @@ namespace FrameForge.Sys
             if (n <= 0 || n > 256 || 132 + n * 12 > d.Length) { err = "bad tag table"; return null; }
 
             int ro = 0, go = 0, bo = 0, rt = 0, gt = 0, bt = 0;
+            int a2b0 = 0, a2b1 = 0, b2a0 = 0, b2a1 = 0;
             for (int i = 0; i < n; i++)
             {
                 int e = 132 + i * 12;
@@ -110,11 +112,27 @@ namespace FrameForge.Sys
                 if (sig == "rXYZ") ro = off;
                 else if (sig == "gXYZ") go = off;
                 else if (sig == "bXYZ") bo = off;
+                else if (sig == "A2B0") a2b0 = off;
+                else if (sig == "A2B1") a2b1 = off;
+                else if (sig == "B2A0") b2a0 = off;
+                else if (sig == "B2A1") b2a1 = off;
                 else if (sig == "rTRC") rt = off;
                 else if (sig == "gTRC") gt = off;
                 else if (sig == "bTRC") bt = off;
             }
-            if (ro == 0 || go == 0 || bo == 0) { err = "missing matrix tags"; return null; }
+            if (ro == 0 || go == 0 || bo == 0)
+            {
+                // 没有矩阵标签就走 LUT。屏幕要的是“PCS → 设备值”,即 B2A 方向;
+                // 优先相对比色(B2A1):感知意图会做黑点补偿和色域压缩,sRGB 文件会平白偏色。
+                float[] lut = null;
+                if (b2a1 != 0) lut = LutFit(d, b2a1, out err);
+                if (lut == null && b2a0 != 0) lut = LutFit(d, b2a0, out err);
+                if (lut != null) return lut;
+                // 只有 A2B(设备 → PCS)的文件没法直接拿来当输出 profile。
+                if (a2b0 != 0 || a2b1 != 0) { err = "lut profile"; return null; }
+                err = "missing matrix tags";
+                return null;
+            }
 
             double[] r = Xyz(d, ro), g = Xyz(d, go), b = Xyz(d, bo);
             double[] mp = { r[0], g[0], b[0], r[1], g[1], b[1], r[2], g[2], b[2] };
@@ -160,24 +178,356 @@ namespace FrameForge.Sys
                         idx++;
                     }
 
+            var res = Fit(samples, target, out err);
+            if (res == null) return null;
+            return res;
+        }
+
+        /// <summary>
+        /// 在 9×9×9 的 sRGB 网格上最小二乘拟合 3×3 + 偏移;发散时返回 null。
+        /// </summary>
+        private static float[] Fit(double[,] samples, double[,] target, out string err)
+        {
+            return Fit(samples, target, samples.GetLength(0), false, out err);
+        }
+
+        /// <summary>
+        /// LUT 专用:带剔除的最小二乘。LUT 在暗端常把值外插到 [0,1] 之外,那几个点不是
+        /// 可信的设备值,留着会把 4 个数一起拽偏;先按残差剔几轮再收尾。
+        /// 矩阵型 profile 不走剔除:它的曲线本来就拟合不进线性矩阵,剔了反而只剩两端。
+        /// </summary>
+        private static float[] Fit(double[,] samples, double[,] target, int count, out string err)
+        {
+            return Fit(samples, target, count, true, out err);
+        }
+
+        private static float[] Fit(double[,] samples, double[,] target, int count, bool trim, out string err)
+        {
+            err = "";
             var res = new float[25];
+            var keep = new bool[count];
+            for (int i = 0; i < count; i++) keep[i] = true;
+            double[][] x = new double[3][];
+            int pass = 0;
+            while (true)
+            {
+                int kept = 0;
+                for (int i = 0; i < count; i++) if (keep[i]) kept++;
+                if (kept < (trim ? 64 : 4)) { err = "fit failed"; return null; }
+                for (int ch = 0; ch < 3; ch++) x[ch] = Solve(samples, target, ch, keep, count);
+                if (!trim || pass >= 3) break;
+                pass++;
+                var drop = new bool[count];
+                int dropped = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    if (!keep[i]) continue;
+                    double worst = 0;
+                    for (int ch = 0; ch < 3; ch++)
+                    {
+                        double[] s = x[ch];
+                        double e = Math.Abs(s[0] * samples[i, 0] + s[1] * samples[i, 1] + s[2] * samples[i, 2] + s[3] - target[i, ch]);
+                        if (e > worst) worst = e;
+                    }
+                    if (worst > 0.06) { drop[i] = true; dropped++; }
+                }
+                // 一次最多剔三成,避免某一轮把样本清空。
+                if (dropped == 0 || dropped > kept / 3) break;
+                for (int i = 0; i < count; i++) if (drop[i]) keep[i] = false;
+            }
             for (int ch = 0; ch < 3; ch++)
             {
-                double[] x = Solve(samples, target, ch);
+                double[] s = x[ch];
                 for (int c = 0; c < 4; c++)
                 {
                     // 拟合发散(NaN / 超大值)宁可报错,也不要推给放大镜把桌面刷花。
-                    if (double.IsNaN(x[c]) || double.IsInfinity(x[c]) || Math.Abs(x[c]) > 8.0)
+                    if (double.IsNaN(s[c]) || double.IsInfinity(s[c]) || Math.Abs(s[c]) > 8.0)
                     {
                         err = "fit failed";
                         return null;
                     }
-                    res[ch * 5 + c] = (float)x[c];
+                    res[ch * 5 + c] = (float)s[c];
                 }
             }
             res[18] = 1;
             res[24] = 1;
             return res;
+        }
+
+        /// <summary>
+        /// LUT 型 profile:mAB/mBA 是「曲线组 → 3×3 矩阵 → 曲线组 → CLUT → 曲线组」的多段管线。
+        /// 在 sRGB 网格上取 729 个颜色,先算成 PCS(Lab),过一遍 B2A 管线得到设备 RGB,
+        /// 再拿同一套最小二乘拟合 3×3 + 偏移。相机/显示器 profile 用它做“按 profile 显示”。
+        /// </summary>
+        private static float[] LutFit(byte[] d, int off, out string err)
+        {
+            err = "";
+            var lut = ReadLut(d, off);
+            if (lut == null) { err = "bad lut"; return null; }
+            // mBA 才是 PCS → 设备值;mAB 是反方向,倒推不了。
+            if (lut.Type != "mBA ") { err = "lut direction"; return null; }
+            if (lut.OutCh < 3) { err = "bad lut"; return null; }
+
+            // PCS 大多数是 Lab(v4 也允许 XYZ):编码方式不同,这里按头部字段分辨。
+            bool pcsLab = Sig(d, 20) == "Lab ";
+            double xn = 0.9642, yn = 1.0, zn = 0.8249;
+            int wt = TagOffset(d, "wtpt");
+            if (wt != 0)
+            {
+                double[] wp = Xyz(d, wt);
+                if (wp[1] > 0.01) { xn = wp[0]; yn = wp[1]; zn = wp[2]; }
+            }
+
+            var samples = new double[729, 3];
+            var target = new double[729, 3];
+            int k = 0;
+            double[] pcs = new double[3], outv = new double[3], xyz = new double[3];
+            for (int r = 0; r < 9; r++)
+                for (int g = 0; g < 9; g++)
+                    for (int b = 0; b < 9; b++)
+                    {
+                        double er = Levels[r] / 255.0;
+                        double eg = Levels[g] / 255.0;
+                        double eb = Levels[b] / 255.0;
+                        double[] lin = { SrgbDecode(er), SrgbDecode(eg), SrgbDecode(eb) };
+                        Mul(SrgbToXyz, lin, xyz);
+                        if (pcsLab)
+                        {
+                            double fx = LabF(xyz[0] / xn), fy = LabF(xyz[1] / yn), fz = LabF(xyz[2] / zn);
+                            pcs[0] = (116 * fy - 16) / 100.0;
+                            pcs[1] = (500 * (fx - fy) + 128.0) / 255.0;
+                            pcs[2] = (200 * (fy - fz) + 128.0) / 255.0;
+                        }
+                        else
+                        {
+                            pcs[0] = xyz[0] / xn;
+                            pcs[1] = xyz[1] / yn;
+                            pcs[2] = xyz[2] / zn;
+                        }
+                        RunB2A(lut, pcs, outv);
+                        // 曲线里 pow 遇到负底数会出 NaN;这种点直接丢掉,否则整份拟合全废。
+                        if (double.IsNaN(outv[0]) || double.IsNaN(outv[1]) || double.IsNaN(outv[2])) continue;
+                        samples[k, 0] = er;
+                        samples[k, 1] = eg;
+                        samples[k, 2] = eb;
+                        target[k, 0] = Clamp01(outv[0]);
+                        target[k, 1] = Clamp01(outv[1]);
+                        target[k, 2] = Clamp01(outv[2]);
+                        k++;
+                    }
+            return Fit(samples, target, k, out err);
+        }
+
+        private static double LabF(double t)
+        {
+            return t > 0.008856451679035631 ? Math.Pow(t, 1.0 / 3.0) : (7.787037037037035 * t + 16.0 / 116.0);
+        }
+
+        /// <summary>mAB/mBA 标签:三组各 3 条曲线、可选的 3×4 矩阵、可选的 CLUT。</summary>
+        private sealed class Lut
+        {
+            public byte[] D;
+            public string Type;
+            public int OutCh;
+            public double[][] A, B, M;
+            public double[] Mtx;
+            public int[] G = new int[3];
+            public int Clut;
+        }
+
+        private static Lut ReadLut(byte[] d, int off)
+        {
+            if (off <= 0 || off + 32 > d.Length) return null;
+            string type = Sig(d, off);
+            if (type != "mAB " && type != "mBA ") return null;
+            var l = new Lut();
+            l.D = d;
+            l.Type = type;
+            l.OutCh = d[off + 9];
+            if (l.OutCh < 1 || l.OutCh > 3) return null;
+
+            int bO = U32(d, off + 12), mO = U32(d, off + 16), moO = U32(d, off + 20);
+            int cO = U32(d, off + 24), aO = U32(d, off + 28);
+            if (bO != 0) { l.B = ReadCurves(d, off + bO); if (l.B == null) return null; }
+            if (moO != 0) { l.M = ReadCurves(d, off + moO); if (l.M == null) return null; }
+            if (aO != 0) { l.A = ReadCurves(d, off + aO); if (l.A == null) return null; }
+            if (mO != 0)
+            {
+                if (off + mO + 48 > d.Length) return null;
+                l.Mtx = new double[12];
+                for (int i = 0; i < 12; i++) l.Mtx[i] = S15(d, off + mO + i * 4);
+            }
+            if (cO != 0)
+            {
+                int p = off + cO;
+                if (p + 20 > d.Length) return null;
+                l.G[0] = d[p];
+                l.G[1] = d[p + 1];
+                l.G[2] = d[p + 2];
+                if (l.G[0] < 2 || l.G[1] < 2 || l.G[2] < 2) return null;
+                // mAB/mBA 的 CLUT 固定 16 位格点,头部 20 字节(grid×3 + 精度 + 16 字节保留)。
+                int need = 20 + l.G[0] * l.G[1] * l.G[2] * l.OutCh * 2;
+                if (p + need > d.Length) return null;
+                l.Clut = p + 20;
+            }
+            return l;
+        }
+
+        /// <summary>连续读 3 条曲线,每条都摊平成 1024 点表。</summary>
+        private static double[][] ReadCurves(byte[] d, int p)
+        {
+            var res = new double[3][];
+            for (int i = 0; i < 3; i++)
+            {
+                int next;
+                res[i] = ReadCurve(d, p, out next);
+                if (res[i] == null) return null;
+                p = next;
+            }
+            return res;
+        }
+
+        private static double[] ReadCurve(byte[] d, int p, out int next)
+        {
+            next = p;
+            if (p + 12 > d.Length) return null;
+            string type = Sig(d, p);
+            var t = new double[1024];
+            if (type == "curv")
+            {
+                int n = U32(d, p + 8);
+                if (n < 0 || p + 12 + n * 2 > d.Length) return null;
+                next = p + 12 + n * 2;
+                if (n == 0)
+                {
+                    for (int i = 0; i < 1024; i++) t[i] = i / 1023.0;
+                    return t;
+                }
+                if (n == 1)
+                {
+                    double gam = ((d[p + 12] << 8) | d[p + 13]) / 256.0;
+                    if (gam <= 0.001) gam = 1.0;
+                    for (int i = 0; i < 1024; i++) t[i] = Math.Pow(i / 1023.0, gam);
+                    return t;
+                }
+                var tb = new double[n];
+                for (int i = 0; i < n; i++) tb[i] = ((d[p + 12 + i * 2] << 8) | d[p + 13 + i * 2]) / 65535.0;
+                for (int i = 0; i < 1024; i++)
+                {
+                    double x = i / 1023.0 * (n - 1);
+                    int i0 = (int)x;
+                    if (i0 >= n - 1) { t[i] = tb[n - 1]; continue; }
+                    double f = x - i0;
+                    t[i] = tb[i0] + (tb[i0 + 1] - tb[i0]) * f;
+                }
+                return t;
+            }
+            if (type == "para")
+            {
+                int fn = (d[p + 8] << 8) | d[p + 9];
+                int nP = fn == 0 ? 1 : fn == 1 ? 3 : fn == 2 ? 4 : fn == 3 ? 5 : fn == 4 ? 7 : -1;
+                if (nP < 0 || p + 12 + nP * 4 > d.Length) return null;
+                next = p + 12 + nP * 4;
+                double g = S15(d, p + 12);
+                // 缺省参数:只有 g 时 a 取 1,其余 0。
+                double a = 1, b = 0, c = 0, dd = 0, e = 0, ff = 0;
+                if (fn >= 1) { a = S15(d, p + 16); b = S15(d, p + 20); }
+                if (fn >= 2) c = S15(d, p + 24);
+                if (fn >= 3) dd = S15(d, p + 28);
+                if (fn == 4) { e = S15(d, p + 32); ff = S15(d, p + 36); }
+                for (int i = 0; i < 1024; i++)
+                {
+                    double x = i / 1023.0, y;
+                    if (fn == 0) y = Math.Pow(x, g);
+                    else if (fn == 1) y = (a != 0 && x >= -b / a) ? Math.Pow(a * x + b, g) : 0;
+                    else if (fn == 2) y = Math.Pow(a * x + b, g) + c;
+                    else if (fn == 3) y = x >= dd ? Math.Pow(a * x + b, g) + c : c;
+                    else y = x >= dd ? Math.Pow(a * x + b, g) + e : c * x + ff;
+                    t[i] = y;
+                }
+                return t;
+            }
+            return null;
+        }
+
+        private static double Tab(double[][] set, int ch, double x)
+        {
+            if (set == null || set[ch] == null) return Clamp01(x);
+            if (x <= 0) return set[ch][0];
+            if (x >= 1) return set[ch][1023];
+            double pos = x * 1023.0;
+            int i = (int)pos;
+            double f = pos - i;
+            return set[ch][i] + (set[ch][i + 1] - set[ch][i]) * f;
+        }
+
+        /// <summary>mBA 管线:B 曲线 → 矩阵(+偏移) → M 曲线 → CLUT → A 曲线。</summary>
+        private static void RunB2A(Lut l, double[] pcs, double[] outv)
+        {
+            double v0 = Tab(l.B, 0, pcs[0]);
+            double v1 = Tab(l.B, 1, pcs[1]);
+            double v2 = Tab(l.B, 2, pcs[2]);
+            if (l.Mtx != null)
+            {
+                double x = l.Mtx[0] * v0 + l.Mtx[1] * v1 + l.Mtx[2] * v2 + l.Mtx[9];
+                double y = l.Mtx[3] * v0 + l.Mtx[4] * v1 + l.Mtx[5] * v2 + l.Mtx[10];
+                double z = l.Mtx[6] * v0 + l.Mtx[7] * v1 + l.Mtx[8] * v2 + l.Mtx[11];
+                v0 = x; v1 = y; v2 = z;
+            }
+            v0 = Tab(l.M, 0, v0);
+            v1 = Tab(l.M, 1, v1);
+            v2 = Tab(l.M, 2, v2);
+            if (l.Clut != 0)
+            {
+                double[] o = new double[3];
+                ClutEval(l, v0, v1, v2, o);
+                v0 = o[0]; v1 = o[1]; v2 = o[2];
+            }
+            outv[0] = Tab(l.A, 0, v0);
+            outv[1] = Tab(l.A, 1, v1);
+            outv[2] = Tab(l.A, 2, v2);
+        }
+
+        /// <summary>CLUT 三线性插值。索引约定:通道 0 变化最慢(与本 profile 实测一致)。</summary>
+        private static void ClutEval(Lut l, double v0, double v1, double v2, double[] o)
+        {
+            o[0] = 0; o[1] = 0; o[2] = 0;
+            double f0 = Clamp01(v0) * (l.G[0] - 1);
+            double f1 = Clamp01(v1) * (l.G[1] - 1);
+            double f2 = Clamp01(v2) * (l.G[2] - 1);
+            int i0 = (int)f0, i1 = (int)f1, i2 = (int)f2;
+            if (i0 >= l.G[0] - 1) i0 = l.G[0] - 2;
+            if (i1 >= l.G[1] - 1) i1 = l.G[1] - 2;
+            if (i2 >= l.G[2] - 1) i2 = l.G[2] - 2;
+            if (i0 < 0) i0 = 0;
+            if (i1 < 0) i1 = 0;
+            if (i2 < 0) i2 = 0;
+            double t0 = f0 - i0, t1 = f1 - i1, t2 = f2 - i2;
+            for (int a = 0; a < 2; a++)
+                for (int b = 0; b < 2; b++)
+                    for (int c = 0; c < 2; c++)
+                    {
+                        double w = (a == 0 ? 1 - t0 : t0) * (b == 0 ? 1 - t1 : t1) * (c == 0 ? 1 - t2 : t2);
+                        if (w == 0) continue;
+                        int id = ((i0 + a) * l.G[1] + (i1 + b)) * l.G[2] + (i2 + c);
+                        int at = l.Clut + id * l.OutCh * 2;
+                        for (int ch = 0; ch < 3; ch++)
+                        {
+                            int q = at + ch * 2;
+                            o[ch] += w * (((l.D[q] << 8) | l.D[q + 1]) / 65535.0);
+                        }
+                    }
+        }
+
+        private static int TagOffset(byte[] d, string sig)
+        {
+            int n = U32(d, 128);
+            for (int i = 0; i < n; i++)
+            {
+                int e = 132 + i * 12;
+                if (Sig(d, e) == sig) return U32(d, e + 4);
+            }
+            return 0;
         }
 
         // ---------------- 标签解析 ----------------
@@ -328,10 +678,15 @@ namespace FrameForge.Sys
         /// <summary>最小二乘拟合 3 输入 + 偏移;正规方程 4×4,部分主元高斯消元。</summary>
         private static double[] Solve(double[,] samples, double[,] target, int ch)
         {
-            int n = samples.GetLength(0);
+            return Solve(samples, target, ch, null, samples.GetLength(0));
+        }
+
+        private static double[] Solve(double[,] samples, double[,] target, int ch, bool[] keep, int count)
+        {
             var m = new double[4, 5];
-            for (int i = 0; i < n; i++)
+            for (int i = 0; i < count; i++)
             {
+                if (keep != null && !keep[i]) continue;
                 double[] a = { samples[i, 0], samples[i, 1], samples[i, 2], 1.0 };
                 for (int r = 0; r < 4; r++)
                 {

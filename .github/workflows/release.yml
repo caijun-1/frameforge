@@ -97,7 +97,16 @@ jobs:
         run: |
           TAG="${{ github.ref_name }}"
           sha256sum dist/FrameForge.exe | awk '{print $1}' > dist/FrameForge.exe.sha256
-          gh release create "$TAG" dist/FrameForge.exe dist/FrameForge.exe.sha256 \
-            --repo "${{ github.repository }}" \
-            --title "FrameForge $TAG" \
-            --generate-notes
+          # 有手写的中英文发布说明就用它,没有才退回自动生成的提交摘要。
+          NOTES="docs/release-notes/${TAG}.md"
+          if [ -f "$NOTES" ]; then
+            gh release create "$TAG" dist/FrameForge.exe dist/FrameForge.exe.sha256 \
+              --repo "${{ github.repository }}" \
+              --title "FrameForge $TAG" \
+              --notes-file "$NOTES"
+          else
+            gh release create "$TAG" dist/FrameForge.exe dist/FrameForge.exe.sha256 \
+              --repo "${{ github.repository }}" \
+              --title "FrameForge $TAG" \
+              --generate-notes
+          fi

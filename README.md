@@ -5,15 +5,15 @@
 <p align="center"><b>轻量级 FPS 游戏增效工具 · A lightweight FPS toolkit for Windows</b><br>
 一键加速 + 实时帧率监测 + 游戏内叠加层 + 画面滤镜 + 赛后性能报告 + 系统优化</p>
 
-<p align="center">单文件 · 免安装 · 442 KB · 不注入游戏 · 不装驱动</p>
+<p align="center">单文件 · 免安装 · 456 KB · 不注入游戏 · 不装驱动</p>
 
 <p align="center">
   <img src="https://github.com/caijun-1/frameforge/actions/workflows/build.yml/badge.svg" alt="build">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue" alt="platform">
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
-  <img src="https://img.shields.io/badge/size-442%20KB-brightgreen" alt="size 442 KB">
+  <img src="https://img.shields.io/badge/size-456%20KB-brightgreen" alt="size 456 KB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.3.9-orange" alt="1.3.9">
+  <img src="https://img.shields.io/badge/version-1.4.1-orange" alt="1.4.1">
 </p>
 
 <p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
@@ -36,6 +36,7 @@
 - [从源码构建](#从源码构建)
 - [项目结构](#项目结构)
 - [已知限制](#已知限制)
+- [更新日志](#更新日志)
 - [English](#english)
 
 ---
@@ -59,23 +60,27 @@
 
 ## 截图
 
-以下为浅色主题界面，全部取自 v1.3.9。加速页的模式条为铺满整卡的三等分色块，「编辑选项」只在自定义模式下出现；战绩详情里可直接查看本局帧率折线。
+以下为浅色主题界面，全部取自 v1.4.1。加速页的模式条为铺满整卡的三等分色块，「编辑选项」只在自定义模式下出现；战绩详情里可直接查看本局帧率折线；滤镜预设分「通用 / 热门游戏 / ICC」三页。
 
 | 加速（均衡模式） | 加速（自定义模式） |
 | --- | --- |
-| ![加速](docs/screenshots/v1.3.9/boost.png) | ![自定义模式](docs/screenshots/v1.3.9/boost-custom.png) |
+| ![加速](docs/screenshots/v1.4.1/boost.png) | ![自定义模式](docs/screenshots/v1.4.1/boost-custom.png) |
 
 | 滤镜 | 叠加层 |
 | --- | --- |
-| ![滤镜](docs/screenshots/v1.3.9/filter.png) | ![叠加层](docs/screenshots/v1.3.9/overlay.png) |
+| ![滤镜](docs/screenshots/v1.4.1/filter.png) | ![叠加层](docs/screenshots/v1.4.1/overlay.png) |
+
+| 滤镜（ICC 配置文件） |
+| --- |
+| ![ICC](docs/screenshots/v1.4.1/icc.png) |
 
 | 战绩 | 优化（系统体检） |
 | --- | --- |
-| ![战绩](docs/screenshots/v1.3.9/report.png) | ![优化](docs/screenshots/v1.3.9/health.png) |
+| ![战绩](docs/screenshots/v1.4.1/report.png) | ![优化](docs/screenshots/v1.4.1/health.png) |
 
 | 设置 |
 | --- |
-| ![设置](docs/screenshots/v1.3.9/settings.png) |
+| ![设置](docs/screenshots/v1.4.1/settings.png) |
 
 <details>
 <summary>旧版界面（v1.1.1，对比用）</summary>
@@ -152,7 +157,7 @@ PresentMon 是在运行时按需下载的独立 exe（MIT 协议），不随本�
 - 六维微调：强度、对比度、**暗部平衡**（压高光 + 抬黑位，暗处看得更清）、饱和度、**数字振动**（类似 NVIDIA 数字振动，提升色彩浓艳度）、色温；
 - 亮度滑块直接调硬件背光：外接显示器走 DDC/CI（VCP 0x10），笔记本内置屏改走 WMI 背光接口；不进滤镜矩阵，也不会出现在截图 / 录屏里；两者都不支持时滑块置灰并给出提示；
 - **A/B 对比**：按预览图上的按钮（或长按）即可临时查看未加滤镜的原图，随手对比效果；
-- **ICC 配置文件**：可导入显示器 / 校色仪提供的 `.icc` / `.icm`（RGB 矩阵 + 曲线），叠加在校正链末端，让滤镜与广色域屏上的实际显示对齐；解析全程在本机完成，文件不可用时明确报错而不是硬套一个错误矩阵。
+- **ICC 配置文件**：预设分组里单开一页「ICC」，点右上角的 **+** 从文件导入显示器 / 校色仪提供的 `.icc` / `.icm`，导入时可以自己起名字；之后点条目应用、再点一次取消，右键条目或点「重命名」可随时改名；矩阵型（`rXYZ`/`gXYZ`/`bXYZ` + TRC）和 LUT 型（`mAB `/`mBA `，曲线 + 3×3 矩阵 + CLUT）都能解析，屏幕校正取 B2A 方向并在 9×9×9 sRGB 网格上拟合成 3×3 + 偏移；**ICC 与预设滤镜互斥**：ICC 生效时只用 ICC 校色，预设与自定义六维参数不参与计算，避免两层颜色变换叠在一起导致偏色，点任意预设即可切回；解析全程在本机完成，文件不可用时明确报错而不是硬套一个错误矩阵。
 
 ## 赛后报告与战绩
 
@@ -254,6 +259,28 @@ frameforge/
 - 滤镜为桌面级后处理，HDR 与广色域显示器上的观感会与 SDR 略有差异；
 - 仅支持 Windows；Linux / macOS 不在计划内。
 
+## 更新日志
+
+### v1.4.1
+
+**新增**
+
+- 画面滤镜新增 **ICC 配置文件**：预设分组里单开「ICC」页，点右上角 **+** 从文件导入 `.icc` / `.icm`，导入时可自定义名字；左键点条目启用、再点一次取消，右键或「重命名」按钮可随时改名，不需要重新导入。
+- 矩阵型（`rXYZ`/`gXYZ`/`bXYZ` + TRC）与 LUT 型（`mAB `/`mBA `，曲线 + 3×3 矩阵 + CLUT）ICC 都能解析；屏幕校正取 B2A 方向，在 9×9×9 sRGB 网格上拟合成 3×3 + 偏移。
+
+**改进**
+
+- ICC 与预设滤镜现在**互斥**：ICC 生效时只用 ICC 校色，预设与自定义六维参数不参与计算，避免两层颜色变换叠加导致偏色；点任意预设即可切回。
+- 叠加层新增常驻状态行：未开启 / 等待游戏 / 正在显示（带游戏名）/ 独占全屏受限，一眼看出当前为什么没有画面。
+- 叠加层会自愈：窗口被游戏顶掉、或清空全部显示项后再勾回来，会自动重新上屏，不必反复开关。
+- 切换显示器、拔插副屏或修改分辨率后，叠加层按当前目标屏重新定位，不会再停在屏幕外。
+- 锁定位置的叠加层每帧重新声明置顶，游戏反复抢占最前也能回来。
+
+**修复**
+
+- 修复无畏契约等**独占全屏**游戏里叠加层不显示的问题：程序检测到独占全屏后会提示改用「无边框窗口」，这是系统限制，不注入游戏无法绕过。
+- 修复叠加层在切换全屏 / 修改分辨率后消失的问题。
+
 ## 许可
 
 [MIT](LICENSE)。第三方组件声明见 [NOTICE](NOTICE)。
@@ -264,19 +291,41 @@ frameforge/
 
 ## English
 
-**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay, desktop-wide screen filters, and an automatic post-game performance report. It ships as a single 442 KB executable with about 20 MB of resident memory, and it never injects into games or installs a driver.
+**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay, desktop-wide screen filters, and an automatic post-game performance report. It ships as a single 456 KB executable with about 20 MB of resident memory, and it never injects into games or installs a driver.
 
 ### Highlights
 
 - **One-click boost** — process priority, high-performance power plan, 1 ms timer resolution, Game DVR / fullscreen optimization off, working-set trim, plus opt-in advanced steps: suspend background hogs (with confirmation), reserve physical cores for the game, move NIC/GPU interrupts off those cores, and remember options per game. Every change is reversible.
 - **Live monitoring** — a dashboard built into the Boost page: CPU/GPU rings, a five-axis radar (CPU / GPU / RAM / FPS / temperature), a RAM arc, and a GPU temperature / clock / power / VRAM strip.
 - **Real game names** — a three-layer lookup (user `games.ini` → built-in library of 200+ titles → install folder / file version info) turns `client-win64-shipping.exe` into the actual game title instead of showing a raw process name.
-- **Screen filters** — fifteen general presets plus eight tuned per-game looks (Delta Force, VALORANT, Genshin, Apex, CS2, PUBG, Naraka, League of Legends), with intensity, brightness, contrast, shadow lift, saturation, digital vibrance and warmth sliders, applied through the Windows Magnification color matrix (game-only or always). Hold the A/B button to compare against the original image. The brightness slider drives the monitor's hardware backlight (DDC/CI, or WMI on laptop panels), so it stays out of the color matrix and out of screenshots. You can also import an ICC profile (`.icc` / `.icm`, RGB matrix + curves) and it is chained onto the end of the correction chain, so the look matches what your calibrated or wide-gamut panel actually shows.
+- **Screen filters** — fifteen general presets plus eight tuned per-game looks (Delta Force, VALORANT, Genshin, Apex, CS2, PUBG, Naraka, League of Legends), with intensity, brightness, contrast, shadow lift, saturation, digital vibrance and warmth sliders, applied through the Windows Magnification color matrix (game-only or always). Hold the A/B button to compare against the original image. The brightness slider drives the monitor's hardware backlight (DDC/CI, or WMI on laptop panels), so it stays out of the color matrix and out of screenshots. You can also import an ICC profile (`.icc` / `.icm`) from its own **ICC** tab in the presets card — click **+** to import, name it while importing, click the entry to apply (click again to clear), and rename it any time via right-click or *Rename*. Both matrix profiles (`rXYZ`/`gXYZ`/`bXYZ` + TRC) and LUT profiles (`mAB `/`mBA ` — curves, 3×3 matrix and CLUT) are parsed; screen correction uses the B2A direction and is fitted to a 3×3 + offset on a 9×9×9 sRGB grid. ICC and preset filters are mutually exclusive: while an ICC profile is active it is the only filter applied, and presets plus the six manual sliders are left out of the math, so two color transforms never stack. Click any preset to switch back.
 - **In-game overlay** — top-most layered window with three layouts, eight selectable stats, scaling and position lock. It follows the monitor the game is on and re-asserts top-most every frame, so games that grab the top spot cannot bury it; if the game runs in exclusive fullscreen, the app tells you to switch to borderless instead of silently showing nothing.
 - **Post-game report & records** — a report card pops up when a game exits with average/max/min FPS, 1% low, CPU/GPU/temperature/memory/VRAM/power, plus energy and CO₂ estimates. The Records page keeps the last 300 sessions with per-session detail (including an FPS chart), delete, clear, and CSV export.
 - **System check-up** — the Optimize page lists the settings that quietly cost frames (admin rights, VBS, hardware-accelerated GPU scheduling, MPO overlay, Game DVR, fullscreen optimization, windowed-game optimization, power plan, MSI interrupt affinity, GPU driver) with the recommended state for gaming, inline toggles, two one-click presets, and a “PC check-up” view that shows the actual value and change journal for every row.
 - **Compatibility first** — anti-cheat components (ACE, EAC, BattlEye, Vanguard…) are never suspended or memory-trimmed, and if a game rejects the priority change the app says so instead of claiming success. Anything on the protected list (OBS, Discord, recording tools…) is left alone too.
 - Bilingual UI (Chinese / English), dark and light themes, tray mode, autostart, optional update check.
+
+### Changelog
+
+#### v1.4.1
+
+**New**
+
+- **ICC profiles** in the screen-filter presets: a dedicated **ICC** tab with a **+** button to import `.icc` / `.icm` files and name them on import. Left-click an entry to apply, click again to clear; right-click or *Rename* to rename at any time without re-importing.
+- Both matrix (`rXYZ`/`gXYZ`/`bXYZ` + TRC) and LUT (`mAB `/`mBA ` — curves, 3×3 matrix and CLUT) profiles are parsed; screen correction uses the B2A direction, fitted to a 3×3 + offset on a 9×9×9 sRGB grid.
+
+**Improved**
+
+- ICC and preset filters are now **mutually exclusive**: while an ICC profile is active it is the only filter applied — presets and the six manual sliders no longer stack on top of it, so two color transforms never double up. Click any preset to switch back.
+- The overlay page now has a permanent status line: off / waiting for a game / showing (with the game name) / blocked by exclusive fullscreen.
+- The overlay self-heals: if the game buries the window, or you re-enable all stats after clearing them, it comes back on screen without toggling the switch.
+- After switching monitors, unplugging a second display or changing resolution, the overlay re-anchors to the current target monitor instead of staying off-screen.
+- With position lock on, the overlay re-asserts top-most on every frame, so games that keep grabbing the top spot cannot bury it.
+
+**Fixed**
+
+- Fixed the overlay not showing in **exclusive fullscreen** games such as VALORANT: the app now detects exclusive fullscreen and asks you to switch to borderless windowed, which is the only way around this OS-level limitation without injecting into the game.
+- Fixed the overlay disappearing after a fullscreen toggle or a resolution change.
 
 ### Requirements
 

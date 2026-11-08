@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
@@ -796,7 +797,7 @@ namespace FrameForge.UI
     {
         private readonly Card ovCard, itemCard, hintCard, prevCard;
         private readonly TextLabel ovTitle, onTitle, onSub, lockTitle, lockSub, hotkey;
-        private readonly TextLabel styleTitle, itemTitle, itemNote, hintTitle, prevTitle;
+        private readonly TextLabel styleTitle, itemTitle, itemNote, hintTitle, prevTitle, statusLbl;
         private readonly Toggle onToggle, lockToggle;
         private readonly Segmented style;
         private readonly Slider scale;
@@ -885,6 +886,18 @@ namespace FrameForge.UI
             ovCard.Controls.Add(lockToggle);
 
             hintTitle = Header(I18n.T("ov.notes"));
+
+            // 常驻状态行:独占全屏下叠加层其实被系统挡住了,Toast 又正好被游戏盖住,
+            // 所以回到设置页时得有一句能一直看到的话,告诉用户现在是哪种情况、该怎么改。
+            statusLbl = new TextLabel();
+            statusLbl.Size = 9f;
+            statusLbl.Style = FontStyle.Bold;
+            statusLbl.ForeColor = Theme.Sub;
+            statusLbl.Wrap = true;
+            statusLbl.Align = ContentAlignment.TopLeft;
+            statusLbl.Text = I18n.T("ov.status.idle");
+            hintCard.Controls.Add(statusLbl);
+
             hintCard.Controls.Add(hintTitle);
             hintCard.Controls.Add(hotkey);
 
@@ -1012,6 +1025,52 @@ namespace FrameForge.UI
             }
         }
 
+        private string lastStatusText = "";
+        private Color lastStatusColor = Color.Empty;
+
+        /// <summary>
+        /// 常驻状态行:关闭 / 等待游戏 / 显示中 / 被独占全屏挡住。
+        /// 独占全屏下叠加层确实上不了屏,Toast 又正好被游戏盖住,
+        /// 回到这个页面时至少能一直看到原因和改法。
+        /// </summary>
+        public override void Refresh(SysSample s)
+        {
+            if (statusLbl == null) return;
+            bool on = Host.St.OverlayOn;
+            bool game = s != null && s.GamePid > 0;
+            string name = s == null ? "" : (s.GameTitle.Length > 0 ? s.GameTitle : s.GameName);
+            bool blocked = on && game && Monitor.IsExclusiveFullscreen();
+
+            string text;
+            Color color;
+            if (!on)
+            {
+                text = I18n.T("ov.status.off");
+                color = Theme.Faint;
+            }
+            else if (blocked)
+            {
+                text = I18n.T("ov.status.exclusive");
+                color = Theme.Warn;
+            }
+            else if (game)
+            {
+                text = I18n.T("ov.status.on", name.Length > 0 ? name : I18n.T("mon.game.generic"));
+                color = Theme.Accent;
+            }
+            else
+            {
+                text = I18n.T("ov.status.idle");
+                color = Theme.Sub;
+            }
+
+            if (text == lastStatusText && color == lastStatusColor) return;
+            lastStatusText = text;
+            lastStatusColor = color;
+            statusLbl.Text = text;
+            statusLbl.ForeColor = color;
+        }
+
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
@@ -1023,8 +1082,8 @@ namespace FrameForge.UI
             if (Width <= 0 || Height <= 0) return;
             int gap = Ui.Px(12);
             int itemH = Ui.Px(116);
-            // 说明卡只有三行字,留 146 就够;多出来的高度让给上面的设置卡和预览。
-            int hintH = Ui.Px(146);
+            // 说明卡多了一行常驻状态,高度从 146 抬到 166;多出来的高度让给上面的设置卡和预览。
+            int hintH = Ui.Px(166);
             int cardH = Height - itemH - hintH - gap * 2;
             if (cardH < Ui.Px(272))
             {
@@ -1083,8 +1142,18 @@ namespace FrameForge.UI
             lockToggle.SetBounds(right - toggleW, Ui.Px(216) + off4, toggleW, Ui.Px(24));
 
             hintTitle.SetBounds(pad, Ui.Px(12), Width - pad * 2, Ui.Px(20));
-            hotkey.SetBounds(pad, Ui.Px(46), Width - pad * 2, Ui.Px(40));
-            itemNote.SetBounds(pad, Ui.Px(92), Width - pad * 2, Math.Max(Ui.Px(30), hintH - Ui.Px(104)));
+            // 状态行在最上面,下面依次是快捷键与限制说明;窗口极矮时说明整行收起,避免文字互压。
+            int sy = Ui.Px(36);
+            int sh = Ui.Px(40);
+            statusLbl.SetBounds(pad, sy, Width - pad * 2, sh);
+            int hy = sy + sh + Ui.Px(4);
+            hotkey.SetBounds(pad, hy, Width - pad * 2, Ui.Px(34));
+            int ny = hy + Ui.Px(36);
+            int noteH = hintH - ny - Ui.Px(6);
+            // 页面还没显示时读 Visible 会沿父链得到 false,必须用局部变量判断,否则说明行永远排不上位置。
+            bool showNote = noteH >= Ui.Px(22);
+            itemNote.Visible = showNote;
+            if (showNote) itemNote.SetBounds(pad, ny, Width - pad * 2, noteH);
 
             itemTitle.SetBounds(pad, Ui.Px(12), Width - pad * 2, Ui.Px(20));
             int n = chips.Length;
@@ -1857,13 +1926,16 @@ namespace FrameForge.UI
         private readonly Chip[] chips = new Chip[Filter.PresetKeys.Length];
         private readonly FilterPreview preview;
         private readonly Slider sIntensity, sBright, sContrast, sSat, sWarm, sTint, sDark, sVibrance;
-        private readonly FlatButton resetBtn, iccBtn, iccClear;
-        private readonly TextLabel iccLabel;
+        private readonly FlatButton resetBtn, iccAdd, iccRename, iccRemove;
+        private readonly TextLabel iccEmpty;
+        private readonly TextLabel iccCount;
+        private readonly List<Chip> iccChips = new List<Chip>();
         private readonly ToolTip tips;
         private readonly Timer brightTimer;
         private int brightPending;
-        // 0 = 通用,1 = 热门游戏;只是分组显示,不写进设置。
+        // 0 = 通用,1 = 热门游戏,2 = ICC;只是分组显示,不写进设置。
         private int group;
+        private const int MaxIcc = 8;
 
         public FilterPage(MainForm host) : base(host)
         {
@@ -1904,12 +1976,15 @@ namespace FrameForge.UI
             // 预设分两组显示:通用调色和按游戏调的方案混在一行会看不清重点。
             group = Filter.IsGamePreset(host.St.FilterPreset) ? 1 : 0;
             presetGroup = new Segmented();
-            presetGroup.Items = new string[] { I18n.T("flt.group.general"), I18n.T("flt.group.game") };
+            presetGroup.Items = new string[]
+            {
+                I18n.T("flt.group.general"), I18n.T("flt.group.game"), I18n.T("flt.group.icc")
+            };
             presetGroup.SetSilent(group);
             presetGroup.Changed += delegate
             {
                 group = presetGroup.Selected;
-                LayoutChips();
+                LayoutCards();
             };
             presetCard.Controls.Add(presetGroup);
 
@@ -1936,23 +2011,42 @@ namespace FrameForge.UI
             resetBtn.Text = I18n.T("flt.reset");
             resetBtn.Click += delegate { ResetCustom(); };
 
-            // ICC 单独占一行:路径可能很长,和标题挤在一起会把"恢复默认"顶出去。
-            iccLabel = new TextLabel();
-            iccLabel.Size = 8.5f;
-            iccLabel.ForeColor = Theme.Sub;
-            iccLabel.Ellipsis = true;
+            // ICC 是预设的第三个分组:点「＋」从文件导入,导入后随时可以重命名或移除。
+            iccAdd = new FlatButton();
+            iccAdd.Primary = true;
+            iccAdd.FontPt = 11f;
+            iccAdd.Text = "+";
+            iccAdd.Click += delegate { BrowseIcc(); };
+            tips.SetToolTip(iccAdd, I18n.T("flt.icc.add"));
 
-            iccBtn = new FlatButton();
-            iccBtn.Primary = false;
-            iccBtn.FontPt = 8.5f;
-            iccBtn.Text = I18n.T("flt.icc.import");
-            iccBtn.Click += delegate { ImportIcc(); };
+            iccRename = new FlatButton();
+            iccRename.Primary = false;
+            iccRename.FontPt = 8.5f;
+            iccRename.Text = I18n.T("flt.icc.rename");
+            iccRename.Click += delegate { RenameIcc(Host.St.FilterIcc); };
 
-            iccClear = new FlatButton();
-            iccClear.Primary = false;
-            iccClear.FontPt = 8.5f;
-            iccClear.Text = I18n.T("flt.icc.clear");
-            iccClear.Click += delegate { ClearIcc(); };
+            iccRemove = new FlatButton();
+            iccRemove.Primary = false;
+            iccRemove.FontPt = 8.5f;
+            iccRemove.Text = I18n.T("flt.icc.remove");
+            iccRemove.Click += delegate { RemoveIcc(); };
+
+            iccEmpty = new TextLabel();
+            iccEmpty.Size = 8.5f;
+            iccEmpty.ForeColor = Theme.Faint;
+            iccEmpty.Align = ContentAlignment.MiddleCenter;
+            iccEmpty.Text = I18n.T("flt.icc.empty");
+
+            iccCount = new TextLabel();
+            iccCount.Size = 8.5f;
+            iccCount.ForeColor = Theme.Faint;
+            iccCount.Text = "";
+
+            presetCard.Controls.Add(iccAdd);
+            presetCard.Controls.Add(iccRename);
+            presetCard.Controls.Add(iccCount);
+            presetCard.Controls.Add(iccRemove);
+            presetCard.Controls.Add(iccEmpty);
 
             sIntensity = MakeSlider(I18n.T("flt.intensity"), 0, 100, "%", host.St.FilterIntensity);
 
@@ -1986,9 +2080,6 @@ namespace FrameForge.UI
 
             customCard.Controls.Add(customTitle);
             customCard.Controls.Add(resetBtn);
-            customCard.Controls.Add(iccLabel);
-            customCard.Controls.Add(iccBtn);
-            customCard.Controls.Add(iccClear);
             customCard.Controls.Add(sIntensity);
             customCard.Controls.Add(sBright);
             customCard.Controls.Add(sContrast);
@@ -2004,6 +2095,7 @@ namespace FrameForge.UI
 
             UpdateNote();
             UpdatePreview();
+            RebuildIccChips();
             UpdateIcc();
             LayoutCards();
         }
@@ -2072,6 +2164,19 @@ namespace FrameForge.UI
 
         private void PickPreset(int idx)
         {
+            // 只能有一个滤镜:选预设就等于放弃 ICC。
+            Host.St.FilterIcc = "";
+            SelectPreset(idx);
+            Host.St.Save();
+            Host.ApplyFilter();
+            UpdatePreview();
+            UpdateIcc();
+            UpdateNote();
+        }
+
+        /// <summary>把预设分组里的选中项切到 idx,ICC 被顶掉时也靠它把高亮挪回去。</summary>
+        private void SelectPreset(int idx)
+        {
             Host.St.FilterPreset = idx;
             for (int i = 0; i < chips.Length; i++)
             {
@@ -2080,9 +2185,6 @@ namespace FrameForge.UI
                 chips[i].Selected = on;
                 chips[i].Invalidate();
             }
-            Host.St.Save();
-            Host.ApplyFilter();
-            UpdatePreview();
         }
 
         private void CommitCustom()
@@ -2116,62 +2218,191 @@ namespace FrameForge.UI
             preview.SetMatrix(Filter.Current(Host.St));
         }
 
-        /// <summary>选一个 .icc/.icm,解析成功才写进设置;失败只提示,不动当前状态。</summary>
-        private void ImportIcc()
+        /// <summary>打开文件选择框,选中后走导入流程。</summary>
+        private void BrowseIcc()
         {
             using (var dlg = new OpenFileDialog())
             {
-                dlg.Title = I18n.T("flt.icc.import");
+                dlg.Title = I18n.T("flt.icc.upload");
                 dlg.Filter = I18n.T("flt.icc.filter");
                 dlg.CheckFileExists = true;
                 if (dlg.ShowDialog(Host) != DialogResult.OK) return;
-
-                string err;
-                float[] m = Icc.Load(dlg.FileName, out err);
-                if (m == null)
-                {
-                    Host.Toast(I18n.T("flt.icc.bad") + " " + err);
-                    return;
-                }
-                Host.St.FilterIcc = dlg.FileName;
-                Host.St.Save();
-                Host.ApplyFilter();
-                UpdatePreview();
-                UpdateIcc();
-                Host.Toast(I18n.T("flt.icc.ok", System.IO.Path.GetFileName(dlg.FileName)));
+                ImportIccPath(dlg.FileName);
             }
         }
 
-        private void ClearIcc()
+        /// <summary>
+        /// 导入一个 .icc/.icm:先解析,解析不过只提示不动当前状态;
+        /// 解析通过再让用户起名字,然后加入列表并立即生效。
+        /// </summary>
+        private void ImportIccPath(string path)
         {
-            if (string.IsNullOrEmpty(Host.St.FilterIcc)) return;
-            Host.St.FilterIcc = "";
+            string err;
+            if (Icc.Load(path, out err) == null)
+            {
+                // LUT 型配置文件单独给一句能照着办的提示,其余错误照旧带上技术原因。
+                Host.Toast(err == "lut profile" ? I18n.T("flt.icc.lut") : I18n.T("flt.icc.bad") + " " + err);
+                return;
+            }
+
+            string def = Settings.CleanIccName(System.IO.Path.GetFileNameWithoutExtension(path));
+            if (def.Length == 0) def = I18n.T("flt.icc.name.default");
+            string name;
+            if (!DialogBox.Prompt(Host, I18n.T("flt.icc.name.title"), I18n.T("flt.icc.name.body"), def, out name)) return;
+            name = Settings.CleanIccName(name);
+            if (name.Length == 0) name = def;
+
+            Settings.IccEntry hit = null;
+            for (int i = 0; i < Host.St.IccList.Count; i++)
+            {
+                if (!string.Equals(Host.St.IccList[i].Path, path, StringComparison.OrdinalIgnoreCase)) continue;
+                hit = Host.St.IccList[i];
+                break;
+            }
+            if (hit == null)
+            {
+                if (Host.St.IccList.Count >= MaxIcc)
+                {
+                    Host.Toast(I18n.T("flt.icc.full"));
+                    return;
+                }
+                hit = new Settings.IccEntry();
+                hit.Path = path;
+                Host.St.IccList.Add(hit);
+            }
+            hit.Name = name;
+            Host.St.FilterIcc = path;
+            // 导入即启用,预设让位:两者只能有一个生效。
+            SelectPreset(0);
+            Host.St.Save();
+            Host.ApplyFilter();
+            UpdatePreview();
+            RebuildIccChips();
+            LayoutCards();
+            UpdateIcc();
+            UpdateNote();
+            Host.Toast(I18n.T("flt.icc.ok", name));
+        }
+
+        /// <summary>点列表里的条目:点已选中的那个等于取消,回到纯 sRGB。</summary>
+        private void PickIcc(string path)
+        {
+            if (string.Equals(Host.St.FilterIcc, path, StringComparison.OrdinalIgnoreCase))
+            {
+                Host.St.FilterIcc = "";
+            }
+            else
+            {
+                Host.St.FilterIcc = path;
+                // 只能有一个滤镜:启用 ICC 时把预设切回「关闭」,高亮也跟着挪过去。
+                SelectPreset(0);
+            }
             Host.St.Save();
             Host.ApplyFilter();
             UpdatePreview();
             UpdateIcc();
+            UpdateNote();
+        }
+
+        private void RemoveIcc()
+        {
+            if (string.IsNullOrEmpty(Host.St.FilterIcc)) return;
+            for (int i = 0; i < Host.St.IccList.Count; i++)
+            {
+                if (!string.Equals(Host.St.IccList[i].Path, Host.St.FilterIcc, StringComparison.OrdinalIgnoreCase)) continue;
+                Host.St.IccList.RemoveAt(i);
+                break;
+            }
+            Host.St.FilterIcc = "";
+            Host.St.Save();
+            Host.ApplyFilter();
+            UpdatePreview();
+            RebuildIccChips();
+            LayoutCards();
+            UpdateIcc();
+            UpdateNote();
+        }
+
+        /// <summary>重命名已导入的 ICC:随时可以改,只动列表里的名字,不碰文件。</summary>
+        private void RenameIcc(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            Settings.IccEntry hit = null;
+            for (int i = 0; i < Host.St.IccList.Count; i++)
+            {
+                if (!string.Equals(Host.St.IccList[i].Path, path, StringComparison.OrdinalIgnoreCase)) continue;
+                hit = Host.St.IccList[i];
+                break;
+            }
+            if (hit == null) return;
+
+            string name;
+            if (!DialogBox.Prompt(Host, I18n.T("flt.icc.rename.title"), I18n.T("flt.icc.rename.body"), hit.Name, out name))
+                return;
+            name = Settings.CleanIccName(name);
+            if (name.Length == 0) name = I18n.T("flt.icc.name.default");
+            hit.Name = name;
+            Host.St.Save();
+            RebuildIccChips();
+            LayoutCards();
+            UpdateIcc();
+            Host.Toast(I18n.T("flt.icc.renamed", name));
+        }
+
+        /// <summary>列表里每个 profile 一个 chip,按导入顺序排。</summary>
+        private void RebuildIccChips()
+        {
+            for (int i = 0; i < iccChips.Count; i++)
+            {
+                presetCard.Controls.Remove(iccChips[i]);
+                iccChips[i].Dispose();
+            }
+            iccChips.Clear();
+
+            for (int i = 0; i < Host.St.IccList.Count; i++)
+            {
+                Settings.IccEntry e = Host.St.IccList[i];
+                var c = new Chip();
+                c.Text = e.Name;
+                c.FontPt = 9f;
+                c.Selected = string.Equals(e.Path, Host.St.FilterIcc, StringComparison.OrdinalIgnoreCase);
+                string path = e.Path;
+                c.Click += delegate { PickIcc(path); };
+                // 右键直接改名字,不用先选中;左键仍然是启用/停用。
+                c.MouseDown += delegate(object s2, MouseEventArgs me)
+                {
+                    if (me.Button == MouseButtons.Right) RenameIcc(path);
+                };
+                tips.SetToolTip(c, e.Path + "\n" + I18n.T("flt.icc.tip"));
+                presetCard.Controls.Add(c);
+                iccChips.Add(c);
+            }
         }
 
         private void UpdateIcc()
         {
-            string path = Host.St.FilterIcc;
-            if (string.IsNullOrEmpty(path))
+            for (int i = 0; i < iccChips.Count && i < Host.St.IccList.Count; i++)
             {
-                iccLabel.Text = I18n.T("flt.icc.none");
-                iccLabel.ForeColor = Theme.Faint;
-                iccClear.Visible = false;
-                return;
+                bool on = string.Equals(Host.St.IccList[i].Path, Host.St.FilterIcc, StringComparison.OrdinalIgnoreCase);
+                if (iccChips[i].Selected == on) continue;
+                iccChips[i].Selected = on;
+                iccChips[i].Invalidate();
             }
-            iccLabel.Text = I18n.T("flt.icc.loaded", System.IO.Path.GetFileName(path));
-            // 文件可能被删掉或换成了 LUT 型 profile,这时用警示色,别让用户以为还生效着。
-            iccLabel.ForeColor = Icc.For(path) != null ? Theme.Sub : Theme.Warn;
-            iccClear.Visible = true;
+            iccRemove.Enabled = !string.IsNullOrEmpty(Host.St.FilterIcc);
+            iccRename.Enabled = !string.IsNullOrEmpty(Host.St.FilterIcc);
+            iccCount.Text = I18n.T("flt.icc.count", iccChips.Count, MaxIcc);
+            iccCount.Visible = group == 2 && iccChips.Count > 0;
+            iccRename.Visible = group == 2 && iccChips.Count > 0;
+            iccRemove.Visible = group == 2 && iccChips.Count > 0;
+            iccEmpty.Visible = group == 2 && iccChips.Count == 0;
         }
 
         private void UpdateNote()
         {
             bool ok = Filter.Supported;
-            modeNote.Text = I18n.T(ok ? "flt.note" : "flt.unsupported");
+            bool icc = !string.IsNullOrEmpty(Host.St.FilterIcc);
+            // ICC 生效时预设不再参与计算,提示也跟着换成对应说明,免得用户以为调色是叠加的。
+            modeNote.Text = I18n.T(!ok ? "flt.unsupported" : icc ? "flt.icc.note" : "flt.note");
             modeNote.ForeColor = ok ? Theme.Faint : Theme.Warn;
         }
 
@@ -2181,11 +2412,26 @@ namespace FrameForge.UI
             LayoutCards();
         }
 
-        /// <summary>按当前分组铺预设按钮:通用 5 列、游戏 4 列,另一组直接隐藏。</summary>
+        /// <summary>按当前分组铺预设按钮:通用 5 列、游戏 4 列,ICC 换成拖放区,其余分组隐藏。</summary>
         private void LayoutChips()
         {
             if (Width <= 0) return;
             int pad = Ui.Px(18);
+            bool icc = group == 2;
+
+            iccAdd.Visible = icc;
+            iccCount.Visible = icc && iccChips.Count > 0;
+            iccRename.Visible = icc && iccChips.Count > 0;
+            iccRemove.Visible = icc && iccChips.Count > 0;
+            iccEmpty.Visible = icc && iccChips.Count == 0;
+            for (int i = 0; i < iccChips.Count; i++) iccChips[i].Visible = icc;
+            if (icc)
+            {
+                for (int i = 0; i < chips.Length; i++) chips[i].Visible = false;
+                LayoutIcc(pad);
+                return;
+            }
+
             int perRow = group == 1 ? 4 : 5;
             int cgap = Ui.Px(8);
             int cw = (Width - pad * 2 - cgap * (perRow - 1)) / perRow;
@@ -2204,16 +2450,87 @@ namespace FrameForge.UI
             }
         }
 
+        /// <summary>ICC 分组:右上角是「＋导入 / 重命名 / 移除」,下面是自己命名的条目。</summary>
+        private void LayoutIcc(int pad)
+        {
+            int total = Width - pad * 2;
+            int y = Ui.Px(46), bh = Ui.Px(28);
+            int gap = Ui.Px(8);
+
+            int addW = Ui.Px(34);
+            int renW = I18n.IsEn ? Ui.Px(84) : Ui.Px(68);
+            int remW = I18n.IsEn ? Ui.Px(66) : Ui.Px(56);
+            int right = pad + total;
+            iccAdd.SetBounds(right - addW, y, addW, bh);
+            if (iccChips.Count > 0)
+            {
+                right -= addW + gap;
+                iccRename.SetBounds(right - renW, y, renW, bh);
+                right -= renW + gap;
+                iccRemove.SetBounds(right - remW, y, remW, bh);
+                right -= remW + gap;
+            }
+
+            iccCount.Text = I18n.T("flt.icc.count", iccChips.Count, MaxIcc);
+            int textW = right - pad - Ui.Px(8);
+            if (textW < Ui.Px(40)) textW = Ui.Px(40);
+            iccCount.SetBounds(pad + Ui.Px(2), y + (bh - Ui.Px(20)) / 2, textW, Ui.Px(20));
+
+            int top = y + bh + Ui.Px(14);
+            FlowIcc(pad, top, total);
+            iccEmpty.SetBounds(pad, top, total, Ui.Px(20));
+        }
+
+        /// <summary>按文字宽度把条目排成胶囊流,一行放不下就换行;返回行数。</summary>
+        private int FlowIcc(int pad, int top, int total)
+        {
+            int gap = Ui.Px(8), ch = Ui.Px(30), x = 0, row = 0;
+            Font f = Theme.Regular(9f);
+            for (int i = 0; i < iccChips.Count; i++)
+            {
+                int cw = TextRenderer.MeasureText(iccChips[i].Text ?? "", f).Width + Ui.Px(28);
+                if (cw < Ui.Px(84)) cw = Ui.Px(84);
+                if (cw > total) cw = total;
+                if (x > 0 && x + cw > total) { x = 0; row++; }
+                iccChips[i].SetBounds(pad + x, top + row * (ch + gap), cw, ch);
+                x += cw + gap;
+            }
+            return iccChips.Count == 0 ? 0 : row + 1;
+        }
+
+        /// <summary>只算行数,给卡片高度用。</summary>
+        private int IccRows(int total)
+        {
+            int gap = Ui.Px(8), x = 0, row = 0;
+            Font f = Theme.Regular(9f);
+            for (int i = 0; i < iccChips.Count; i++)
+            {
+                int cw = TextRenderer.MeasureText(iccChips[i].Text ?? "", f).Width + Ui.Px(28);
+                if (cw < Ui.Px(84)) cw = Ui.Px(84);
+                if (cw > total) cw = total;
+                if (x > 0 && x + cw > total) { x = 0; row++; }
+                x += cw + gap;
+            }
+            return iccChips.Count == 0 ? 0 : row + 1;
+        }
+
         private void LayoutCards()
         {
             if (Width <= 0 || Height <= 0) return;
             int gap = Ui.Px(12);
             int modeH = Ui.Px(150);
+            // ICC 分组的胶囊按文字宽度换行,卡片高度跟着实际行数走,不留空白也不挤在一起。
             int presetH = Ui.Px(176);
-            int customH = Height - modeH - presetH - gap * 2;
-            if (customH < Ui.Px(250))
+            if (group == 2)
             {
-                customH = Ui.Px(250);
+                int iccRowCount = IccRows(Width - Ui.Px(18) * 2);
+                // 导入按钮那一行 46~74,条目从 88 开始;一行条目时 142 高,每多一行加 38。
+                presetH = Ui.Px(142 + (iccRowCount > 1 ? (iccRowCount - 1) * 38 : 0));
+            }
+            int customH = Height - modeH - presetH - gap * 2;
+            if (customH < Ui.Px(244))
+            {
+                customH = Ui.Px(244);
                 modeH = Math.Max(Ui.Px(132), Height - presetH - customH - gap * 2);
             }
 
@@ -2222,7 +2539,8 @@ namespace FrameForge.UI
             customCard.SetBounds(0, modeH + presetH + gap * 2, Width, customH);
 
             int pad = Ui.Px(18);
-            int segW = Ui.Px(330), segH = Ui.Px(32);
+            // 英文的 Popular games 比中文长,分组条按语言留宽度,否则最后一项会被截断。
+            int segW = I18n.IsEn ? Ui.Px(348) : Ui.Px(252), segH = Ui.Px(32);
             modeTitle.SetBounds(pad, Ui.Px(12), Width - pad * 2 - segW - Ui.Px(12), Ui.Px(24));
             mode.SetBounds(Width - pad - segW, Ui.Px(9), segW, segH);
 
@@ -2231,27 +2549,19 @@ namespace FrameForge.UI
             modeNote.SetBounds(pad, prevY + Ui.Px(54) + Ui.Px(8),
                 Width - pad * 2, Math.Max(Ui.Px(20), modeH - prevY - Ui.Px(70)));
 
-            presetTitle.SetBounds(pad, Ui.Px(12), Width - pad * 2 - Ui.Px(196), Ui.Px(20));
-            presetGroup.SetBounds(Width - pad - Ui.Px(180), Ui.Px(8), Ui.Px(180), Ui.Px(28));
+            presetTitle.SetBounds(pad, Ui.Px(12), Width - pad * 2 - segW - Ui.Px(16), Ui.Px(20));
+            presetGroup.SetBounds(Width - pad - segW, Ui.Px(8), segW, Ui.Px(28));
             LayoutChips();
 
             customTitle.SetBounds(pad, Ui.Px(12), Ui.Px(200), Ui.Px(20));
             int bw = Ui.Px(96), bh = Ui.Px(26);
             resetBtn.SetBounds(Width - pad - bw, Ui.Px(9), bw, bh);
 
-            // ICC 占标题下一行:左边是状态/文件名,右边是「清除」和「导入」。
-            int iy = Ui.Px(36), ih = Ui.Px(24), iw = Ui.Px(116), cw2 = Ui.Px(60), bgap = Ui.Px(8);
-            iccClear.SetBounds(Width - pad - cw2, iy, cw2, ih);
-            iccBtn.SetBounds(Width - pad - cw2 - bgap - iw, iy, iw, ih);
-            int lblW = Width - pad * 2 - iw - cw2 - bgap * 2;
-            if (lblW < Ui.Px(80)) lblW = Ui.Px(80);
-            iccLabel.SetBounds(pad, iy + Ui.Px(2), lblW, ih);
-
             Slider[] all = { sIntensity, sBright, sContrast, sWarm, sTint, sDark, sSat, sVibrance };
             int rows = (all.Length + 1) / 2;
             int colGap = Ui.Px(26);
             int colW = (Width - pad * 2 - colGap) / 2;
-            int sh = Ui.Px(42), sy = Ui.Px(70);
+            int sh = Ui.Px(42), sy = Ui.Px(40);
             // 间距按卡片剩余高度分摊,避免自定义卡底部留出大片空白。
             int sgap = (customH - sy - sh * rows - Ui.Px(12)) / (rows - 1);
             if (sgap > Ui.Px(22)) sgap = Ui.Px(22);

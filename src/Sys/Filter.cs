@@ -119,40 +119,18 @@ namespace FrameForge.Sys
         public static float[] Current(Settings st)
         {
             if (st == null) return Identity();
-            float[] m = Build(st.FilterPreset, st.FilterIntensity,
-                st.FilterContrast, st.FilterSaturation, st.FilterWarmth,
-                st.FilterDark, st.FilterVibrance, st.FilterTint);
-            // 导入的 ICC 是「把 sRGB 画面映射到这块屏」的校正,滤镜调色在前、ICC 在后,
-            // 顺序反了会把调色结果再按 sRGB 解释一遍,颜色会明显偏。
+            // ICC 与预设滤镜互斥:选了 ICC 就只用 ICC。
+            // 两者叠在一起时,ICC 是「把 sRGB 映射到这块屏」的校正,
+            // 前面的调色会把画面推到 sRGB 之外,再走 ICC 就会二次偏色,
+            // 而且用户要的是「一个滤镜」,不是两层调色。
             if (!string.IsNullOrEmpty(st.FilterIcc))
             {
                 float[] icc = Icc.For(st.FilterIcc);
-                if (icc != null) m = Chain(m, icc);
+                if (icc != null) return icc;
             }
-            return m;
-        }
-
-        /// <summary>先套 filter 再套 next,结果合成一个矩阵。</summary>
-        public static float[] Chain(float[] filter, float[] next)
-        {
-            if (filter == null) return next;
-            if (next == null) return filter;
-            var r = new float[25];
-            r[18] = 1;
-            r[24] = 1;
-            for (int row = 0; row < 3; row++)
-            {
-                for (int col = 0; col < 3; col++)
-                {
-                    double sum = 0;
-                    for (int k = 0; k < 3; k++) sum += next[row * 5 + k] * filter[k * 5 + col];
-                    r[row * 5 + col] = (float)sum;
-                }
-                double off = next[row * 5 + 4];
-                for (int k = 0; k < 3; k++) off += next[row * 5 + k] * filter[k * 5 + 4];
-                r[row * 5 + 4] = (float)off;
-            }
-            return r;
+            return Build(st.FilterPreset, st.FilterIntensity,
+                st.FilterContrast, st.FilterSaturation, st.FilterWarmth,
+                st.FilterDark, st.FilterVibrance, st.FilterTint);
         }
 
         /// <summary>把 5×5 矩阵推给系统;已是最新则什么都不做。</summary>

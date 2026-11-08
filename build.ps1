@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 if (-not $root) { $root = (Get-Location).Path }
 $csc  = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+
 $out  = Join-Path $root "FrameForge.exe"
 
 if (-not (Test-Path $csc)) { throw "csc.exe not found: $csc" }

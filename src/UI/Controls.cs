@@ -1044,6 +1044,17 @@ namespace FrameForge.UI
             return Show(owner, title, body, ok, cancel);
         }
 
+        /// <summary>带一个输入框的询问:确定时把去掉首尾空白的文本带出来。</summary>
+        public static bool Prompt(IWin32Window owner, string title, string body, string initial, out string text)
+        {
+            using (var f = new DialogForm(title, body, I18n.T("dialog.ok"), I18n.T("dialog.cancel"), initial))
+            {
+                bool ok = f.ShowDialog(owner) == DialogResult.OK;
+                text = ok ? f.Value : "";
+                return ok;
+            }
+        }
+
         private static bool Show(IWin32Window owner, string title, string body, string ok, string cancel)
         {
             using (var f = new DialogForm(title, body, ok, cancel))
@@ -1054,8 +1065,16 @@ namespace FrameForge.UI
         {
             private readonly string dTitle, dBody, dOk, dCancel;
             private FlatButton btnOk, btnCancel;
+            private TextBox edit;
 
-            public DialogForm(string title, string body, string ok, string cancel)
+            public string Value
+            {
+                get { return edit == null ? "" : edit.Text.Trim(); }
+            }
+
+            public DialogForm(string title, string body, string ok, string cancel) : this(title, body, ok, cancel, null) { }
+
+            public DialogForm(string title, string body, string ok, string cancel, string initial)
             {
                 dTitle = title; dBody = body; dOk = ok; dCancel = cancel;
                 FormBorderStyle = FormBorderStyle.None;
@@ -1064,8 +1083,20 @@ namespace FrameForge.UI
                 BackColor = Theme.Card;
                 DoubleBuffered = true;
                 float s = Ui.S;
-                ClientSize = new Size((int)(400 * s), (int)(190 * s));
+                ClientSize = new Size((int)(400 * s), (int)((initial != null ? 240 : 190) * s));
                 KeyPreview = true;
+
+                if (initial != null)
+                {
+                    edit = new TextBox();
+                    edit.BorderStyle = BorderStyle.FixedSingle;
+                    edit.BackColor = Theme.CardAlt;
+                    edit.ForeColor = Theme.Text;
+                    edit.Font = Theme.F(10f, FontStyle.Regular);
+                    edit.Text = initial;
+                    edit.MaxLength = 40;
+                    Controls.Add(edit);
+                }
 
                 if (cancel != null)
                 {
@@ -1088,6 +1119,11 @@ namespace FrameForge.UI
                 btnOk.SetBounds(ClientSize.Width - (int)(18 * s) - bw, bottom - bh, bw, bh);
                 if (btnCancel != null)
                     btnCancel.SetBounds(ClientSize.Width - (int)(18 * s) - bw * 2 - (int)(10 * s), bottom - bh, bw, bh);
+                if (edit != null)
+                {
+                    edit.SetBounds((int)(22 * s), (int)(100 * s), ClientSize.Width - (int)(44 * s), (int)(30 * s));
+                    edit.SelectAll();
+                }
 
                 MouseDown += OnDrag;
                 KeyDown += delegate (object o, KeyEventArgs k)
@@ -1095,6 +1131,13 @@ namespace FrameForge.UI
                     if (k.KeyCode == Keys.Escape && btnCancel != null) { DialogResult = DialogResult.Cancel; Close(); }
                     if (k.KeyCode == Keys.Enter) { DialogResult = DialogResult.OK; Close(); }
                 };
+            }
+
+            protected override void OnShown(EventArgs e)
+            {
+                base.OnShown(e);
+                // 输入框要在窗口显示后再抢焦点,构造函数里设置会被按钮抢走。
+                if (edit != null) { edit.Focus(); edit.SelectAll(); }
             }
 
             private void OnDrag(object sender, MouseEventArgs e)
@@ -1130,7 +1173,7 @@ namespace FrameForge.UI
                 TextRenderer.DrawText(g, dTitle, Theme.F(11.5f, FontStyle.Bold), titleRect, Theme.Text,
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
 
-                var bodyRect = new Rectangle((int)(22 * s), (int)(50 * s), Width - (int)(44 * s), (int)(78 * s));
+                var bodyRect = new Rectangle((int)(22 * s), (int)(50 * s), Width - (int)(44 * s), (int)(edit == null ? 78 : 44));
                 TextRenderer.DrawText(g, dBody, Theme.F(9.5f, FontStyle.Regular), bodyRect, Theme.Sub,
                     TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
             }
