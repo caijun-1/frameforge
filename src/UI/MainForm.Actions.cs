@@ -136,7 +136,10 @@ namespace FrameForge.UI
             else action();
         }
 
-        /// <summary>语言或主题变化后重建所有页面:页面缓存了本地化文案与配色,重建最省心。</summary>
+        /// <summary>
+        /// 语言或主题变化后刷新界面:页面缓存了本地化文案与配色,
+        /// 所以只重建当前可见页,其余页标记为待建,切过去时再建。
+        /// </summary>
         private void RebuildUiCore()
         {
             if (IsDisposed) return;
@@ -147,25 +150,19 @@ namespace FrameForge.UI
             ApplyWindowFrame();
 
             int idx = activePage;
-            if (pages != null)
+            // 只重建当前看得见的那一页:另外 5 页没人看,等真正切过去再建。
+            // 切语言/主题时因此不会整窗空白闪一下,也省掉一次 6 页全建的开销。
+            if (pages == null)
             {
-                for (int i = 0; i < pages.Length; i++)
-                {
-                    // 先隐藏再销毁:可见的子窗口被销毁时,系统会在它原来的位置留下一块
-                    // 没重绘的洞,叠在标题栏上就是半截图标或一条旧底色。
-                    pages[i].Visible = false;
-                    Controls.Remove(pages[i]);
-                    pages[i].Dispose();
-                }
-                pages = null;
+                BuildPages();
+                if (idx != 0) ShowPage(idx);
             }
-            boostPage = null;
-            setPage = null;
-            reportPage = null;
-            healthPage = null;
-
-            BuildPages();
-            ShowPage(idx);
+            else
+            {
+                MarkPagesDirtyExcept(idx);
+                RebuildPage(idx);
+                ShowPage(idx);
+            }
             LayoutAll();
 
             nav.Items = NavItems();

@@ -252,7 +252,7 @@ namespace FrameForge.Sys
                 var sb = new StringBuilder();
                 sb.AppendLine("# FrameForge 战绩记录,一行一局,可直接删除");
                 for (int i = 0; i < all.Count; i++) sb.AppendLine(all[i].Serialize());
-                File.WriteAllText(FilePath, sb.ToString(), new UTF8Encoding(false));
+                SafeFile.WriteAllText(FilePath, sb.ToString(), new UTF8Encoding(false));
             }
             catch (Exception ex) { Log.Write("sessions save: " + ex.Message); }
         }

@@ -43,6 +43,31 @@ namespace FrameForge
         }
     }
 
+    /// <summary>
+    /// 配置/数据文件的写入:先落临时文件再整体替换。
+    /// 直接 File.WriteAllText 写到一半被强杀,用户会得到一个截断的配置,
+    /// 保护名单、滤镜参数会一起回到默认;替换能保证旧文件始终完整。
+    /// </summary>
+    public static class SafeFile
+    {
+        public static void WriteAllText(string path, string text, Encoding enc)
+        {
+            string tmp = path + ".tmp";
+            File.WriteAllText(tmp, text, enc);
+            try
+            {
+                if (File.Exists(path)) File.Replace(tmp, path, null);
+                else File.Move(tmp, path);
+            }
+            catch (Exception)
+            {
+                // FAT/exFAT 上 File.Replace 不被支持,退回覆盖写;至少临时文件是完整的。
+                File.Copy(tmp, path, true);
+                try { File.Delete(tmp); } catch { }
+            }
+        }
+    }
+
     /// <summary>最小日志:%LOCALAPPDATA%\FrameForge\log.txt,超过 1 MB 轮转一份。</summary>
     public static class Log
     {

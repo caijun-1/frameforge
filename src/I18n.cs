@@ -394,6 +394,7 @@ namespace FrameForge
 
             {"err.download", "下载失败：{0}"},
             {"err.net", "下载源都连不上，请检查网络或代理后重试"},
+            {"err.sign", "下载的引擎未通过 Intel 数字签名校验，已拒绝安装"},
 
             {"report.title", "性能报告"},
             {"report.sub", "退出游戏后自动生成，只统计真正进入游戏后的数据。"},
@@ -866,6 +867,7 @@ namespace FrameForge
 
             {"err.download", "Download failed: {0}"},
             {"err.net", "No download source reachable — check your network or proxy and try again."},
+            {"err.sign", "The downloaded engine failed Intel signature verification and was rejected."},
 
             {"report.title", "Performance report"},
             {"report.sub", "Generated after each game; only in-game samples are counted."},

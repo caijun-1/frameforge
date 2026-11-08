@@ -823,6 +823,64 @@ namespace FrameForge.Sys
             return ok;
         }
 
+        /// <summary>
+        /// 自检用:只碰 HKCU 下自建的沙箱键,走一遍"记原值 → 改值 → 还原",
+        /// 确认注册表快照真的能把值拨回原样。不接触电源计划、计时器等真实系统设置。
+        /// </summary>
+        public static bool SelfTestRegistryRoundTrip()
+        {
+            const string key = @"Software\FrameForge\Selftest";
+            const string name = "probe";
+            // 不进 using:Dispose 会触发 Restore,这里只需要注册表这一小块逻辑。
+            var engine = new BoostEngine();
+            bool ok = true;
+            try
+            {
+                using (RegistryKey k = Registry.CurrentUser.CreateSubKey(key))
+                {
+                    if (k == null) return false;
+                    k.DeleteValue(name, false);
+                }
+
+                engine.SetDword(key, name, 7);                      // 原来不存在 → 还原时应该删掉
+                ok = ReadDword(key, name) == 7;
+                ok = engine.RestoreRegistry() && ok;
+                ok = ok && ReadDword(key, name) == -1;
+
+                using (RegistryKey k = Registry.CurrentUser.CreateSubKey(key))
+                {
+                    if (k == null) return false;
+                    k.SetValue(name, 5, RegistryValueKind.DWord);
+                }
+                engine.SetDword(key, name, 9);                  // 原来是 5 → 还原应回到 5
+                ok = ok && ReadDword(key, name) == 9;
+                ok = engine.RestoreRegistry() && ok;
+                ok = ok && ReadDword(key, name) == 5;
+            }
+            catch (Exception ex)
+            {
+                Log.Write("selftest registry round trip: " + ex.Message);
+                ok = false;
+            }
+            finally
+            {
+                try { engine.RestoreRegistry(); } catch { }
+                try { Registry.CurrentUser.DeleteSubKeyTree(key, false); } catch { }
+            }
+            return ok;
+        }
+
+        private static int ReadDword(string path, string name)
+        {
+            using (RegistryKey k = Registry.CurrentUser.OpenSubKey(path))
+            {
+                if (k == null) return -1;
+                object v = k.GetValue(name, null);
+                if (v == null) return -1;
+                return Convert.ToInt32(v, CultureInfo.InvariantCulture);
+            }
+        }
+
         // =================================================================
         //  电源计划
         // =================================================================

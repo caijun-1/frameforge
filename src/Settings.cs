@@ -201,7 +201,7 @@ namespace FrameForge
                 sb.AppendLine("checkUpdates=" + B(CheckUpdates));
                 sb.AppendLine("closeToTray=" + B(CloseToTray));
                 sb.AppendLine("askedElevation=" + B(AskedElevation));
-                File.WriteAllText(FilePath, sb.ToString(), new UTF8Encoding(false));
+                SafeFile.WriteAllText(FilePath, sb.ToString(), new UTF8Encoding(false));
             }
             catch (Exception ex) { Log.Write("settings save: " + ex.Message); }
         }

@@ -41,6 +41,7 @@ namespace FrameForge.UI
         private ToolTip tips;
 
         private Page[] pages;
+        private bool[] pageDirty;
         private int activePage;
         private BoostPage boostPage;
         private SettingsPage setPage;
@@ -211,20 +212,66 @@ namespace FrameForge.UI
 
         private void BuildPages()
         {
-            boostPage = new BoostPage(this);
-            reportPage = new ReportPage(this);
-            healthPage = new HealthPage(this);
-            setPage = new SettingsPage(this);
-            pages = new Page[]
+            // 先在局部数组里建完再整体发布:页面构造期间可能回调 Host.ApplyModeTheme,
+            // 那时 pages 里还是空位,提前发布会让它命中 null。
+            Page[] built = new Page[6];
+            for (int i = 0; i < built.Length; i++)
             {
-                boostPage, new FilterPage(this), new OverlayPage(this), reportPage, healthPage, setPage
-            };
-            for (int i = 0; i < pages.Length; i++)
-            {
-                pages[i].Visible = false;
-                Controls.Add(pages[i]);
+                built[i] = CreatePage(i);
+                built[i].Visible = false;
+                Controls.Add(built[i]);
             }
+            pageDirty = new bool[built.Length];
+            pages = built;
             ShowPage(0);
+        }
+
+        /// <summary>按导航序号新建页面,并同步对应的缓存字段。</summary>
+        private Page CreatePage(int i)
+        {
+            switch (i)
+            {
+                case 0: boostPage = new BoostPage(this); return boostPage;
+                case 1: return new FilterPage(this);
+                case 2: return new OverlayPage(this);
+                case 3: reportPage = new ReportPage(this); return reportPage;
+                case 4: healthPage = new HealthPage(this); return healthPage;
+                default: setPage = new SettingsPage(this); return setPage;
+            }
+        }
+
+        /// <summary>
+        /// 只重建一页:切语言/主题时用。旧页面先隐藏再销毁,避免在原位置留下
+        /// 没重绘的空洞;新页面建好后立刻摆位,免得出现一张 0x0 的白板。
+        /// </summary>
+        private void RebuildPage(int i)
+        {
+            if (pages == null || i < 0 || i >= pages.Length) return;
+            Page old = pages[i];
+            old.Visible = false;
+            Controls.Remove(old);
+            old.Dispose();
+            if (ReferenceEquals(boostPage, old)) boostPage = null;
+            if (ReferenceEquals(setPage, old)) setPage = null;
+            if (ReferenceEquals(reportPage, old)) reportPage = null;
+            if (ReferenceEquals(healthPage, old)) healthPage = null;
+            // 新页构造期间可能回调 Host.ApplyModeTheme 遍历 pages,不能让它碰到已销毁的旧页。
+            pages[i] = null;
+
+            Page p = CreatePage(i);
+            p.Visible = false;
+            Controls.Add(p);
+            pages[i] = p;
+            pageDirty[i] = false;
+            // 新页面拿到尺寸后才会在 OnResize 里摆好内部卡片;不摆位就是一张 0x0 的白板。
+            LayoutAll();
+        }
+
+        /// <summary>把除当前页以外的页面标记为待重建,真正切过去时再建。</summary>
+        private void MarkPagesDirtyExcept(int keep)
+        {
+            if (pageDirty == null) return;
+            for (int i = 0; i < pageDirty.Length; i++) pageDirty[i] = i != keep;
         }
 
         private void BuildToast()
@@ -412,10 +459,12 @@ namespace FrameForge.UI
             AutoTrim(s);
 
             // 帧率每秒在变,加速页(已合并监测)跟着 200ms 刷新;其它页面没有实时数据,1 秒一次就够,
-            // 免得整窗高频重绘白占 CPU。
+            // 免得整窗高频重绘白占 CPU。窗口收进托盘或最小化时没人看,直接跳过;
+            // 重新显示时会补刷一次,不会看到过期数据。
             DateTime now = DateTime.UtcNow;
             double gap = activePage == 0 ? 0.2 : 1.0;
-            if ((now - lastPageRefresh).TotalSeconds >= gap)
+            if (Visible && WindowState != FormWindowState.Minimized &&
+                (now - lastPageRefresh).TotalSeconds >= gap)
             {
                 lastPageRefresh = now;
                 RefreshActive();
@@ -424,7 +473,7 @@ namespace FrameForge.UI
 
         private void RefreshActive()
         {
-            if (pages == null || Mon == null) return;
+            if (pages == null || Mon == null || pages[activePage] == null) return;
             try { pages[activePage].Refresh(Mon.Current); }
             catch (Exception ex) { Log.Write("refresh: " + ex.Message); }
         }
@@ -433,8 +482,11 @@ namespace FrameForge.UI
         {
             if (pages == null) return;
             if (i < 0 || i >= pages.Length) i = 0;
+            // 切语言/主题时只重建了当前页,其余页在第一次切过去时补建,避免白建 5 页。
+            if (pageDirty != null && pageDirty[i]) RebuildPage(i);
             activePage = i;
-            for (int k = 0; k < pages.Length; k++) pages[k].Visible = k == i;
+            for (int k = 0; k < pages.Length; k++)
+                if (pages[k] != null) pages[k].Visible = k == i;
             if (toast != null) toast.BringToFront();
             if (nav.Selected != i) nav.SetSilent(i);
             RefreshActive();
@@ -462,7 +514,9 @@ namespace FrameForge.UI
             }
             if (pages != null)
             {
-                for (int i = 0; i < pages.Length; i++) pages[i].Invalidate(true);
+                // 页面重建时数组里会短暂留一个空位,跳过它。
+                for (int i = 0; i < pages.Length; i++)
+                    if (pages[i] != null) pages[i].Invalidate(true);
             }
             if (toast != null) toast.Invalidate();
             Invalidate(true);
@@ -500,7 +554,8 @@ namespace FrameForge.UI
             int top = th + Ui.Px(10);
             int pw = Width - pad * 2;
             int ph = Height - top - Ui.Px(16);
-            for (int i = 0; i < pages.Length; i++) pages[i].SetBounds(pad, top, pw, ph);
+            for (int i = 0; i < pages.Length; i++)
+                if (pages[i] != null) pages[i].SetBounds(pad, top, pw, ph);
 
             int tw = Math.Min(Ui.Px(420), Width - Ui.Px(80));
             toast.SetBounds((Width - tw) / 2, Height - Ui.Px(88), tw, Ui.Px(40));
@@ -639,6 +694,8 @@ namespace FrameForge.UI
             if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
             Activate();
             BringToFront();
+            // 隐藏期间跳过了页面刷新,这里补一次,免得恢复后先看到几秒前的旧数据。
+            RefreshActive();
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)

@@ -144,7 +144,7 @@ namespace FrameForge.Sys
                     sb.AppendLine("cores=" + p.Cores.ToString(CultureInfo.InvariantCulture));
                     sb.AppendLine("last=" + p.LastUsed.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
                 }
-                File.WriteAllText(FilePath, sb.ToString(), new UTF8Encoding(false));
+                SafeFile.WriteAllText(FilePath, sb.ToString(), new UTF8Encoding(false));
             }
             catch (Exception ex) { Log.Write("profiles save: " + ex.Message); }
         }

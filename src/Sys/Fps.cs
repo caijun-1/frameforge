@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Net;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 
 namespace FrameForge.Sys
@@ -115,6 +117,9 @@ namespace FrameForge.Sys
                         {
                             if (fs.ReadByte() != 'M' || fs.ReadByte() != 'Z') throw new Exception("downloaded file is not an exe");
                         }
+                        // 大小和 MZ 头只能挡网页;镜像站被劫持时能给出同样大小的恶意 exe,
+                        // 而它随后会以管理员身份启动,所以必须验 Intel 的代码签名。
+                        if (!SignedByIntel(temp)) throw new Exception(I18n.T("err.sign"));
                         if (File.Exists(target)) File.Delete(target);
                         File.Move(temp, target);
                         Log.Write("presentmon downloaded from " + (i + 1) + ". source, " + fi.Length + " bytes");
@@ -163,6 +168,106 @@ namespace FrameForge.Sys
                         try { progress((int)(got * 100 / total)); } catch { }
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// 判断文件是否是 Intel 签名的 exe:签名链完整可信,且签名方是 Intel。
+        /// 只做 SHA256 比对的话,上游重发同一版本就会误伤用户;验签没有这个问题。
+        /// </summary>
+        public static bool SignedByIntel(string path)
+        {
+            // 先只查本机缓存,避免离线/墙内环境下 WinVerifyTrust 卡在取根证书上;
+            // 缓存里没有中间证书时再允许联网补一次。
+            if (!VerifyTrust(path, true) && !VerifyTrust(path, false)) return false;
+            try
+            {
+                X509Certificate cert = X509Certificate.CreateFromSignedFile(path);
+                if (cert.Subject.IndexOf("Intel Corporation", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+                Log.Write("presentmon signed by unexpected publisher: " + cert.Subject);
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Log.Write("presentmon signature inspect: " + ex.Message);
+                return false;
+            }
+        }
+
+        private static readonly Guid VerifyAction = new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct WintrustFileInfo
+        {
+            public uint cbStruct;
+            public string pcwszFilePath;
+            public IntPtr hFile;
+            public IntPtr pgKnownSubject;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct WintrustData
+        {
+            public uint cbStruct;
+            public IntPtr pPolicyCallbackData;
+            public IntPtr pSIPClientData;
+            public uint dwUIChoice;
+            public uint fdwRevocationChecks;
+            public uint dwUnionChoice;
+            public IntPtr pFile;
+            public uint dwStateAction;
+            public IntPtr hWVTStateData;
+            public IntPtr pwszURLReference;
+            public uint dwProvFlags;
+            public uint dwUIContext;
+        }
+
+        [DllImport("wintrust.dll", CharSet = CharSet.Unicode, SetLastError = false)]
+        private static extern uint WinVerifyTrust(IntPtr hwnd,
+            [MarshalAs(UnmanagedType.LPStruct)] Guid actionId, IntPtr data);
+
+        private static bool VerifyTrust(string path, bool cacheOnly)
+        {
+            IntPtr filePtr = IntPtr.Zero;
+            IntPtr dataPtr = IntPtr.Zero;
+            try
+            {
+                var file = new WintrustFileInfo();
+                file.cbStruct = (uint)Marshal.SizeOf(typeof(WintrustFileInfo));
+                file.pcwszFilePath = path;
+                filePtr = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(WintrustFileInfo)));
+                Marshal.StructureToPtr(file, filePtr, false);
+
+                var data = new WintrustData();
+                data.cbStruct = (uint)Marshal.SizeOf(typeof(WintrustData));
+                data.dwUIChoice = 2;            // WTD_UI_NONE:不弹任何对话框
+                data.fdwRevocationChecks = 0;   // WTD_REVOKE_NONE:不查吊销,免得离线时失败
+                data.dwUnionChoice = 1;         // WTD_CHOICE_FILE
+                data.pFile = filePtr;
+                data.dwStateAction = 1;         // WTD_STATEACTION_VERIFY
+                data.dwProvFlags = cacheOnly ? 0x1000u : 0u; // WTD_CACHE_ONLY_URL_RETRIEVAL
+                dataPtr = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(WintrustData)));
+                Marshal.StructureToPtr(data, dataPtr, false);
+
+                uint result = WinVerifyTrust(IntPtr.Zero, VerifyAction, dataPtr);
+
+                // 验完必须 CLOSE 一次,否则 wintrust 的内部状态会一直挂着。
+                data = (WintrustData)Marshal.PtrToStructure(dataPtr, typeof(WintrustData));
+                data.dwStateAction = 2;         // WTD_STATEACTION_CLOSE
+                Marshal.StructureToPtr(data, dataPtr, false);
+                WinVerifyTrust(IntPtr.Zero, VerifyAction, dataPtr);
+
+                return result == 0;
+            }
+            catch (Exception ex)
+            {
+                Log.Write("presentmon verify trust: " + ex.Message);
+                return false;
+            }
+            finally
+            {
+                if (dataPtr != IntPtr.Zero) Marshal.FreeHGlobal(dataPtr);
+                if (filePtr != IntPtr.Zero) Marshal.FreeHGlobal(filePtr);
             }
         }
 

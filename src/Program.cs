@@ -245,11 +245,25 @@ namespace FrameForge
             }
             catch (Exception ex) { check("irq devices", false, ex.Message); }
 
+            // 8.1 注册表快照往返:加速改的每一项都要能原样拨回去
+            try
+            {
+                check("boost registry round trip", BoostEngine.SelfTestRegistryRoundTrip(), "HKCU sandbox key");
+            }
+            catch (Exception ex) { check("boost registry round trip", false, ex.Message); }
+
             // 9. 帧率组件
             try
             {
                 bool ok = FpsEngine.Installed;
                 check("presentmon", true, ok ? FpsEngine.ExePath : "not installed, download in Settings");
+                // 引擎是以管理员身份拉起来的,签名不对就不能放行;没装时没有可校验的对象。
+                if (!ok) skip("presentmon signature", "engine not installed");
+                else
+                {
+                    bool signed = FpsEngine.SignedByIntel(FpsEngine.ExePath);
+                    check("presentmon signature", signed, signed ? "intel code signing" : "untrusted or modified exe");
+                }
             }
             catch (Exception ex) { check("presentmon", false, ex.Message); }
 
