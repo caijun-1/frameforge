@@ -9,7 +9,7 @@ $packageArgs = @{
   packageName   = $env:ChocolateyPackageName
   fileFullPath  = Join-Path $toolsDir 'FrameForge.exe'
   url           = 'https://github.com/caijun-1/frameforge/releases/download/v1.3.9/FrameForge.exe'
-  checksum      = '5581218A9439005AEF6562648FF65BB081EB7009B6CAE4E3711CCB0FDCDCC807'
+  checksum      = '4B0E8466FAB43F66D81544FA2C3B6422A0F7572DB7A5D631EDA89F71034CE570'
   checksumType  = 'sha256'
 }
 
