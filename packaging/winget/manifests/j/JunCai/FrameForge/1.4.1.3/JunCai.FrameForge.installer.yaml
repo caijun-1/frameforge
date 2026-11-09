@@ -9,6 +9,6 @@ Commands:
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/caijun-1/frameforge/releases/download/v1.4.1.3/FrameForge.exe
-    InstallerSha256: 72D571D2301BD497D876DF961BF4ED47BF48EB43B2A619028E830F7E6D4100CB
+    InstallerSha256: 15BDA28BE3E2CDE43B8C79A50301F9CB9BB7EC46062496070D28827F5D26602B
 ManifestType: installer
 ManifestVersion: 1.6.0
