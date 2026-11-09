@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
   <img src="https://img.shields.io/badge/size-462%20KB-brightgreen" alt="size 462 KB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.4.1.1-orange" alt="1.4.1.1">
+  <img src="https://img.shields.io/badge/version-1.4.1.2-orange" alt="1.4.1.2">
 </p>
 
 <p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
@@ -261,6 +261,12 @@ frameforge/
 
 ## 更新日志
 
+### v1.4.1.2
+
+**修复**
+
+- 修复「检查更新」误报：四段版本号（如 1.4.1.1）之前被截成三段参与比较，已是最新也会一直提示发现新版本；现在保留修订号，正确判定。
+
 ### v1.4.1.1
 
 **新增**
@@ -321,6 +327,12 @@ frameforge/
 - Bilingual UI (Chinese / English), dark and light themes, tray mode, autostart, optional update check.
 
 ### Changelog
+
+#### v1.4.1.2
+
+**Fixed**
+
+- Fixed a false update prompt: four-part versions (e.g. 1.4.1.1) were truncated to three parts before comparison, so the app kept reporting a new release even when already up to date. The revision number is now preserved.
 
 #### v1.4.1.1
 

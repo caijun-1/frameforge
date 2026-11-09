@@ -31,7 +31,11 @@ namespace FrameForge.Sys
             get
             {
                 Version v = typeof(UpdateCheck).Assembly.GetName().Version;
-                return v.Major + "." + v.Minor + "." + v.Build;
+                string s = v.Major + "." + v.Minor + "." + v.Build;
+                // 四段版本(如 1.4.1.1)必须带上修订号,否则 1.4.1.1 会被当成 1.4.1,
+                // 导致已是最新也一直提示"发现新版本"。
+                if (v.Revision > 0) s += "." + v.Revision;
+                return s;
             }
         }
 
