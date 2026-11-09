@@ -5,15 +5,15 @@
 <p align="center"><b>轻量级 FPS 游戏增效工具 · A lightweight FPS toolkit for Windows</b><br>
 一键加速 + 实时帧率监测 + 游戏内叠加层 + 画面滤镜 + 赛后性能报告 + 系统优化</p>
 
-<p align="center">单文件 · 免安装 · 456 KB · 不注入游戏 · 不装驱动</p>
+<p align="center">单文件 · 免安装 · 462 KB · 不注入游戏 · 不装驱动</p>
 
 <p align="center">
   <img src="https://github.com/caijun-1/frameforge/actions/workflows/build.yml/badge.svg" alt="build">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue" alt="platform">
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
-  <img src="https://img.shields.io/badge/size-456%20KB-brightgreen" alt="size 456 KB">
+  <img src="https://img.shields.io/badge/size-462%20KB-brightgreen" alt="size 462 KB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.4.1-orange" alt="1.4.1">
+  <img src="https://img.shields.io/badge/version-1.4.1.1-orange" alt="1.4.1.1">
 </p>
 
 <p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
@@ -50,7 +50,7 @@
 | 游戏识别 | 进程名 → 真实游戏名三层识别（用户 `games.ini` → 内置 200+ 游戏库 → 安装目录 / 文件版本信息），Unreal 的 `*-Win64-Shipping` 这类通用进程名不会再把进程名当成游戏名（旧版本已归档的记录保持原样） |
 | 游戏检测 | 四层兜底不漏检：前台游戏窗口 → 后台铺满屏幕的游戏窗口 → 已知游戏进程扫描（窗口化 / 小窗口也算）→ 游戏平台安装目录（Steam / Epic / GOG / Xbox / WeGame 等）辅助识别；我的世界基岩版按进程、Java 版按窗口标题识别 |
 | 画面滤镜 | 15 组通用预设（含冷色、暖色、雾天增强、竞技、二次元等）+ 8 款游戏专用预设（三角洲行动、无畏契约、原神、Apex、CS2、PUBG、永劫无间、英雄联盟）+ 强度 / 对比度 / 暗部平衡 / 饱和度 / 数字振动 / 色温 六维微调，按住可随时对比原图；亮度滑块直接调显示器硬件背光 |
-| 游戏内叠加层 | 置顶半透明小窗，横向 / 纵向 / 简洁三种样式，8 种指标（FPS / 1% Low / CPU / GPU / 温度 / 内存 / 时钟 / 时长）可自选，可缩放、可锁定位置；跟随游戏所在显示器，并周期重申请置顶以对抗抢占置顶的游戏；检测到独占全屏时提示改用无边框窗口 |
+| 游戏内叠加层 | 置顶半透明小窗，横向 / 纵向 / 简洁三种样式，10 种指标（FPS / 1% Low / CPU / CPU 温度 / GPU / GPU 温度 / 内存 / 内存% / 时钟 / 时长）可自选；位置可选屏幕四角或自由拖动，可缩放、可锁定；跟随游戏所在显示器，并周期重申请置顶以对抗抢占置顶的游戏；检测到独占全屏时提示改用无边框窗口 |
 | 赛后报告 | 退出游戏自动弹出性能报告：平均 / 最高 / 最低帧率、1% Low、CPU / GPU / 温度 / 内存 / 显存 / 功耗，以及耗时电量与碳排估算 |
 | 战绩历史 | 每局自动归档（最多 300 条），可回看任意一局详情（含帧率折线图）、删除单局、清空或导出 CSV，名字与图标取自游戏本体 |
 | 系统优化 | 「优化」页逐项列出会影响帧率的设置（管理员权限、VBS、硬件加速 GPU 计划、窗口叠加 MPO、Game DVR、全屏优化、窗口化游戏优化、电源计划、MSI 中断、显卡与驱动），每项标明游戏时的推荐状态，开关 / 分段选择直接改；顶部「游戏优先」「日常均衡」一键套用，「游戏体检」可查看每一项的实际取值与改动记录 |
@@ -261,6 +261,21 @@ frameforge/
 
 ## 更新日志
 
+### v1.4.1.1
+
+**新增**
+
+- 叠加层位置可选**屏幕四角**：自动 / 左上 / 右上 / 左下 / 右下；选固定角后紧贴该角，手动拖动会切回「自动」，两种方式都能用。
+- 叠加层新增「**内存%**」显示项，和原有「内存」（已用容量）可分别开关。
+
+**改进**
+
+- 帧率数值改为 Afterburner / RTSS 风格的粉紫色，其他数值保持白色，右侧预览同步。
+- CPU 温度与 GPU 温度拆成两个显示项，分别开关；CPU 温度读 ACPI 热区，取不到时显示 `--`，不编数字。
+- 叠加层的时间精确到秒（`HH:mm:ss`）。
+- 独占全屏检测更稳：部分系统只上报「有全屏程序」时也能识别并给出提示，提示文案明确为「窗口全屏（无边框）」。
+- 优化页不再把「关闭全屏优化」标为推荐：关掉它会把游戏变成真独占全屏，叠加层反而无法覆盖。
+
 ### v1.4.1
 
 **新增**
@@ -291,7 +306,7 @@ frameforge/
 
 ## English
 
-**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay, desktop-wide screen filters, and an automatic post-game performance report. It ships as a single 456 KB executable with about 20 MB of resident memory, and it never injects into games or installs a driver.
+**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay, desktop-wide screen filters, and an automatic post-game performance report. It ships as a single 462 KB executable with about 20 MB of resident memory, and it never injects into games or installs a driver.
 
 ### Highlights
 
@@ -299,13 +314,28 @@ frameforge/
 - **Live monitoring** — a dashboard built into the Boost page: CPU/GPU rings, a five-axis radar (CPU / GPU / RAM / FPS / temperature), a RAM arc, and a GPU temperature / clock / power / VRAM strip.
 - **Real game names** — a three-layer lookup (user `games.ini` → built-in library of 200+ titles → install folder / file version info) turns `client-win64-shipping.exe` into the actual game title instead of showing a raw process name.
 - **Screen filters** — fifteen general presets plus eight tuned per-game looks (Delta Force, VALORANT, Genshin, Apex, CS2, PUBG, Naraka, League of Legends), with intensity, brightness, contrast, shadow lift, saturation, digital vibrance and warmth sliders, applied through the Windows Magnification color matrix (game-only or always). Hold the A/B button to compare against the original image. The brightness slider drives the monitor's hardware backlight (DDC/CI, or WMI on laptop panels), so it stays out of the color matrix and out of screenshots. You can also import an ICC profile (`.icc` / `.icm`) from its own **ICC** tab in the presets card — click **+** to import, name it while importing, click the entry to apply (click again to clear), and rename it any time via right-click or *Rename*. Both matrix profiles (`rXYZ`/`gXYZ`/`bXYZ` + TRC) and LUT profiles (`mAB `/`mBA ` — curves, 3×3 matrix and CLUT) are parsed; screen correction uses the B2A direction and is fitted to a 3×3 + offset on a 9×9×9 sRGB grid. ICC and preset filters are mutually exclusive: while an ICC profile is active it is the only filter applied, and presets plus the six manual sliders are left out of the math, so two color transforms never stack. Click any preset to switch back.
-- **In-game overlay** — top-most layered window with three layouts, eight selectable stats, scaling and position lock. It follows the monitor the game is on and re-asserts top-most every frame, so games that grab the top spot cannot bury it; if the game runs in exclusive fullscreen, the app tells you to switch to borderless instead of silently showing nothing.
+- **In-game overlay** — top-most layered window with three layouts, ten selectable stats (FPS, 1% low, CPU, CPU temp, GPU, GPU temp, RAM, RAM %, clock, session), screen-corner presets or free dragging, scaling and position lock. It follows the monitor the game is on and re-asserts top-most every frame, so games that grab the top spot cannot bury it; if the game runs in exclusive fullscreen, the app tells you to switch to borderless instead of silently showing nothing.
 - **Post-game report & records** — a report card pops up when a game exits with average/max/min FPS, 1% low, CPU/GPU/temperature/memory/VRAM/power, plus energy and CO₂ estimates. The Records page keeps the last 300 sessions with per-session detail (including an FPS chart), delete, clear, and CSV export.
 - **System check-up** — the Optimize page lists the settings that quietly cost frames (admin rights, VBS, hardware-accelerated GPU scheduling, MPO overlay, Game DVR, fullscreen optimization, windowed-game optimization, power plan, MSI interrupt affinity, GPU driver) with the recommended state for gaming, inline toggles, two one-click presets, and a “PC check-up” view that shows the actual value and change journal for every row.
 - **Compatibility first** — anti-cheat components (ACE, EAC, BattlEye, Vanguard…) are never suspended or memory-trimmed, and if a game rejects the priority change the app says so instead of claiming success. Anything on the protected list (OBS, Discord, recording tools…) is left alone too.
 - Bilingual UI (Chinese / English), dark and light themes, tray mode, autostart, optional update check.
 
 ### Changelog
+
+#### v1.4.1.1
+
+**New**
+
+- **Screen-corner overlay placement**: Auto / Top Left / Top Right / Bottom Left / Bottom Right. A fixed corner keeps the overlay pinned there, and dragging it manually switches back to Auto — both ways stay available.
+- New **RAM %** stat, switchable independently of the existing **RAM** (used capacity) stat.
+
+**Improved**
+
+- The FPS value now uses an Afterburner / RTSS-style pink, while other values stay white; the on-page preview matches.
+- CPU and GPU temperatures are now two separate stats with individual toggles. CPU temperature comes from the ACPI thermal zone and shows `--` when unavailable instead of inventing a number.
+- The overlay clock now shows seconds (`HH:mm:ss`).
+- More reliable exclusive-fullscreen detection: systems that only report “a fullscreen app is running” are now handled, and the hint explicitly says “borderless (windowed) fullscreen”.
+- The Optimize page no longer recommends turning fullscreen optimizations off: doing so turns the game into true exclusive fullscreen, where the overlay cannot draw on top.
 
 #### v1.4.1
 

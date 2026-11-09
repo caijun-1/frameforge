@@ -200,6 +200,8 @@ namespace FrameForge
         public const uint SWP_NOSIZE = 0x0001;
 
         // SHQueryUserNotificationState:系统知道当前是不是有 D3D 应用在独占全屏。
+        // 少数驱动/系统版本只报「有全屏程序在跑」(2),不报 3。
+        public const int QUNS_BUSY = 2;
         public const int QUNS_RUNNING_D3D_FULL_SCREEN = 3;
         public const uint SWP_NOMOVE = 0x0002;
         public const uint SWP_NOACTIVATE = 0x0010;

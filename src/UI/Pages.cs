@@ -797,14 +797,18 @@ namespace FrameForge.UI
     {
         private readonly Card ovCard, itemCard, hintCard, prevCard;
         private readonly TextLabel ovTitle, onTitle, onSub, lockTitle, lockSub, hotkey;
-        private readonly TextLabel styleTitle, itemTitle, itemNote, hintTitle, prevTitle, statusLbl;
+        private readonly TextLabel styleTitle, cornerTitle, itemTitle, itemNote, hintTitle, prevTitle, statusLbl;
         private readonly Toggle onToggle, lockToggle;
-        private readonly Segmented style;
+        private readonly Segmented style, corner;
         private readonly Slider scale;
         private readonly OverlayPreview preview;
-        private readonly Chip[] chips = new Chip[8];
+        private readonly Chip[] chips = new Chip[10];
 
-        private static readonly string[] ItemKeys = { "fps", "low", "cpu", "gpu", "temp", "ram", "clock", "session" };
+        private static readonly string[] ItemKeys =
+        {
+            "fps", "low", "cpu", "cputemp", "gpu", "gputemp", "ram", "rampct", "clock", "session"
+        };
+        private static readonly string[] CornerKeys = { "auto", "tl", "tr", "bl", "br" };
 
         public OverlayPage(MainForm host) : base(host)
         {
@@ -856,6 +860,27 @@ namespace FrameForge.UI
                 preview.Invalidate();
             };
 
+            cornerTitle = RowTitle(I18n.T("ov.corner"));
+            corner = new Segmented();
+            corner.Items = new string[]
+            {
+                I18n.T("ov.corner.auto"), I18n.T("ov.corner.tl"), I18n.T("ov.corner.tr"),
+                I18n.T("ov.corner.bl"), I18n.T("ov.corner.br")
+            };
+            corner.SetSilent(CornerIndex(host.St.OverlayCorner));
+            corner.Changed += delegate
+            {
+                string key = CornerKeys[corner.Selected];
+                if (Host.St.OverlayCorner == key) return;
+                Host.St.OverlayCorner = key;
+                // 固定角位时坐标不再使用;清掉旧的拖动坐标,回到"自动"时也会重新按样式摆位。
+                Host.St.OverlayX = -1;
+                Host.St.OverlayY = -1;
+                Host.St.Save();
+                if (Host.Ov != null) Host.Ov.ApplySettings();
+                preview.Invalidate();
+            };
+
             lockTitle = RowTitle(I18n.T("ov.lock"));
             lockSub = RowSub(I18n.T("ov.lock.sub"));
             lockToggle = new Toggle();
@@ -881,6 +906,8 @@ namespace FrameForge.UI
             ovCard.Controls.Add(styleTitle);
             ovCard.Controls.Add(style);
             ovCard.Controls.Add(scale);
+            ovCard.Controls.Add(cornerTitle);
+            ovCard.Controls.Add(corner);
             ovCard.Controls.Add(lockTitle);
             ovCard.Controls.Add(lockSub);
             ovCard.Controls.Add(lockToggle);
@@ -995,6 +1022,12 @@ namespace FrameForge.UI
             return "h";
         }
 
+        private static int CornerIndex(string s)
+        {
+            for (int i = 0; i < CornerKeys.Length; i++) if (CornerKeys[i] == s) return i;
+            return 0;
+        }
+
         private static bool ItemValue(Settings st, int i)
         {
             switch (i)
@@ -1002,10 +1035,12 @@ namespace FrameForge.UI
                 case 0: return st.ShowFps;
                 case 1: return st.ShowLow;
                 case 2: return st.ShowCpu;
-                case 3: return st.ShowGpu;
-                case 4: return st.ShowTemp;
-                case 5: return st.ShowRam;
-                case 6: return st.ShowClock;
+                case 3: return st.ShowCpuTemp;
+                case 4: return st.ShowGpu;
+                case 5: return st.ShowGpuTemp;
+                case 6: return st.ShowRam;
+                case 7: return st.ShowRamPct;
+                case 8: return st.ShowClock;
                 default: return st.ShowSession;
             }
         }
@@ -1017,16 +1052,32 @@ namespace FrameForge.UI
                 case 0: st.ShowFps = v; break;
                 case 1: st.ShowLow = v; break;
                 case 2: st.ShowCpu = v; break;
-                case 3: st.ShowGpu = v; break;
-                case 4: st.ShowTemp = v; break;
-                case 5: st.ShowRam = v; break;
-                case 6: st.ShowClock = v; break;
+                case 3: st.ShowCpuTemp = v; break;
+                case 4: st.ShowGpu = v; break;
+                case 5: st.ShowGpuTemp = v; break;
+                case 6: st.ShowRam = v; break;
+                case 7: st.ShowRamPct = v; break;
+                case 8: st.ShowClock = v; break;
                 default: st.ShowSession = v; break;
             }
         }
 
         private string lastStatusText = "";
         private Color lastStatusColor = Color.Empty;
+        // 这个游戏是否被关了「全屏优化」。每秒都去查进程路径 + 注册表没必要,
+        // 按 pid 缓存,换游戏了自然重查。
+        private int fsoPid = -1;
+        private bool fsoOff;
+
+        private bool FullscreenOptOff(int pid)
+        {
+            if (pid != fsoPid)
+            {
+                fsoPid = pid;
+                fsoOff = pid > 0 && Compat.FullscreenOptOff(Compat.GameExePath(pid));
+            }
+            return fsoOff;
+        }
 
         /// <summary>
         /// 常驻状态行:关闭 / 等待游戏 / 显示中 / 被独占全屏挡住。
@@ -1039,7 +1090,7 @@ namespace FrameForge.UI
             bool on = Host.St.OverlayOn;
             bool game = s != null && s.GamePid > 0;
             string name = s == null ? "" : (s.GameTitle.Length > 0 ? s.GameTitle : s.GameName);
-            bool blocked = on && game && Monitor.IsExclusiveFullscreen();
+            bool blocked = on && game && Monitor.IsExclusiveFullscreen(s.GamePid);
 
             string text;
             Color color;
@@ -1050,7 +1101,9 @@ namespace FrameForge.UI
             }
             else if (blocked)
             {
-                text = I18n.T("ov.status.exclusive");
+                // 关掉「全屏优化」会让游戏的全屏变成真独占全屏。这时光改游戏显示模式
+                // 不够,还要把优化开关恢复,所以分成两条提示,别让用户白改。
+                text = I18n.T(FullscreenOptOff(s.GamePid) ? "ov.status.exclusive.fse" : "ov.status.exclusive");
                 color = Theme.Warn;
             }
             else if (game)
@@ -1118,12 +1171,13 @@ namespace FrameForge.UI
 
             ovTitle.SetBounds(pad, Ui.Px(12), ovCard.Width - pad * 2, Ui.Px(20));
 
-            // 卡片多出来的高度均摊进三段行距:行与行自然拉开,
+            // 卡片多出来的高度均摊进四段行距:行与行自然拉开,
             // 而不是在标题下方留一块空、底部再留一块空。
-            int extra = Math.Max(0, cardH - Ui.Px(266));
-            int top = extra / 5;
-            int step = (extra - top) / 3;
-            int off1 = top, off2 = top + step, off3 = top + step * 2, off4 = top + step * 3;
+            int extra = Math.Max(0, cardH - Ui.Px(272));
+            int top = extra / 6;
+            int step = (extra - top) / 5;
+            int off1 = top, off2 = top + step, off3 = top + step * 2;
+            int off4 = top + step * 3, off5 = top + step * 4;
 
             int leftText = ovCard.Width - pad * 2 - toggleW - Ui.Px(12);
             onTitle.SetBounds(pad, Ui.Px(50) + off1, leftText, Ui.Px(20));
@@ -1132,14 +1186,17 @@ namespace FrameForge.UI
 
             int segW = Math.Min(Ui.Px(260), ovCard.Width - pad * 2 - Ui.Px(96));
             if (segW < Ui.Px(170)) segW = Ui.Px(170);
-            styleTitle.SetBounds(pad, Ui.Px(108) + off2, Ui.Px(90), Ui.Px(28));
-            style.SetBounds(right - segW, Ui.Px(104) + off2, segW, Ui.Px(32));
+            styleTitle.SetBounds(pad, Ui.Px(96) + off2, Ui.Px(90), Ui.Px(28));
+            style.SetBounds(right - segW, Ui.Px(92) + off2, segW, Ui.Px(32));
 
-            scale.SetBounds(pad, Ui.Px(152) + off3, ovCard.Width - pad * 2, Ui.Px(44));
+            scale.SetBounds(pad, Ui.Px(132) + off3, ovCard.Width - pad * 2, Ui.Px(44));
 
-            lockTitle.SetBounds(pad, Ui.Px(214) + off4, leftText, Ui.Px(20));
-            lockSub.SetBounds(pad, Ui.Px(234) + off4, leftText, Ui.Px(18));
-            lockToggle.SetBounds(right - toggleW, Ui.Px(216) + off4, toggleW, Ui.Px(24));
+            cornerTitle.SetBounds(pad, Ui.Px(184) + off4, Ui.Px(90), Ui.Px(28));
+            corner.SetBounds(right - segW, Ui.Px(180) + off4, segW, Ui.Px(32));
+
+            lockTitle.SetBounds(pad, Ui.Px(220) + off5, leftText, Ui.Px(20));
+            lockSub.SetBounds(pad, Ui.Px(240) + off5, leftText, Ui.Px(18));
+            lockToggle.SetBounds(right - toggleW, Ui.Px(222) + off5, toggleW, Ui.Px(24));
 
             hintTitle.SetBounds(pad, Ui.Px(12), Width - pad * 2, Ui.Px(20));
             // 状态行在最上面,下面依次是快捷键与限制说明;窗口极矮时说明整行收起,避免文字互压。
@@ -1157,7 +1214,7 @@ namespace FrameForge.UI
 
             itemTitle.SetBounds(pad, Ui.Px(12), Width - pad * 2, Ui.Px(20));
             int n = chips.Length;
-            int perRow = 4;
+            int perRow = 5;
             int rows = (n + perRow - 1) / perRow;
             int cw = (Width - pad * 2 - gap * (perRow - 1)) / perRow;
             int chipH = Ui.Px(30);
@@ -1178,8 +1235,18 @@ namespace FrameForge.UI
         {
             private readonly Settings st;
 
-            // 假数据:数值长度覆盖 2~5 个字符,用来检验换行/挤位问题。
-            private static readonly string[] Samples = { "144", "112", "38%", "76%", "64°", "9.8G", "21:40", "32:08" };
+            // 假数据:数值长度覆盖 2~8 个字符(含带秒的时间),用来检验换行/挤位问题。
+            private static readonly string[] Samples =
+            {
+                "144", "112", "38%", "58°", "76%", "64°", "9.8G", "62%", "21:40:36", "32:08"
+            };
+
+            // 和真实叠加层保持同一支粉色(小飞机风格的帧率配色)。
+            private static readonly Color FpsColor = Color.FromArgb(255, 255, 79, 216);
+
+            private bool CornerFixed { get { return st.OverlayCorner != null && st.OverlayCorner != "auto"; } }
+            private bool CornerLeft { get { return st.OverlayCorner == "tl" || st.OverlayCorner == "bl"; } }
+            private bool CornerBottom { get { return st.OverlayCorner == "bl" || st.OverlayCorner == "br"; } }
 
             public OverlayPreview(Settings s)
             {
@@ -1264,42 +1331,65 @@ namespace FrameForge.UI
 
                 if (st.OverlayStyle == "mini")
                 {
-                    // 简洁样式:屏幕顶部居中,只有帧率和温度。
+                    // 简洁样式:只有帧率和温度,位置跟着"位置"选项走。
+                    // 帧率粉色、温度白色,和真实叠层保持一致。
                     string s = "144 FPS";
-                    if (st.ShowTemp) s += "   64°";
+                    if (st.ShowGpuTemp) s += "   64°";
+                    if (st.ShowCpuTemp) s += "   58°";
+                    int cut = s.IndexOf("   ", StringComparison.Ordinal);
+                    string head = cut > 0 ? s.Substring(0, cut) : s;
+                    string tail = cut > 0 ? s.Substring(cut).Trim() : "";
                     Font f = Theme.Bold(14f * Scaled());
-                    Size sz = TextRenderer.MeasureText(g, s, f, Size.Empty, TextFormatFlags.NoPadding);
-                    ShadowText(g, s, f, vc, (Width - sz.Width) / 2f, Ui.Fp(14));
+                    Size hs = TextRenderer.MeasureText(g, head, f, Size.Empty, TextFormatFlags.NoPadding);
+                    Size ts = tail.Length > 0
+                        ? TextRenderer.MeasureText(g, tail, f, Size.Empty, TextFormatFlags.NoPadding) : Size.Empty;
+                    float gap = tail.Length > 0 ? Ui.Fp(10) : 0;
+                    float total = hs.Width + (tail.Length > 0 ? gap + ts.Width : 0);
+                    float mx = CornerFixed && !CornerLeft ? Width - total - Ui.Fp(16) : (Width - total) / 2f;
+                    float my = CornerFixed && CornerBottom ? Height - hs.Height - Ui.Fp(14) : Ui.Fp(14);
+                    if (mx < Ui.Fp(8)) mx = Ui.Fp(8);
+                    ShadowText(g, head, f, FpsColor, mx, my);
+                    if (tail.Length > 0) ShadowText(g, tail, f, vc, mx + hs.Width + gap, my);
                     return;
                 }
 
                 if (st.OverlayStyle == "v")
                 {
-                    // 竖向:两列贴左侧、纵向居中,列宽按最长标签收窄,和真实叠层的窄条一致。
+                    // 竖向:两列,列宽按最长标签收窄,和真实叠层的窄条一致。
                     float rowH = Ui.Fp(16) * Scaled();
-                    float x = Ui.Fp(16);
-                    float labelW = 0;
+                    float labelW = 0, maxVw = 0;
                     for (int i = 0; i < ItemKeys.Length; i++)
                     {
                         if (!ItemValue(st, i)) continue;
                         Size ls = TextRenderer.MeasureText(g, I18n.T("ov.item." + ItemKeys[i]), lf,
                             Size.Empty, TextFormatFlags.NoPadding);
                         if (ls.Width > labelW) labelW = ls.Width;
+                        Size vs = TextRenderer.MeasureText(g, Samples[i], vf,
+                            Size.Empty, TextFormatFlags.NoPadding);
+                        if (vs.Width > maxVw) maxVw = vs.Width;
                     }
-                    float valueX = x + labelW + Ui.Fp(12);
-                    float y = (Height - n * rowH) / 2f;
+                    float blockW = labelW + Ui.Fp(12) + maxVw;
+                    float bx = CornerFixed && !CornerLeft ? Width - Ui.Fp(16) - blockW : Ui.Fp(16);
+                    if (bx < Ui.Fp(8)) bx = Ui.Fp(8);
+                    float total = n * rowH;
+                    float y0;
+                    if (!CornerFixed) y0 = (Height - total) / 2f;
+                    else if (CornerBottom) y0 = Height - Ui.Fp(14) - total;
+                    else y0 = Ui.Fp(14);
+                    float y = y0;
                     for (int i = 0; i < ItemKeys.Length; i++)
                     {
                         if (!ItemValue(st, i)) continue;
-                        ShadowText(g, I18n.T("ov.item." + ItemKeys[i]), lf, lc, x, y + Ui.Fp(2));
-                        ShadowText(g, Samples[i], vf, vc, valueX, y);
+                        ShadowText(g, I18n.T("ov.item." + ItemKeys[i]), lf, lc, bx, y + Ui.Fp(2));
+                        Size vs = TextRenderer.MeasureText(g, Samples[i], vf, Size.Empty, TextFormatFlags.NoPadding);
+                        Color c = (i == 0 && st.ShowFps) ? FpsColor : vc;
+                        ShadowText(g, Samples[i], vf, c, bx + blockW - vs.Width, y);
                         y += rowH;
                     }
                     return;
                 }
 
-                // 横向:一行"标签 + 数值",水平居中、贴近顶部。
-                // 显示项多时按可用宽度折行,否则整行会撑出卡片、两端都被裁掉。
+                // 横向:一行"标签 + 数值",显示项多时按可用宽度折行,否则整行会撑出卡片。
                 float gap1 = Ui.Fp(4) * Scaled(), gap2 = Ui.Fp(14) * Scaled();
                 float[] lw = new float[ItemKeys.Length];
                 float[] iw = new float[ItemKeys.Length];
@@ -1316,7 +1406,11 @@ namespace FrameForge.UI
                 }
                 float avail = Width - Ui.Fp(12) * 2f;
                 float lineH = Ui.Fp(19) * Scaled();
-                int start = 0, row = 0;
+                // 先折行、算出每行宽度,才知道"贴底"时整块要从哪里开始画。
+                var lineStart = new List<int>();
+                var lineEnd = new List<int>();
+                var lineWidths = new List<float>();
+                int start = 0;
                 while (start < nv)
                 {
                     int end = start;
@@ -1328,18 +1422,30 @@ namespace FrameForge.UI
                         lineW = cand;
                         end++;
                     }
-                    float hx = (Width - lineW) / 2f;
+                    lineStart.Add(start);
+                    lineEnd.Add(end);
+                    lineWidths.Add(lineW);
+                    start = end;
+                }
+                float baseY = CornerFixed && CornerBottom
+                    ? Height - Ui.Fp(14) - lineWidths.Count * lineH
+                    : Ui.Fp(14);
+                for (int ln = 0; ln < lineWidths.Count; ln++)
+                {
+                    float hx;
+                    if (!CornerFixed) hx = (Width - lineWidths[ln]) / 2f;
+                    else if (CornerLeft) hx = Ui.Fp(14);
+                    else hx = Width - Ui.Fp(14) - lineWidths[ln];
                     if (hx < Ui.Fp(8)) hx = Ui.Fp(8);
-                    float hy = Ui.Fp(14) + row * lineH;
-                    for (int k = start; k < end; k++)
+                    float hy = baseY + ln * lineH;
+                    for (int k = lineStart[ln]; k < lineEnd[ln]; k++)
                     {
                         int i = vis[k];
                         ShadowText(g, I18n.T("ov.item." + ItemKeys[i]), lf, lc, hx, hy + Ui.Fp(3));
-                        ShadowText(g, Samples[i], vf, vc, hx + lw[i] + gap1, hy);
+                        Color c = (i == 0 && st.ShowFps) ? FpsColor : vc;
+                        ShadowText(g, Samples[i], vf, c, hx + lw[i] + gap1, hy);
                         hx += iw[i] + gap2;
                     }
-                    start = end;
-                    row++;
                 }
             }
 

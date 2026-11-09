@@ -193,7 +193,9 @@ namespace FrameForge.Sys
             var it = new HealthItem();
             it.Key = "health.fse";
             it.Id = "fse";
-            it.Rec = I18n.T("health.rec.off");
+            // 关掉全屏优化会把游戏的全屏变成真独占全屏,叠加层就再也盖不上去,
+            // 所以这里不能再标成「推荐关闭」,要把代价写在推荐位之前。
+            it.Rec = I18n.T("health.rec.fse");
 
             string exe = "";
             if (s != null && s.GamePid > 0) exe = Compat.GameExePath(s.GamePid);
@@ -209,7 +211,7 @@ namespace FrameForge.Sys
             it.Path = exe;
             it.CanToggle = true;
             it.On = !off;   // 开关表示「全屏优化」本身是否开启
-            it.Level = off ? HealthLevel.Ok : HealthLevel.Info;
+            it.Level = HealthLevel.Info;
             it.Value = I18n.T(off ? "health.val.off" : "health.val.on");
             it.Note = I18n.T(off ? "health.fse.off" : "health.fse.on");
             return it;

@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Globalization;
+using System.Management;
 using System.Net.NetworkInformation;
 using System.Text;
 using System.Threading;
@@ -13,6 +15,7 @@ namespace FrameForge.Sys
     public class SysSample
     {
         public double Cpu = -1;
+        public double CpuTemp = -1;   // 主板 ACPI 热区温度(WMI),取不到保持 -1
         public double Gpu = -1;
         public double GpuTemp = -1;
         public double GpuClock = -1;
@@ -63,6 +66,12 @@ namespace FrameForge.Sys
         private int lastLoggedPid = -2;
         private int lastLoggedGamePid = -2;
         private DateTime lastScan = DateTime.MinValue;
+
+        // CPU 温度只能走 WMI(ACPI 热区),一次查询要几十毫秒,没必要每秒都查。
+        // 3 秒缓存一次,查不到就一直是 -1,界面显示 -- 而不是编一个数字。
+        private ManagementObjectSearcher thermal;
+        private double lastCpuTemp = -1;
+        private DateTime lastCpuTempAt = DateTime.MinValue;
 
         public volatile SysSample Current = new SysSample();
         public event Action<SysSample> Updated;
@@ -133,6 +142,9 @@ namespace FrameForge.Sys
                 if (v >= 0) s.Cpu = Clamp(v, 0, 100);
             }
             if (s.Cpu < 0) s.Cpu = CpuByTimes();
+
+            // ---- CPU 温度 ----
+            s.CpuTemp = ReadCpuTemp();
 
             // ---- GPU ----
             GpuSample g = nvml.Read();
@@ -350,19 +362,62 @@ namespace FrameForge.Sys
             return found > 0;
         }
 
+        private static int lastQuns = -1;
+
         /// <summary>
         /// 当前是否有 D3D 应用处于独占全屏。独占全屏的交换链不经过 DWM,
         /// 任何分层置顶窗口都会被挡在游戏后面——这不是叠加层坏了,是系统限制。
         /// </summary>
-        public static bool IsExclusiveFullscreen()
+        public static bool IsExclusiveFullscreen(int gamePid)
         {
             try
             {
                 int state;
                 if (Native.SHQueryUserNotificationState(out state) != 0) return false;
-                return state == Native.QUNS_RUNNING_D3D_FULL_SCREEN;
+                // 只在状态变化时记一行:下次再遇到「全屏不显示」能直接看到系统给的判定值,
+                // 不用猜是检测漏了还是叠加层真被独占全屏挡住。
+                if (state != lastQuns)
+                {
+                    lastQuns = state;
+                    Log.Write("quns state=" + state + " game pid=" + gamePid);
+                }
+                if (state == Native.QUNS_RUNNING_D3D_FULL_SCREEN) return true;
+                // 有些驱动/系统版本不返回 3,只报「有全屏程序在跑」。单看 2 会把
+                // 演示模式也算进来,所以再用这个游戏自己的窗口铺满显示器确认一次。
+                if (state == Native.QUNS_BUSY) return gamePid > 0 && CoversMonitor(gamePid);
+                return false;
             }
             catch { return false; }
+        }
+
+        /// <summary>该进程有没有一个正好铺满显示器的可见窗口(无边框和独占全屏都满足)。</summary>
+        private static bool CoversMonitor(int pid)
+        {
+            bool cover = false;
+            try
+            {
+                Native.EnumWindows(delegate(IntPtr h, IntPtr l)
+                {
+                    int p;
+                    Native.GetWindowThreadProcessId(h, out p);
+                    if (p != pid) return true;
+                    if (!Native.IsWindowVisible(h)) return true;
+                    if (Native.IsIconic(h)) return true;
+
+                    int cloaked;
+                    if (Native.DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0) return true;
+
+                    Native.RECT r;
+                    if (!Native.GetWindowRect(h, out r)) return true;
+                    Rectangle b = Screen.FromHandle(h).Bounds;
+                    if (r.Left <= b.Left + 1 && r.Top <= b.Top + 1
+                        && r.Right >= b.Right - 1 && r.Bottom >= b.Bottom - 1)
+                        cover = true;
+                    return !cover;
+                }, IntPtr.Zero);
+            }
+            catch { }
+            return cover;
         }
 
         /// <summary>
@@ -645,6 +700,47 @@ namespace FrameForge.Sys
             catch { return false; }
         }
 
+        /// <summary>
+        /// CPU 温度:WMI 的 MSAcpi_ThermalZoneTemperature 以"开尔文×10"返回。
+        /// 优先取名里带 CPU/Processor 的热区,没有就取其他热区里最高的一个。
+        /// 主板不暴露 ACPI 热区(部分台式机/虚拟机)就返回 -1,界面显示 --。
+        /// </summary>
+        private double ReadCpuTemp()
+        {
+            if (lastCpuTempAt != DateTime.MinValue && (DateTime.Now - lastCpuTempAt).TotalSeconds < 3)
+                return lastCpuTemp;
+            lastCpuTempAt = DateTime.Now;
+            try
+            {
+                if (thermal == null)
+                    thermal = new ManagementObjectSearcher("root\\WMI",
+                        "SELECT CurrentTemperature, InstanceName FROM MSAcpi_ThermalZoneTemperature");
+
+                double best = -1, other = -1;
+                foreach (ManagementBaseObject o in thermal.Get())
+                {
+                    try
+                    {
+                        object raw = o["CurrentTemperature"];
+                        if (raw == null) continue;
+                        double c = Convert.ToDouble(raw, CultureInfo.InvariantCulture) / 10.0 - 273.15;
+                        if (c <= 0 || c >= 150) continue;
+                        string name = o["InstanceName"] as string;
+                        name = name == null ? "" : name.ToLowerInvariant();
+                        if (name.IndexOf("cpu") >= 0 || name.IndexOf("proc") >= 0)
+                        {
+                            if (c > best) best = c;
+                        }
+                        else if (c > other) other = c;
+                    }
+                    finally { o.Dispose(); }
+                }
+                lastCpuTemp = best >= 0 ? best : other;
+            }
+            catch { lastCpuTemp = -1; }
+            return lastCpuTemp;
+        }
+
         private static double Clamp(double v, double lo, double hi)
         {
             if (v < lo) return lo;
@@ -659,6 +755,7 @@ namespace FrameForge.Sys
             cpuUtility.Dispose();
             gpuEngine.Dispose();
             nvml.Dispose();
+            try { if (thermal != null) thermal.Dispose(); } catch { }
         }
     }
 }

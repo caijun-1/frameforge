@@ -441,7 +441,7 @@ namespace FrameForge.UI
             // 检测到就提示一次(每局一次),把"看不到数据"变成可操作的提示,
             // 而不是让用户以为叠加层坏了。
             if (s.Fullscreen && St.OverlayOn && s.GamePid > 0 && exclusiveWarnPid != s.GamePid
-                && Monitor.IsExclusiveFullscreen())
+                && Monitor.IsExclusiveFullscreen(s.GamePid))
             {
                 exclusiveWarnPid = s.GamePid;
                 Toast(I18n.T("toast.overlay.exclusive"));

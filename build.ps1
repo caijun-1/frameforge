@@ -17,13 +17,17 @@ if (-not (Test-Path $csc)) { throw "csc.exe not found: $csc" }
 # 不一致就在这里失败,而不是等打完 tag 才发现界面还写着旧版本。
 $verFile = Join-Path $root "src\Version.cs"
 $verMatch = [regex]::Match((Get-Content $verFile -Raw -Encoding UTF8),
-    'AssemblyInformationalVersion\("([0-9]+\.[0-9]+\.[0-9]+)"\)')
+    'AssemblyInformationalVersion\("([0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?)"\)')
 if (-not $verMatch.Success) { throw "cannot read AssemblyInformationalVersion from src/Version.cs" }
 $ver = $verMatch.Groups[1].Value
 
+# manifest 里的版本号固定四段:三段版本补一个 .0,四段版本原样比。
+$asmVer = $ver
+if (($ver -split '\.').Count -eq 3) { $asmVer = $ver + ".0" }
+
 $manifest = Get-Content (Join-Path $root "app.manifest") -Raw -Encoding UTF8
-if ($manifest -notmatch ('version="' + [regex]::Escape($ver) + '\.0"')) {
-    throw "app.manifest version mismatch: expected $ver.0"
+if ($manifest -notmatch ('version="' + [regex]::Escape($asmVer) + '"')) {
+    throw "app.manifest version mismatch: expected $asmVer"
 }
 
 $i18n = Get-Content (Join-Path $root "src\I18n.cs") -Raw -Encoding UTF8

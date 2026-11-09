@@ -21,6 +21,8 @@ namespace FrameForge
         // 叠加层
         public bool OverlayOn = false;
         public string OverlayStyle = "h";     // h | v | mini
+        // auto = 按样式默认摆位(可拖动)| tl/tr/bl/br = 固定在屏幕四角
+        public string OverlayCorner = "auto";
         public int OverlayX = -1;             // -1 = 自动放右上角
         public int OverlayY = -1;
         public double OverlayScale = 1.0;
@@ -28,8 +30,10 @@ namespace FrameForge
         public bool ShowFps = true;
         public bool ShowCpu = false;
         public bool ShowGpu = true;
-        public bool ShowTemp = true;
+        public bool ShowCpuTemp = true;       // CPU 温度(WMI,取不到显示 --)
+        public bool ShowGpuTemp = true;       // GPU 温度(NVML)
         public bool ShowRam = false;
+        public bool ShowRamPct = false;       // 内存占用百分比
         public bool ShowLow = false;          // 1% Low
         public bool ShowClock = false;        // 帧时间 / 当前时间由 OverlayStyle 决定
         public bool ShowSession = false;      // 已游戏时长
@@ -142,6 +146,7 @@ namespace FrameForge
                 case "dark": Dark = Bool(v, true); break;
                 case "overlayon": OverlayOn = Bool(v, false); break;
                 case "overlaystyle": OverlayStyle = v; break;
+                case "overlaycorner": OverlayCorner = CornerKey(v); break;
                 case "overlayx": OverlayX = Int(v, -1); break;
                 case "overlayy": OverlayY = Int(v, -1); break;
                 case "overlayscale": OverlayScale = Dbl(v, 1.0); break;
@@ -149,8 +154,15 @@ namespace FrameForge
                 case "showfps": ShowFps = Bool(v, true); break;
                 case "showcpu": ShowCpu = Bool(v, false); break;
                 case "showgpu": ShowGpu = Bool(v, true); break;
-                case "showtemp": ShowTemp = Bool(v, true); break;
+                case "showtemp":
+                    // 旧版本只有一个"温度"项,按 GPU 温度处理;两个都置为同值,升级后不会突然少一项。
+                    bool t = Bool(v, true);
+                    ShowCpuTemp = t; ShowGpuTemp = t;
+                    break;
+                case "showcputemp": ShowCpuTemp = Bool(v, true); break;
+                case "showgputemp": ShowGpuTemp = Bool(v, true); break;
                 case "showram": ShowRam = Bool(v, false); break;
+                case "showrampct": ShowRamPct = Bool(v, false); break;
                 case "showlow": ShowLow = Bool(v, false); break;
                 case "showclock": ShowClock = Bool(v, false); break;
                 case "showsession": ShowSession = Bool(v, false); break;
@@ -200,6 +212,7 @@ namespace FrameForge
                 sb.AppendLine("dark=" + B(Dark));
                 sb.AppendLine("overlayOn=" + B(OverlayOn));
                 sb.AppendLine("overlayStyle=" + OverlayStyle);
+                sb.AppendLine("overlayCorner=" + OverlayCorner);
                 sb.AppendLine("overlayX=" + OverlayX.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("overlayY=" + OverlayY.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("overlayScale=" + OverlayScale.ToString("0.##", CultureInfo.InvariantCulture));
@@ -207,8 +220,10 @@ namespace FrameForge
                 sb.AppendLine("showFps=" + B(ShowFps));
                 sb.AppendLine("showCpu=" + B(ShowCpu));
                 sb.AppendLine("showGpu=" + B(ShowGpu));
-                sb.AppendLine("showTemp=" + B(ShowTemp));
+                sb.AppendLine("showCpuTemp=" + B(ShowCpuTemp));
+                sb.AppendLine("showGpuTemp=" + B(ShowGpuTemp));
                 sb.AppendLine("showRam=" + B(ShowRam));
+                sb.AppendLine("showRamPct=" + B(ShowRamPct));
                 sb.AppendLine("showLow=" + B(ShowLow));
                 sb.AppendLine("showClock=" + B(ShowClock));
                 sb.AppendLine("showSession=" + B(ShowSession));
@@ -269,6 +284,13 @@ namespace FrameForge
         {
             if (v == "beast" || v == "custom") return v;
             return "balanced";
+        }
+
+        /// <summary>叠加层位置键:auto 或屏幕四角,未知值一律回到 auto。</summary>
+        public static string CornerKey(string v)
+        {
+            if (v == "tl" || v == "tr" || v == "bl" || v == "br") return v;
+            return "auto";
         }
 
         /// <summary>套用模式预设:均衡只开可回滚的安全项,野兽全开,自定义保留用户勾选。</summary>

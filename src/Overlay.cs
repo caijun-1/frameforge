@@ -38,6 +38,9 @@ namespace FrameForge
         // 排版用的是"无额外内边距"的格式,测出来多宽就画多宽,右对齐不会漂。
         private static readonly StringFormat Typo = NewTypo();
 
+        // 帧率数值用"小飞机"(MSI Afterburner / RTSS)那套粉色,一眼就能和别的数值分开。
+        private static readonly Color FpsColor = Color.FromArgb(255, 255, 79, 216);
+
         private IntPtr memDc = IntPtr.Zero;
         private IntPtr dib = IntPtr.Zero;
         private IntPtr dibBits = IntPtr.Zero;
@@ -115,13 +118,24 @@ namespace FrameForge
         }
 
         /// <summary>
-        /// 默认摆位:横向居中、竖向靠左(纵向居中)、简洁居中。
+        /// 摆位:选了屏幕四角就固定贴角(忽略拖动保存的坐标);
+        /// 选"自动"时,横向居中、竖向靠左(纵向居中)、简洁居中。
         /// 用户拖动过(OverlayX/Y 已保存)就沿用他的位置;切换样式时设置页会清掉坐标,
         /// 重新按新样式摆放。
         /// </summary>
         private void PlaceIfNeeded(int w, int h, float k)
         {
             Rectangle wa = TargetBounds();
+            string corner = st.OverlayCorner;
+            if (corner != null && corner != "auto")
+            {
+                int m = (int)Math.Round(24 * k);
+                int cx = (corner == "tl" || corner == "bl") ? wa.Left + m : wa.Right - w - m;
+                int cy = (corner == "tl" || corner == "tr") ? wa.Top + m : wa.Bottom - h - m;
+                Location = new Point(cx, cy);
+                return;
+            }
+
             if (st.OverlayX >= 0 && st.OverlayY >= 0)
             {
                 // 用户拖动过就沿用他的位置;但拔掉副屏、改分辨率、把游戏挪到另一块屏之后,
@@ -198,6 +212,8 @@ namespace FrameForge
                 moving = false;
                 st.OverlayX = Left;
                 st.OverlayY = Top;
+                // 拖动就是对"四角"的否定:位置改回自动,否则下一帧又被拉回角上。
+                st.OverlayCorner = "auto";
                 st.Save();
             }
             base.WndProc(ref m);
@@ -240,6 +256,7 @@ namespace FrameForge
                 string style = st.OverlayStyle;
                 string key = style + "|" + st.OverlayScale.ToString("0.00", CultureInfo.InvariantCulture)
                            + "|" + k.ToString("0.00", CultureInfo.InvariantCulture)
+                           + "|" + st.OverlayCorner
                            + "|" + string.Join(",", labels) + "|" + string.Join(",", values);
                 if (key == lastKey)
                 {
@@ -324,17 +341,29 @@ namespace FrameForge
                                 using (var b = new SolidBrush(Color.FromArgb(225, 206, 214, 226)))
                                     ShadowString(g, labels[i], lf, b, pad, y + 2 * k, k);
                                 float vw = g.MeasureString(values[i], vf, int.MaxValue, Typo).Width;
-                                using (var b = new SolidBrush(Color.White))
+                                using (var b = new SolidBrush(ValueColor(i)))
                                     ShadowString(g, values[i], vf, b, w - pad - vw, y + 1 * k, k);
                                 y += rowH;
                             }
                         }
                         else if (style == "mini")
                         {
+                            // 帧率数字用粉色,后面的温度保持白色,和小飞机那种"只高亮帧率"一致。
                             Font f = OverlayFont(valuePt * 1.35f, FontStyle.Bold);
-                            SizeF vs = g.MeasureString(values[0], f, int.MaxValue, Typo);
-                            using (var b = new SolidBrush(Color.White))
-                                ShadowString(g, values[0], f, b, (w - vs.Width) / 2f, (h - vs.Height) / 2f, k);
+                            string text = values[0];
+                            int cut = text.IndexOf("   ", StringComparison.Ordinal);
+                            string head = cut > 0 ? text.Substring(0, cut) : text;
+                            string tail = cut > 0 ? text.Substring(cut).Trim() : "";
+                            SizeF hs = g.MeasureString(head, f, int.MaxValue, Typo);
+                            SizeF ts = tail.Length > 0 ? g.MeasureString(tail, f, int.MaxValue, Typo) : SizeF.Empty;
+                            float totalW = hs.Width + (tail.Length > 0 ? 12 * k + ts.Width : 0);
+                            float mx = (w - totalW) / 2f;
+                            float my = (h - hs.Height) / 2f;
+                            using (var b = new SolidBrush(FpsColor))
+                                ShadowString(g, head, f, b, mx, my, k);
+                            if (tail.Length > 0)
+                                using (var b = new SolidBrush(Color.White))
+                                    ShadowString(g, tail, f, b, mx + hs.Width + 12 * k, my, k);
                         }
                         else
                         {
@@ -349,7 +378,7 @@ namespace FrameForge
                                     ShadowString(g, labels[i], lf, b, x, cy - ls.Height / 2f, k);
                                 x += ls.Width + gap1;
                                 SizeF vs = g.MeasureString(values[i], vf, int.MaxValue, Typo);
-                                using (var b = new SolidBrush(Color.White))
+                                using (var b = new SolidBrush(ValueColor(i)))
                                     ShadowString(g, values[i], vf, b, x, cy - vs.Height / 2f, k);
                                 x += vs.Width + gap2;
                             }
@@ -387,6 +416,12 @@ namespace FrameForge
             g.DrawString(text, font, brush, x, y, Typo);
         }
 
+        /// <summary>帧率那一项用"小飞机"粉,其他数值保持白色。</summary>
+        private Color ValueColor(int i)
+        {
+            return (i == 0 && st.ShowFps) ? FpsColor : Color.White;
+        }
+
         private string[] BuildLabels()
         {
             var l = new System.Collections.Generic.List<string>();
@@ -394,8 +429,10 @@ namespace FrameForge
             if (st.ShowLow) l.Add("1% LOW");
             if (st.ShowCpu) l.Add("CPU");
             if (st.ShowGpu) l.Add("GPU");
-            if (st.ShowTemp) l.Add(I18n.IsEn ? "TEMP" : "温度");
+            if (st.ShowCpuTemp) l.Add(I18n.IsEn ? "CPU TEMP" : "CPU 温度");
+            if (st.ShowGpuTemp) l.Add(I18n.IsEn ? "GPU TEMP" : "GPU 温度");
             if (st.ShowRam) l.Add(I18n.IsEn ? "RAM" : "内存");
+            if (st.ShowRamPct) l.Add(I18n.IsEn ? "RAM %" : "内存%");
             if (st.ShowClock) l.Add(I18n.IsEn ? "TIME" : "时间");
             if (st.ShowSession) l.Add(I18n.IsEn ? "UPTIME" : "时长");
             if (st.OverlayStyle == "mini") { l.Clear(); l.Add("FPS"); }
@@ -410,9 +447,11 @@ namespace FrameForge
             if (st.ShowLow) v.Add(low > 0 ? low.ToString("0") : "--");
             if (st.ShowCpu) v.Add(last.Cpu >= 0 ? last.Cpu.ToString("0") + "%" : "--");
             if (st.ShowGpu) v.Add(last.Gpu >= 0 ? last.Gpu.ToString("0") + "%" : "--");
-            if (st.ShowTemp) v.Add(last.GpuTemp >= 0 ? last.GpuTemp.ToString("0") + "°" : "--");
+            if (st.ShowCpuTemp) v.Add(last.CpuTemp >= 0 ? last.CpuTemp.ToString("0") + "°" : "--");
+            if (st.ShowGpuTemp) v.Add(last.GpuTemp >= 0 ? last.GpuTemp.ToString("0") + "°" : "--");
             if (st.ShowRam) v.Add(last.RamUsed > 0 ? ((double)last.RamUsed / 1073741824.0).ToString("0.0") + "G" : "--");
-            if (st.ShowClock) v.Add(DateTime.Now.ToString("HH:mm"));
+            if (st.ShowRamPct) v.Add(last.RamPct >= 0 ? last.RamPct.ToString("0") + "%" : "--");
+            if (st.ShowClock) v.Add(DateTime.Now.ToString("HH:mm:ss"));
             if (st.ShowSession)
             {
                 TimeSpan t = DateTime.Now - upFrom;
@@ -423,7 +462,8 @@ namespace FrameForge
             {
                 v.Clear();
                 string text = fpsText + " FPS";
-                if (st.ShowTemp && last.GpuTemp >= 0) text += "   " + last.GpuTemp.ToString("0") + "°";
+                if (st.ShowGpuTemp && last.GpuTemp >= 0) text += "   " + last.GpuTemp.ToString("0") + "°";
+                if (st.ShowCpuTemp && last.CpuTemp >= 0) text += "   " + last.CpuTemp.ToString("0") + "°";
                 v.Add(text);
             }
             return v.ToArray();
