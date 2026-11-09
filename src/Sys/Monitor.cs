@@ -235,6 +235,14 @@ namespace FrameForge.Sys
             if (gamePid > 0)
             {
                 string name = Native.ProcessName(gamePid);
+                // 已经跟踪着一个还活着的游戏时,不要因为读不到新进程的名字就换目标:
+                // 反作弊进程、系统外壳都可能读不到名字,切屏时就会把跟踪对象切走,
+                // 之后自动加速便转去加速别的东西。
+                if (name.Length == 0 && lastGamePid > 0 && gamePid != lastGamePid && ProcessAlive(lastGamePid))
+                {
+                    gamePid = lastGamePid;
+                    name = lastGameName;
+                }
                 if (name.Length == 0 && gamePid == lastGamePid) name = lastGameName;
                 lastGamePid = gamePid;
                 lastGameName = name;
@@ -268,9 +276,10 @@ namespace FrameForge.Sys
         {
             try
             {
-                using (Process p = Process.GetProcessById(pid)) return !p.HasExited;
+                using (Process p = Process.GetProcessById(pid)) return true;
             }
-            catch { return false; }
+            catch (ArgumentException) { return false; }  // 进程真的不在了
+            catch { return true; }                        // 权限不足,不能判定已退出
         }
 
         private double CpuByTimes()
@@ -478,6 +487,41 @@ namespace FrameForge.Sys
             return false;
         }
 
+        /// <summary>按进程名找正在运行的游戏,优先返回有可见窗口的那个;找不到返回 -1。</summary>
+        public static int FindProcessByName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return -1;
+            Process[] list = null;
+            try { list = Process.GetProcesses(); }
+            catch { return -1; }
+            if (list == null) return -1;
+
+            int first = -1;
+            try
+            {
+                for (int i = 0; i < list.Length; i++)
+                {
+                    Process p = list[i];
+                    try
+                    {
+                        if (p.Id <= 4) continue;
+                        if (!string.Equals(p.ProcessName, name, StringComparison.OrdinalIgnoreCase)) continue;
+                        if (first < 0) first = p.Id;
+                        if (p.MainWindowHandle != IntPtr.Zero) return p.Id;
+                    }
+                    catch { }
+                }
+            }
+            finally
+            {
+                for (int i = 0; i < list.Length; i++)
+                {
+                    try { list[i].Dispose(); } catch { }
+                }
+            }
+            return first;
+        }
+
         /// <summary>
         /// 截图 / 标注类工具。这份名单同时用于两件事:
         /// 1) 不把它们的全屏取色窗口当成游戏;2) 截图进行时临时让出滤镜和叠加层。
@@ -566,7 +610,17 @@ namespace FrameForge.Sys
         {
             if (name.Length == 0) return false;
             if (IsCaptureTool(name)) return true;
-            switch (name.ToLowerInvariant())
+
+            // 触摸键盘 / 手写面板 / 输入法外壳:Win11 在桌面切屏时会把它们铺满屏幕,
+            // 以前会被当成游戏,自动加速就转而去加速 TabTip/InputApp。
+            string lower = name.ToLowerInvariant();
+            if (lower.IndexOf("textinput") >= 0 || lower.IndexOf("tabtip") >= 0
+                || lower.IndexOf("inputapp") >= 0 || lower.IndexOf("handwriting") >= 0
+                || lower.IndexOf("composableshell") >= 0
+                || lower == "osk" || lower == "ctfmon" || lower == "msctf")
+                return true;
+
+            switch (lower)
             {
                 case "explorer":
                 case "frameforge":

@@ -969,10 +969,21 @@ namespace FrameForge.Sys
             if (!Active || GamePid <= 0) return false;
             try
             {
-                using (Process p = Process.GetProcessById(GamePid))
-                    return !p.HasExited && p.ProcessName.Length > 0;
+                // 只要还能拿到进程对象就算活着。带反作弊的游戏(如三角洲的 ACE)
+                // 会拒绝读取进程名/退出状态,以前这里读 ProcessName 抛异常,
+                // 被当成"游戏已退出"而错误还原——挂后台、切屏都会触发。
+                using (Process p = Process.GetProcessById(GamePid)) return true;
             }
-            catch { return false; }
+            catch (ArgumentException)
+            {
+                // 进程不存在:这才是真正的退出。
+                return false;
+            }
+            catch
+            {
+                // 权限不足等读不到信息的情况,不能据此判定退出。
+                return true;
+            }
         }
 
         public string SuspendedNames()

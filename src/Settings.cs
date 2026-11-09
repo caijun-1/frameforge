@@ -53,6 +53,8 @@ namespace FrameForge
         public string BoostMode = "balanced"; // balanced | beast | custom
         // 保护名单:这些进程永远不会被「暂停后台进程」选中。逗号分隔,不含 .exe。
         public string BoostWhitelist = "";
+        // 锁定的游戏进程名(小写、不含 .exe)。非空时只加速它,切屏不再跟着前台跑。
+        public string BoostPin = "";
 
         // 画面滤镜
         public int FilterMode = 0;            // 0 关 | 1 仅游戏 | 2 始终
@@ -179,6 +181,7 @@ namespace FrameForge
                 case "affinitycores": AffinityCores = Int(v, 0); break;
                 case "boostmode": BoostMode = ModeKey(v); break;
                 case "boostwhitelist": BoostWhitelist = v; break;
+                case "boostpin": BoostPin = (v ?? "").Trim().ToLowerInvariant(); break;
                 case "filtermode": FilterMode = Int(v, 0); break;
                 case "filterpreset": FilterPreset = Int(v, 0); break;
                 case "filterintensity": FilterIntensity = Int(v, 100); break;
@@ -239,6 +242,7 @@ namespace FrameForge
                 sb.AppendLine("autoBoost=" + B(AutoBoost));
                 sb.AppendLine("boostMode=" + BoostMode);
                 sb.AppendLine("boostWhitelist=" + BoostWhitelist);
+                sb.AppendLine("boostPin=" + BoostPin);
                 sb.AppendLine("affinityCores=" + AffinityCores.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterMode=" + FilterMode.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterPreset=" + FilterPreset.ToString(CultureInfo.InvariantCulture));

@@ -25,6 +25,9 @@ namespace FrameForge.UI
         private int suppressAutoPid = -1;
         private int lastFilterMode = 2;
         private DateTime lastAutoTry = DateTime.MinValue;
+        // 进程失联宽限:反作弊/权限导致的瞬时读取失败不能立刻还原加速。
+        private int lostPid = -1;
+        private DateTime lostAt = DateTime.MinValue;
 
         // ---------------- 页面可用 ----------------
 
@@ -193,8 +196,15 @@ namespace FrameForge.UI
             if (boosting) return;
             if (Boost != null && Boost.Active) { RestoreBoost(true); return; }
 
-            string name;
-            int pid = BoostEngine.DetectGamePid(out name);
+            string name = "";
+            int pid = -1;
+            // 锁定游戏优先:即使当前前台是别的程序,也加速用户指定的那个游戏。
+            if (St.BoostPin.Length > 0)
+            {
+                pid = FrameForge.Sys.Monitor.FindProcessByName(St.BoostPin);
+                if (pid > 0) name = St.BoostPin;
+            }
+            if (pid <= 0) pid = BoostEngine.DetectGamePid(out name);
             SysSample s = Mon.Current;
             if (pid <= 0 && s != null && s.GameRecent && s.GamePid > 0)
             {
@@ -256,6 +266,45 @@ namespace FrameForge.UI
             });
         }
 
+        /// <summary>
+        /// 锁定 / 解除锁定当前游戏。锁定后自动加速和手动加速都只认这个进程,
+        /// 切屏到桌面或其他程序时不会再跟着前台窗口换目标。
+        /// </summary>
+        public void ToggleBoostPin()
+        {
+            string current = St.BoostPin;
+            string target = "";
+            if (Boost != null && Boost.Active && Boost.GameName.Length > 0) target = Boost.GameName;
+            else if (Mon.Current != null && Mon.Current.GameName.Length > 0) target = Mon.Current.GameName;
+
+            if (target.Length == 0)
+            {
+                if (current.Length == 0)
+                {
+                    Toast(I18n.T("boost.pin.none"));
+                    return;
+                }
+                target = current;   // 游戏没在跑时,再点一次解除
+            }
+
+            if (current.Length > 0 && string.Equals(target, current, StringComparison.OrdinalIgnoreCase))
+            {
+                St.BoostPin = "";
+                SaveSettingsSoon();
+                Toast(I18n.T("toast.pin.off"));
+            }
+            else
+            {
+                St.BoostPin = target.ToLowerInvariant();
+                SaveSettingsSoon();
+                int pid = FrameForge.Sys.Monitor.FindProcessByName(St.BoostPin);
+                string title = pid > 0 ? GameDb.Title(pid, St.BoostPin) : St.BoostPin;
+                if (title.Length == 0) title = St.BoostPin;
+                Toast(I18n.T("toast.pin.on", title));
+            }
+            if (boostPage != null) boostPage.SyncPin();
+        }
+
         public void RestoreBoost(bool notify)
         {
             // 手动还原后,同一个游戏不再自动套用,否则下一次采样又会把它加速回去。
@@ -276,8 +325,21 @@ namespace FrameForge.UI
         /// <summary>游戏退出后自动还原,避免高性能电源计划一直挂着耗电。</summary>
         private void CheckBoostAlive()
         {
-            if (Boost == null || !Boost.Active) return;
-            if (Boost.GameAlive()) return;
+            if (Boost == null || !Boost.Active) { lostPid = -1; return; }
+            if (Boost.GameAlive()) { lostPid = -1; return; }
+
+            // 连续 5 秒都读不到才认定退出:切换全屏、游戏切后台、反作弊扫描的
+            // 瞬间都可能让进程查询失败,以前每次失败都会立刻还原并弹窗。
+            int pid = Boost.GamePid;
+            if (lostPid != pid)
+            {
+                lostPid = pid;
+                lostAt = DateTime.UtcNow;
+                return;
+            }
+            if ((DateTime.UtcNow - lostAt).TotalSeconds < 5) return;
+
+            lostPid = -1;
             RestoreBoost(false);
             Toast(I18n.T("toast.gameexit"));
         }
@@ -288,26 +350,40 @@ namespace FrameForge.UI
         /// </summary>
         private void MaybeAutoBoost(SysSample s)
         {
-            if (!St.AutoBoost || s == null || s.GamePid <= 0 || s.GameName.Length == 0) return;
+            if (!St.AutoBoost || s == null) return;
             if (Boost == null || Boost.Active || boosting) return;
-            if (!s.GameRecent) return;
-            if (s.GamePid == lastAutoPid || s.GamePid == suppressAutoPid) return;
             if ((DateTime.UtcNow - lastAutoTry).TotalSeconds < 3) return;
             lastAutoTry = DateTime.UtcNow;
 
-            GameProfile prof = Profiles != null ? Profiles.Find(s.GameName) : null;
+            int gamePid;
+            string gameName;
+            if (St.BoostPin.Length > 0)
+            {
+                // 锁定后只加速指定的游戏:它在后台、窗口不可见也照样认,
+                // 桌面上的触摸键盘/其他全屏程序不会被顺手加速。
+                gamePid = FrameForge.Sys.Monitor.FindProcessByName(St.BoostPin);
+                if (gamePid <= 0) return;
+                gameName = St.BoostPin;
+            }
+            else
+            {
+                if (s.GamePid <= 0 || s.GameName.Length == 0 || !s.GameRecent) return;
+                gamePid = s.GamePid;
+                gameName = s.GameName;
+            }
+            if (gamePid == lastAutoPid || gamePid == suppressAutoPid) return;
+
+            GameProfile prof = Profiles != null ? Profiles.Find(gameName) : null;
             BoostPlan plan = prof != null ? prof.Plan() : St.Plan();
             plan.Background = false;
             plan.Irq = false;
             if (!plan.Any) return;
 
-            lastAutoPid = s.GamePid;
+            lastAutoPid = gamePid;
             boosting = true;
             if (boostPage != null) boostPage.SetBusy(true);
 
             BoostResult[] box = new BoostResult[1];
-            int gamePid = s.GamePid;
-            string gameName = s.GameName;
             ThreadPool.QueueUserWorkItem(delegate
             {
                 try { box[0] = Boost.Apply(plan, gamePid, gameName); }

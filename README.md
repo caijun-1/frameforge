@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
   <img src="https://img.shields.io/badge/size-462%20KB-brightgreen" alt="size 462 KB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.4.1.2-orange" alt="1.4.1.2">
+  <img src="https://img.shields.io/badge/version-1.4.1.3-orange" alt="1.4.1.3">
 </p>
 
 <p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
@@ -261,6 +261,18 @@ frameforge/
 
 ## 更新日志
 
+### v1.4.1.3
+
+**修复**
+
+- 修复带反作弊的游戏切到后台就被判定「游戏结束」：读取进程名被拒绝时不再当作退出，并增加 5 秒宽限期，只有进程真正结束才还原并提示。
+- 修复触摸键盘 / 手写面板被当成游戏：切回桌面时加速目标不再跳到 `TabTip`、`InputApp` 等系统外壳进程，回到游戏后仍继续加速原来的游戏。
+- 频繁切换多个应用时不再反复弹出「加速结束」提示。
+
+**新增**
+
+- 加速页新增「**锁定当前游戏**」按钮：锁定后手动加速与自动加速都只认这个进程，切屏或回到桌面都不会改变目标；再次点击解除，锁定结果写入设置，重启后仍然有效。
+
 ### v1.4.1.2
 
 **修复**
@@ -327,6 +339,18 @@ frameforge/
 - Bilingual UI (Chinese / English), dark and light themes, tray mode, autostart, optional update check.
 
 ### Changelog
+
+#### v1.4.1.3
+
+**Fixed**
+
+- Games with anti-cheat are no longer treated as “exited” when sent to the background: a denied process-name read is no longer counted as exit, and a 5-second grace period is applied so tweaks are only restored when the process is really gone.
+- The touch keyboard / handwriting panel are no longer mistaken for a game: switching to the desktop no longer retargets the boost to `TabTip`, `InputApp` or other shell processes, and returning to the game keeps boosting the same process.
+- No more repeated “game exited” toasts when switching between several apps.
+
+**New**
+
+- A **Pin game** button on the Boost page: once pinned, both manual and automatic boosts target only that process, no matter how often you switch windows or return to the desktop. Click again to unpin; the choice is saved and survives restarts.
 
 #### v1.4.1.2
 

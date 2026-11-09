@@ -46,7 +46,7 @@ namespace FrameForge.UI
         private readonly Card cpuCard, gpuCard, radarCard, ramCard, stripCard, modeCard;
         private readonly TextLabel stateLbl, gameLbl, gameSub, hint;
         private readonly TabBar modes;
-        private readonly FlatButton mainBtn, trimBtn, editBtn;
+        private readonly FlatButton mainBtn, trimBtn, pinBtn, editBtn;
         // “游戏启动自动优化”的快捷开关,直接摆在一键加速旁边,不用再进设置页。
         private readonly Toggle tgAuto;
         private readonly TextLabel autoLbl;
@@ -141,6 +141,12 @@ namespace FrameForge.UI
             trimBtn.Text = I18n.T("boost.mem");
             trimBtn.Click += delegate { Host.RunTrim(); };
 
+            // 锁定游戏:手动/自动加速都只认这个进程,切屏不会跟着前台换目标。
+            pinBtn = new FlatButton();
+            pinBtn.Primary = false;
+            pinBtn.FontPt = 8.5f;
+            pinBtn.Click += delegate { Host.ToggleBoostPin(); };
+
             tgAuto = new Toggle();
             tgAuto.SetSilent(Host.St.AutoBoost);
             tgAuto.CheckedChanged += delegate
@@ -194,6 +200,7 @@ namespace FrameForge.UI
             tips.InitialDelay = 420;
             tips.ReshowDelay = 120;
             tips.SetToolTip(trimBtn, I18n.T("boost.mem.sub"));
+            tips.SetToolTip(pinBtn, I18n.T("boost.pin.sub"));
             tips.SetToolTip(tgAuto, I18n.T("boost.autoboost.sub"));
             tips.SetToolTip(editBtn, I18n.T("boost.opt.edit"));
 
@@ -206,6 +213,7 @@ namespace FrameForge.UI
             hero.Controls.Add(coreMap);
             hero.Controls.Add(mainBtn);
             hero.Controls.Add(trimBtn);
+            hero.Controls.Add(pinBtn);
             hero.Controls.Add(tgAuto);
             hero.Controls.Add(autoLbl);
 
@@ -227,6 +235,7 @@ namespace FrameForge.UI
             Controls.Add(modeCard);
 
             SyncState();
+            SyncPin();
             ApplyAccent();
             RefreshModeText();
             LayoutCards();
@@ -321,6 +330,25 @@ namespace FrameForge.UI
         }
 
         public void SetTrimBusy(bool busy) { trimBtn.Busy = busy; }
+
+        /// <summary>锁定按钮文案:未锁定时提示可锁定,已锁定时显示进程名,再点解除。</summary>
+        public void SyncPin()
+        {
+            string pin = Host.St.BoostPin ?? "";
+            if (pin.Length == 0)
+            {
+                pinBtn.Text = I18n.T("boost.pin");
+                pinBtn.Ghost = false;
+                tips.SetToolTip(pinBtn, I18n.T("boost.pin.sub"));
+            }
+            else
+            {
+                pinBtn.Text = I18n.T("boost.pin.on", Shorten(pin, I18n.IsEn ? 16 : 10));
+                pinBtn.Ghost = true;
+                tips.SetToolTip(pinBtn, pin + "\n" + I18n.T("boost.pin.sub"));
+            }
+            pinBtn.Invalidate();
+        }
 
         /// <summary>把本次加速的实际结果写进 Hero 的说明行;空串则收起该行。</summary>
         public void SetResult(string text)
@@ -559,19 +587,21 @@ namespace FrameForge.UI
             coreMap.SetBounds(hp, Ui.Px(124), textW, Math.Max(Ui.Px(24), heroH - Ui.Px(130)));
 
             strip.SetBounds(Ui.Px(16), 0, bodyW - Ui.Px(32), stripH);
-            // 右列:一键加速 + "自动优化"文字标签和开关并排,内存整理在下方同宽铺满。
+            // 右列:一键加速 + "自动优化"文字标签和开关并排,下面依次是内存整理与锁定游戏。
             int btnH = Ui.Px(48);
             int trimH = Ui.Px(28);
+            int pinH = Ui.Px(26);
             int tgW = Ui.Px(54);
             int lblW = Ui.Px(60);
-            int btnBlockH = btnH + Ui.Px(8) + trimH;
+            int btnBlockH = btnH + Ui.Px(8) + trimH + Ui.Px(6) + pinH;
             int by0 = Math.Max(Ui.Px(8), (heroH - btnBlockH) / 2);
             mainBtn.SetBounds(btnX, by0, btnW - tgW - lblW - Ui.Px(8), btnH);
             autoLbl.SetBounds(btnX + btnW - tgW - lblW, by0, lblW, btnH);
             tgAuto.SetBounds(btnX + btnW - tgW, by0, tgW, btnH);
             trimBtn.SetBounds(btnX, by0 + btnH + Ui.Px(8), btnW, trimH);
-            // 释放结果贴在内存在理按钮下方,不再和状态胶囊抢左列的位置。
-            int hintY = by0 + btnH + Ui.Px(8) + trimH + Ui.Px(4);
+            int pinY = by0 + btnH + Ui.Px(8) + trimH + Ui.Px(6);
+            pinBtn.SetBounds(btnX, pinY, btnW, pinH);
+            int hintY = pinY + pinH + Ui.Px(4);
             hint.SetBounds(btnX, hintY, btnW, Math.Max(Ui.Px(14), heroH - hintY - Ui.Px(6)));
 
             // 两侧大圆表(刻度盘已包含标题)
