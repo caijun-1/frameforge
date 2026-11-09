@@ -9,27 +9,30 @@ using FrameForge.Sys;
 namespace FrameForge.UI
 {
     /// <summary>
-    /// 自定义优化项弹窗:让用户逐项勾选本次加速要启用的项目。
-    /// 返回 null 表示取消,否则返回 8 个开关的新值。
+    /// 自定义优化项弹窗:让用户逐项勾选本次加速要启用的项目,
+    /// 并选择进程优先级档位。返回 null 表示取消。
     /// </summary>
     public static class BoostDialog
     {
         /// <summary>数组顺序与 Settings.ApplyCustom 保持一致。</summary>
         public static readonly string[] Keys =
         {
-            "priority", "power", "timer", "dvr", "mem", "bg", "affinity", "irq"
+            "priority", "power", "timer", "dvr", "mem", "bg", "affinity", "irq", "ideal"
         };
 
-        public static bool[] Edit(IWin32Window owner, bool[] initial, int cores, out int newCores)
+        public static bool[] Edit(IWin32Window owner, bool[] initial, int cores, int level,
+            out int newCores, out int newLevel)
         {
-            using (var box = new Box(initial, cores))
+            using (var box = new Box(initial, cores, level))
             {
                 if (box.ShowDialog(owner) == DialogResult.OK)
                 {
                     newCores = box.Cores;
+                    newLevel = box.Level;
                     return box.Values;
                 }
                 newCores = cores;
+                newLevel = level;
                 return null;
             }
         }
@@ -39,8 +42,10 @@ namespace FrameForge.UI
             private readonly Toggle[] sw = new Toggle[Keys.Length];
             private readonly bool[] init = new bool[Keys.Length];
             private readonly Segmented coreSeg;
+            private readonly Segmented prioSeg;
             private readonly int[] coreVals;
-            private FlatButton btnOk, btnCancel;
+            private readonly ToolTip tips = new ToolTip();
+            private FlatButton btnOk, btnCancel, btnReset;
 
             public int Cores
             {
@@ -48,6 +53,16 @@ namespace FrameForge.UI
                 {
                     int i = coreSeg.Selected;
                     return (i >= 0 && i < coreVals.Length) ? coreVals[i] : 0;
+                }
+            }
+
+            /// <summary>0 低 / 1 低于正常 / 2 正常 / 3 高于正常 / 4 高。</summary>
+            public int Level
+            {
+                get
+                {
+                    int i = prioSeg.Selected;
+                    return (i >= 0 && i <= 4) ? i : 4;
                 }
             }
 
@@ -61,7 +76,7 @@ namespace FrameForge.UI
                 }
             }
 
-            public Box(bool[] initial, int cores)
+            public Box(bool[] initial, int cores, int level)
             {
                 FormBorderStyle = FormBorderStyle.None;
                 StartPosition = FormStartPosition.CenterParent;
@@ -71,7 +86,7 @@ namespace FrameForge.UI
                 KeyPreview = true;
 
                 float s = Ui.S;
-                ClientSize = new Size((int)(560 * s), (int)(430 * s));
+                ClientSize = new Size((int)(560 * s), (int)(540 * s));
 
                 for (int i = 0; i < Keys.Length; i++)
                 {
@@ -80,6 +95,7 @@ namespace FrameForge.UI
                     t.SetSilent(init[i]);
                     sw[i] = t;
                     t.CheckedChanged += delegate { Invalidate(); };
+                    tips.SetToolTip(t, I18n.T("boost." + Keys[i] + ".sub"));
                     Controls.Add(t);
                 }
 
@@ -107,6 +123,28 @@ namespace FrameForge.UI
                 coreSeg.SetSilent(sel);
                 coreSeg.Visible = coreVals.Length > 1;
                 Controls.Add(coreSeg);
+
+                string[] prioItems = new string[5];
+                for (int i = 0; i < 5; i++) prioItems[i] = I18n.T("boost.prio." + i);
+                prioSeg = new Segmented();
+                prioSeg.Items = prioItems;
+                prioSeg.SetSilent(Math.Max(0, Math.Min(4, level)));
+                prioSeg.Visible = Keys.Length > 0;
+                Controls.Add(prioSeg);
+
+                btnReset = new FlatButton();
+                btnReset.Primary = false;
+                btnReset.Text = I18n.T("boost.dialog.reset");
+                btnReset.FontPt = 9f;
+                btnReset.Click += delegate
+                {
+                    bool[] rec = { true, true, true, true, true, false, false, false, false };
+                    for (int i = 0; i < sw.Length && i < rec.Length; i++) sw[i].SetSilent(rec[i]);
+                    coreSeg.Selected = coreVals.Length - 1;
+                    prioSeg.Selected = 4;
+                    Invalidate();
+                };
+                Controls.Add(btnReset);
 
                 btnCancel = new FlatButton();
                 btnCancel.Primary = false;
@@ -148,13 +186,16 @@ namespace FrameForge.UI
                     sw[i].SetBounds(x + colW - Ui.Px(46), y + Ui.Px(2), Ui.Px(46), Ui.Px(26));
                 }
 
-                int dividerY = top + 4 * rowH + Ui.Px(2);
+                int rows = (Keys.Length + 1) / 2;
+                int dividerY = top + rows * rowH + Ui.Px(2);
                 coreSeg.SetBounds(Width - pad - Ui.Px(250), dividerY + Ui.Px(12), Ui.Px(250), Ui.Px(28));
+                prioSeg.SetBounds(Width - pad - Ui.Px(250), dividerY + Ui.Px(48), Ui.Px(250), Ui.Px(28));
 
                 int bh = Ui.Px(36), bwOk = Ui.Px(110), bwCancel = Ui.Px(92);
                 int bottom = Height - pad - bh;
                 btnOk.SetBounds(Width - pad - bwOk, bottom, bwOk, bh);
                 btnCancel.SetBounds(Width - pad - bwOk - Ui.Px(10) - bwCancel, bottom, bwCancel, bh);
+                btnReset.SetBounds(pad, bottom, Ui.Px(92), bh);
             }
 
             private void OnDrag(object sender, MouseEventArgs e)
@@ -223,7 +264,8 @@ namespace FrameForge.UI
                     }
                 }
 
-                int dividerY = top + 4 * rowH + Ui.Px(2);
+                int rows = (Keys.Length + 1) / 2;
+                int dividerY = top + rows * rowH + Ui.Px(2);
                 using (var pen = new Pen(Theme.Border, 1f))
                     g.DrawLine(pen, pad, dividerY, Width - pad, dividerY);
 
@@ -235,9 +277,15 @@ namespace FrameForge.UI
                         coreRect, Theme.Text, Ui.Flags(ContentAlignment.MiddleLeft, false));
                 }
 
+                var prioRect = new Rectangle(pad, dividerY + Ui.Px(48),
+                    Width - pad * 2 - Ui.Px(266), Ui.Px(28));
+                TextRenderer.DrawText(g, I18n.T("boost.dialog.priority"), Theme.F(9.2f, FontStyle.Bold),
+                    prioRect, Theme.Text, Ui.Flags(ContentAlignment.MiddleLeft, false));
+
                 int count = 0;
                 for (int i = 0; i < sw.Length; i++) if (sw[i].Checked) count++;
-                var countRect = new Rectangle(pad, Height - Ui.Px(24) - Ui.Px(36), Ui.Px(220), Ui.Px(36));
+                var countRect = new Rectangle(pad + Ui.Px(104), Height - Ui.Px(24) - Ui.Px(36),
+                    Width - pad * 2 - Ui.Px(320), Ui.Px(36));
                 TextRenderer.DrawText(g, I18n.T("boost.dialog.count", count), Theme.F(8.5f, FontStyle.Regular),
                     countRect, count == 0 ? Theme.Faint : Theme.Sub, Ui.Flags(ContentAlignment.MiddleLeft, false));
             }

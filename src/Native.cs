@@ -59,6 +59,18 @@ namespace FrameForge
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        public struct THREADENTRY32
+        {
+            public uint dwSize;
+            public uint cntUsage;
+            public uint th32ThreadID;
+            public uint th32OwnerProcessID;
+            public int tpBasePri;
+            public int tpDeltaPri;
+            public uint dwFlags;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         public struct LUID
         {
             public uint LowPart;
@@ -169,12 +181,14 @@ namespace FrameForge
         // ---------------- 常量 ----------------
 
         public const uint TH32CS_SNAPPROCESS = 0x00000002;
+        public const uint TH32CS_SNAPTHREAD = 0x00000004;
         public const uint PROCESS_QUERY_INFORMATION = 0x0400;
         public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
         public const uint PROCESS_SET_LIMITED_INFORMATION = 0x2000;
         public const uint PROCESS_SET_QUOTA = 0x0100;
         public const uint PROCESS_SET_INFORMATION = 0x0200;
         public const uint PROCESS_SUSPEND_RESUME = 0x0800;
+        public const uint THREAD_SET_INFORMATION = 0x0020;
 
         public const uint IDLE_PRIORITY_CLASS = 0x00000040;
         public const uint BELOW_NORMAL_PRIORITY_CLASS = 0x00004000;
@@ -276,6 +290,18 @@ namespace FrameForge
 
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         public static extern bool Process32Next(IntPtr snapshot, ref PROCESSENTRY32 entry);
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern bool Thread32First(IntPtr snapshot, ref THREADENTRY32 entry);
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern bool Thread32Next(IntPtr snapshot, ref THREADENTRY32 entry);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern IntPtr OpenThread(uint dwDesiredAccess, bool bInheritHandle, int dwThreadId);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern uint SetThreadIdealProcessor(IntPtr hThread, uint dwIdealProcessor);
 
         [DllImport("kernel32.dll")]
         public static extern void GetSystemTimes(out long idle, out long kernel, out long user);

@@ -12,7 +12,7 @@ namespace FrameForge.Sys
     /// <summary>用户在加速页勾选的优化项。</summary>
     public class BoostPlan
     {
-        public bool Priority = true;    // 游戏进程 -> 高优先级
+        public bool Priority = true;    // 游戏进程 -> 提升优先级
         public bool PowerPlan = true;   // 高性能电源计划
         public bool Timer = true;       // 系统计时器 1ms
         public bool Dvr = true;         // 关闭 Game DVR / 全屏优化
@@ -20,11 +20,13 @@ namespace FrameForge.Sys
         public bool Background = false; // 进阶:暂停后台进程
         public bool Affinity = false;   // 进阶:游戏独占核心
         public bool Irq = false;        // 进阶:设备中断避让(重启生效)
+        public bool IdealCpu = false;   // 实验:线程理想处理器(不改亲和性)
         public int Cores = 0;           // 0 = 全部核心(不限制)
+        public int PriorityLevel = 4;   // 0 低 / 1 低于正常 / 2 正常 / 3 高于正常 / 4 高
 
         public bool Any
         {
-            get { return Priority || PowerPlan || Timer || Dvr || Memory || Background || Affinity || Irq; }
+            get { return Priority || PowerPlan || Timer || Dvr || Memory || Background || Affinity || Irq || IdealCpu; }
         }
     }
 
@@ -55,6 +57,8 @@ namespace FrameForge.Sys
         public int IrqOk;
         public int IrqDevices;
         public bool IrqNeedReboot;
+        /// <summary>理想处理器设置成功的线程数(实验项)。</summary>
+        public int IdealOk;
         /// <summary>本次请求的项数(用来算「实际生效 / 跳过」)。</summary>
         public int Requested;
         /// <summary>没有生效的项,元素是 i18n 键,由界面翻译成原因。</summary>
@@ -91,6 +95,10 @@ namespace FrameForge.Sys
         public bool Active;
         public int GamePid = -1;
         public string GameName = "";
+        /// <summary>实际生效的优先级档位,-1 表示这次没有改优先级。</summary>
+        public int PriorityLevel = -1;
+        /// <summary>理想处理器是否至少设置成功了一个线程。</summary>
+        public bool IdealApplied;
         public DateTime StartedAt = DateTime.MinValue;
 
         public int SuspendedCount { get { return suspended.Count; } }
@@ -120,7 +128,7 @@ namespace FrameForge.Sys
             if (pid <= 4) return -1;
             string n = Native.ProcessName(pid);
             if (n.Length == 0) return -1;
-            if (IsShell(n)) return -1;
+            if (IsShell(n) || IsExcluded(n)) return -1;
 
             if (!Monitor.IsGameWindow(hwnd, pid)) return -1;
 
@@ -219,6 +227,72 @@ namespace FrameForge.Sys
 
         /// <summary>低于这个内存的程序自动保护;超过后下一次计算会自动移出。</summary>
         public const long AutoWhitelistBytes = 200L << 20;
+
+        // =================================================================
+        //  加速排除名单
+        // =================================================================
+
+        /// <summary>
+        /// 默认排除:壁纸、直播和语音叠加类程序。它们经常占着前台或全屏,
+        /// 但并不是游戏,加速它们只会让真正的游戏排不上队。
+        /// </summary>
+        public const string DefaultExclude = "wallpaper32,wallpaper64,obs64,streamlabs,discord";
+
+        /// <summary>系统界面进程:始终排除,不可取消,也不写回设置。</summary>
+        public static readonly string[][] ExcludeBuiltIn = new string[][]
+        {
+            new string[] { "tabtip", "TabTip" },
+            new string[] { "textinputhost", "TextInputHost" },
+            new string[] { "inputapp", "InputApp" },
+            new string[] { "osk", "OSK" },
+            new string[] { "ctfmon", "ctfmon" },
+            new string[] { "composableshell", "ComposableShell" },
+            new string[] { "handwriting", "Handwriting" }
+        };
+
+        private static readonly HashSet<string> BuiltInExclude = MakeNameSet(ExcludeBuiltIn);
+
+        /// <summary>用户可编辑的排除名单,由设置页维护。</summary>
+        public static readonly HashSet<string> UserExclude = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        public static void SetExclude(string[] names)
+        {
+            UserExclude.Clear();
+            if (names == null) return;
+            foreach (string n in names)
+            {
+                string s = CleanName(n);
+                if (s.Length > 0) UserExclude.Add(s);
+            }
+        }
+
+        /// <summary>该进程是否不参与加速(系统界面恒排除,其余按用户名单)。</summary>
+        public static bool IsExcluded(string name)
+        {
+            string s = CleanName(name);
+            if (s.Length == 0) return false;
+            return BuiltInExclude.Contains(s) || UserExclude.Contains(s);
+        }
+
+        /// <summary>去掉扩展名并统一大小写;名单比较都用这个名字。</summary>
+        public static string CleanName(string n)
+        {
+            string s = (n ?? "").Trim();
+            if (s.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                s = s.Substring(0, s.Length - 4);
+            return s.ToLowerInvariant();
+        }
+
+        private static HashSet<string> MakeNameSet(string[][] items)
+        {
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < items.Length; i++)
+            {
+                string s = CleanName(items[i][0]);
+                if (s.Length > 0) set.Add(s);
+            }
+            return set;
+        }
 
         private static readonly object permGate = new object();
         private static HashSet<string> permNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -336,7 +410,7 @@ namespace FrameForge.Sys
             public ulong Memory;
             public bool Running;
             public bool BuiltIn;          // 游戏平台/录制工具,永远保护,不可取消
-            // 0 普通 / 1 永久(系统、服务、自启) / 2 自动(小内存) / 3 用户手动添加
+            // 0 普通 / 1 永久(系统、服务、自启) / 2 自动(小内存) / 3 用户手动添加 / 4 推荐排除
             public int Kind;
         }
 
@@ -463,6 +537,138 @@ namespace FrameForge.Sys
             return 1;
         }
 
+        // ---------------- 加速排除名单 ----------------
+
+        /// <summary>推荐排除的常见叠加/直播程序,即使没在运行也列出来。</summary>
+        private static readonly string[][] ExcludePresets = new string[][]
+        {
+            new string[] { "wallpaper32", "Wallpaper Engine" },
+            new string[] { "wallpaper64", "Wallpaper Engine (64)" },
+            new string[] { "obs64", "OBS Studio" },
+            new string[] { "streamlabs", "Streamlabs" },
+            new string[] { "discord", "Discord" }
+        };
+
+        private static bool IsExcludePreset(string name)
+        {
+            for (int i = 0; i < ExcludePresets.Length; i++)
+                if (string.Equals(ExcludePresets[i][0], name, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        private static string ExcludeLabel(string name)
+        {
+            for (int i = 0; i < ExcludePresets.Length; i++)
+                if (string.Equals(ExcludePresets[i][0], name, StringComparison.OrdinalIgnoreCase)) return ExcludePresets[i][1];
+            return name;
+        }
+
+        /// <summary>
+        /// 生成加速排除名单的可勾选列表:推荐项、正在运行的程序、已保存项,
+        /// 最后是恒排除的系统界面进程(锁定,不可取消)。
+        /// </summary>
+        public static AppChoice[] ExcludeChoices()
+        {
+            var map = new Dictionary<string, AppChoice>(StringComparer.OrdinalIgnoreCase);
+            Process[] procs;
+            try { procs = Process.GetProcesses(); }
+            catch { procs = new Process[0]; }
+
+            int self = Process.GetCurrentProcess().Id;
+            foreach (Process p in procs)
+            {
+                try
+                {
+                    if (p.Id <= 4 || p.Id == self) continue;
+                    string name = p.ProcessName;
+                    if (name.Length == 0) continue;
+
+                    bool preset = IsExcludePreset(name);
+                    long ws = 0;
+                    try { ws = p.WorkingSet64; } catch (Exception) { }
+                    bool visible = false;
+                    try { visible = p.MainWindowHandle != IntPtr.Zero; } catch (Exception) { }
+                    if (!preset && !visible && ws < (120L << 20)) continue;
+
+                    AppChoice c;
+                    if (map.TryGetValue(name, out c))
+                    {
+                        if ((ulong)ws > c.Memory) c.Memory = (ulong)ws;
+                        if (preset) { c.BuiltIn = true; c.Kind = 4; c.Label = ExcludeLabel(name); }
+                        continue;
+                    }
+                    map[name] = new AppChoice
+                    {
+                        Name = name,
+                        Label = preset ? ExcludeLabel(name) : name,
+                        Memory = (ulong)ws,
+                        Running = true,
+                        BuiltIn = preset,
+                        Kind = preset ? 4 : 0
+                    };
+                }
+                catch (Exception) { }
+                finally { try { p.Dispose(); } catch (Exception) { } }
+            }
+
+            for (int i = 0; i < ExcludePresets.Length; i++)
+            {
+                if (map.ContainsKey(ExcludePresets[i][0])) continue;
+                map[ExcludePresets[i][0]] = new AppChoice
+                {
+                    Name = ExcludePresets[i][0],
+                    Label = ExcludePresets[i][1],
+                    Running = false,
+                    BuiltIn = true,
+                    Kind = 4
+                };
+            }
+
+            // 系统输入法/触摸键盘等界面进程:始终排除,不能取消。
+            for (int i = 0; i < ExcludeBuiltIn.Length; i++)
+            {
+                map[ExcludeBuiltIn[i][0]] = new AppChoice
+                {
+                    Name = ExcludeBuiltIn[i][0],
+                    Label = ExcludeBuiltIn[i][1],
+                    Running = false,
+                    BuiltIn = true,
+                    Kind = 1
+                };
+            }
+
+            foreach (string n in UserExclude)
+            {
+                if (n.Length == 0) continue;
+                AppChoice c;
+                if (map.TryGetValue(n, out c))
+                {
+                    if (c.Kind == 0) c.Kind = 3;
+                    continue;
+                }
+                map[n] = new AppChoice { Name = n, Label = n, Kind = 3 };
+            }
+
+            var list = new List<AppChoice>(map.Values);
+            list.Sort(delegate(AppChoice a, AppChoice b)
+            {
+                int ga = ExcludeGroup(a), gb = ExcludeGroup(b);
+                if (ga != gb) return ga.CompareTo(gb);
+                if (a.Running != b.Running) return a.Running ? -1 : 1;
+                if (a.Running) return b.Memory.CompareTo(a.Memory);
+                return string.Compare(a.Label, b.Label, StringComparison.OrdinalIgnoreCase);
+            });
+            return list.ToArray();
+        }
+
+        /// <summary>排除列表分组:0 推荐排除,1 普通,2 系统界面(锁定)。</summary>
+        private static int ExcludeGroup(AppChoice c)
+        {
+            if (c.Kind == 4) return 0;
+            if (c.Kind == 1) return 2;
+            return 1;
+        }
+
         // =================================================================
         //  应用
         // =================================================================
@@ -481,7 +687,11 @@ namespace FrameForge.Sys
             string priorityFail = "";
             if (plan.Priority)
             {
-                if (ApplyPriority(gamePid, out priorityFail)) r.PriorityOk = 1;
+                if (ApplyPriority(gamePid, plan.PriorityLevel, out priorityFail))
+                {
+                    r.PriorityOk = 1;
+                    PriorityLevel = plan.PriorityLevel;
+                }
             }
             if (plan.Affinity)
             {
@@ -493,6 +703,16 @@ namespace FrameForge.Sys
                     r.AffinityMoved = a.Moved;
                 }
                 catch (Exception ex) { Log.Write("boost affinity: " + ex.Message); }
+            }
+            if (plan.IdealCpu)
+            {
+                try
+                {
+                    // 实验项:只建议线程去哪颗核,绝不改亲和性掩码,失败也不影响其它项。
+                    r.IdealOk = ApplyIdealCpu(gamePid, plan.Cores);
+                    IdealApplied = r.IdealOk > 0;
+                }
+                catch (Exception ex) { Log.Write("boost ideal: " + ex.Message); }
             }
             if (plan.Irq)
             {
@@ -527,14 +747,14 @@ namespace FrameForge.Sys
             }
 
             r.Ok = r.PriorityOk + r.PowerOk + r.TimerOk + r.DvrOk + r.MemoryOk + r.AffinityOk + r.IrqOk > 0
-                || r.Suspended > 0;
+                || r.IdealOk > 0 || r.Suspended > 0;
             r.NeedAdmin = !IsAdmin && (r.PowerOk == 0 || r.TimerOk == 0);
             Active = true;
 
             // 把「请求了什么、哪些没生效」记清楚:界面只报确认生效的数量。
             r.Requested = (plan.Priority ? 1 : 0) + (plan.PowerPlan ? 1 : 0) + (plan.Timer ? 1 : 0)
                 + (plan.Dvr ? 1 : 0) + (plan.Memory ? 1 : 0) + (plan.Background ? 1 : 0)
-                + (plan.Affinity ? 1 : 0) + (plan.Irq ? 1 : 0);
+                + (plan.Affinity ? 1 : 0) + (plan.Irq ? 1 : 0) + (plan.IdealCpu ? 1 : 0);
             if (plan.Priority && r.PriorityOk == 0)
                 r.Skipped.Add(priorityFail.Length > 0 ? priorityFail : "boost.skip.priority");
             if (plan.PowerPlan && r.PowerOk == 0) r.Skipped.Add("boost.skip.power");
@@ -544,6 +764,7 @@ namespace FrameForge.Sys
             if (plan.Background && r.Suspended == 0) r.Skipped.Add("boost.skip.bg");
             if (plan.Affinity && r.AffinityOk == 0) r.Skipped.Add("boost.skip.affinity");
             if (plan.Irq && r.IrqOk == 0) r.Skipped.Add("boost.skip.irq");
+            if (plan.IdealCpu && r.IdealOk == 0) r.Skipped.Add("boost.skip.ideal");
 
             // 先把原始值落到磁盘再返回:进程中途被杀或重启,下次启动还能自愈。
             try { BoostJournal.Save(Snapshot()); }
@@ -555,21 +776,22 @@ namespace FrameForge.Sys
                 + " dvr=" + r.DvrOk + " mem=" + (r.MemReleased / 1048576L) + "MB"
                 + " suspended=" + r.Suspended
                 + " affinity=" + r.AffinityOk + "/" + r.AffinityCores + "c/" + r.AffinityMoved + "p"
-                + " irq=" + r.IrqOk + "/" + r.IrqDevices + "d");
+                + " irq=" + r.IrqOk + "/" + r.IrqDevices + "d"
+                + " ideal=" + r.IdealOk + "t");
             return r;
         }
 
         /// <summary>
-        /// 提升游戏进程优先级。带反作弊的游戏经常直接拒绝这类请求,所以这里把
+        /// 调整游戏进程优先级。带反作弊的游戏经常直接拒绝这类请求,所以这里把
         /// 「被拒绝」和普通失败分开报,并且回读一次确认真的生效——SetPriorityClass
         /// 返回成功但优先级没变的情况是存在的,不能据此谎报"已优化"。
         /// failKey 为空表示失败原因不明,由调用方用通用的「优先级」文案。
         /// </summary>
-        private bool ApplyPriority(int pid, out string failKey)
+        private bool ApplyPriority(int pid, int level, out string failKey)
         {
             failKey = "";
             bool denied;
-            if (TrySetHigh(pid, out denied)) return true;
+            if (TrySetPriority(pid, level, out denied)) return true;
 
             // 游戏刚启动时保护组件可能还没装好,隔半秒再试一次。
             // 自动加速跑在线程池里,不会卡住界面。
@@ -577,16 +799,38 @@ namespace FrameForge.Sys
             {
                 try { System.Threading.Thread.Sleep(400); }
                 catch { }
-                if (TrySetHigh(pid, out denied)) return true;
+                if (TrySetPriority(pid, level, out denied)) return true;
             }
 
             if (denied) failKey = IsAdmin ? "boost.skip.priorityDenied" : "boost.skip.priorityAdmin";
             return false;
         }
 
-        private bool TrySetHigh(int pid, out bool denied)
+        /// <summary>档位 -> Win32 优先级类;档位越界时按「高」处理。</summary>
+        public static uint PriorityClassFor(int level)
+        {
+            switch (level)
+            {
+                case 0: return Native.IDLE_PRIORITY_CLASS;
+                case 1: return Native.BELOW_NORMAL_PRIORITY_CLASS;
+                case 2: return Native.NORMAL_PRIORITY_CLASS;
+                case 3: return Native.ABOVE_NORMAL_PRIORITY_CLASS;
+                default: return Native.HIGH_PRIORITY_CLASS;
+            }
+        }
+
+        /// <summary>档位对应的界面文案键。</summary>
+        public static string PriorityKey(int level)
+        {
+            if (level < 0) level = 0;
+            if (level > 4) level = 4;
+            return "boost.prio." + level;
+        }
+
+        private bool TrySetPriority(int pid, int level, out bool denied)
         {
             denied = false;
+            uint cls = PriorityClassFor(level);
             IntPtr h = IntPtr.Zero;
             try
             {
@@ -599,7 +843,7 @@ namespace FrameForge.Sys
                 }
 
                 uint before = Native.GetPriorityClass(h);
-                if (!Native.SetPriorityClass(h, Native.HIGH_PRIORITY_CLASS))
+                if (!Native.SetPriorityClass(h, cls))
                 {
                     denied = Marshal.GetLastWin32Error() == 5;
                     return false;
@@ -607,7 +851,7 @@ namespace FrameForge.Sys
 
                 // 回读校验:返回 true 不代表值变了。
                 uint after_ = Native.GetPriorityClass(h);
-                if (after_ != 0 && after_ != Native.HIGH_PRIORITY_CLASS)
+                if (after_ != 0 && after_ != cls)
                 {
                     denied = true;
                     return false;
@@ -618,6 +862,69 @@ namespace FrameForge.Sys
             }
             catch { return false; }
             finally { if (h != IntPtr.Zero) Native.CloseHandle(h); }
+        }
+
+        /// <summary>
+        /// 实验项:逐个给游戏线程设置「理想处理器」,让调度器优先把线程放到性能核上。
+        /// 只调用 SetThreadIdealProcessor,绝不修改亲和性掩码;权限不足或被反作弊
+        /// 忽略时静默返回 0,不影响其它加速项。
+        /// </summary>
+        private int ApplyIdealCpu(int pid, int cores)
+        {
+            int ideal = IdealProcessor(cores);
+            int ok = 0;
+            IntPtr snap = Native.CreateToolhelp32Snapshot(Native.TH32CS_SNAPTHREAD, 0);
+            if (snap == IntPtr.Zero || snap == new IntPtr(-1)) return 0;
+            try
+            {
+                var e = new Native.THREADENTRY32();
+                e.dwSize = (uint)Marshal.SizeOf(typeof(Native.THREADENTRY32));
+                if (!Native.Thread32First(snap, ref e)) return 0;
+                do
+                {
+                    if (e.th32OwnerProcessID != (uint)pid) continue;
+                    IntPtr th = Native.OpenThread(Native.THREAD_SET_INFORMATION, false, (int)e.th32ThreadID);
+                    if (th == IntPtr.Zero) continue;
+                    try
+                    {
+                        if (Native.SetThreadIdealProcessor(th, (uint)ideal) != 0xFFFFFFFF) ok++;
+                    }
+                    catch { }
+                    finally { Native.CloseHandle(th); }
+                }
+                while (Native.Thread32Next(snap, ref e));
+            }
+            finally { Native.CloseHandle(snap); }
+            return ok;
+        }
+
+        /// <summary>挑一颗性能核作为理想处理器;启用核心独占时优先用游戏自己的核。</summary>
+        private static int IdealProcessor(int cores)
+        {
+            CpuCore[] all = CpuTopology.Cores();
+            if (all.Length == 0) return 0;
+            CpuCore best = null;
+            for (int i = 0; i < all.Length; i++)
+            {
+                if (all[i].Parked) continue;
+                if (best == null || all[i].Efficiency < best.Efficiency) best = all[i];
+            }
+            if (best == null) best = all[0];
+
+            if (cores > 0)
+            {
+                int used;
+                long mask = CpuTopology.GameMask(cores, out used);
+                if (mask != 0)
+                {
+                    for (int i = 0; i < all.Length; i++)
+                    {
+                        if (all[i].Parked) continue;
+                        if ((all[i].Mask & mask) != 0) { best = all[i]; break; }
+                    }
+                }
+            }
+            return best.Index;
         }
 
         private bool ApplyPowerPlan()
@@ -744,6 +1051,8 @@ namespace FrameForge.Sys
             StartedAt = DateTime.MinValue;
             GamePid = -1;
             GameName = "";
+            PriorityLevel = -1;
+            IdealApplied = false;
             // 全部恢复完成才删日志:删早了中途崩溃就再也没机会自愈。
             if (clean)
             {

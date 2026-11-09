@@ -72,12 +72,14 @@ namespace FrameForge.UI
         /// <summary>编辑「暂停后台进程」的保护名单。</summary>
         public void EditWhitelist()
         {
-            using (var d = new WhitelistDialog(St.WhitelistNames()))
+            using (var d = new WhitelistDialog(St.WhitelistNames(), St.ExcludeNames()))
             {
                 if (d.ShowDialog(this) != DialogResult.OK) return;
                 St.BoostWhitelist = d.Result;
+                St.BoostExclude = d.ExcludeResult;
                 St.Save();
                 BoostEngine.SetWhitelist(St.WhitelistNames());
+                BoostEngine.SetExclude(St.ExcludeNames());
                 Toast(I18n.T("toast.whitelist"));
             }
         }
@@ -214,6 +216,12 @@ namespace FrameForge.UI
             if (pid <= 0)
             {
                 Toast(I18n.T("toast.nogame"));
+                return;
+            }
+            // 排除名单里的程序不加速:自动和手动一视同仁,避免把壁纸/直播工具当游戏。
+            if (BoostEngine.IsExcluded(name))
+            {
+                Toast(I18n.T("toast.excluded", name));
                 return;
             }
 
@@ -372,11 +380,15 @@ namespace FrameForge.UI
                 gameName = s.GameName;
             }
             if (gamePid == lastAutoPid || gamePid == suppressAutoPid) return;
+            if (BoostEngine.IsExcluded(gameName)) return;
 
             GameProfile prof = Profiles != null ? Profiles.Find(gameName) : null;
             BoostPlan plan = prof != null ? prof.Plan() : St.Plan();
+            // 有游戏策略时也沿用全局的优先级档位;理想处理器是实验项,不进自动加速。
+            if (prof != null) plan.PriorityLevel = St.BoostPriorityLevel;
             plan.Background = false;
             plan.Irq = false;
+            plan.IdealCpu = false;
             if (!plan.Any) return;
 
             lastAutoPid = gamePid;
@@ -436,6 +448,7 @@ namespace FrameForge.UI
             if (r.TimerOk > 0) applied++;
             if (r.DvrOk > 0) applied++;
             if (r.MemoryOk > 0) applied++;
+            if (r.IdealOk > 0) applied++;
             if (r.Suspended > 0) applied++;
 
             var reasons = new List<string>();

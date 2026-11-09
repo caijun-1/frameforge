@@ -610,6 +610,8 @@ namespace FrameForge.Sys
         {
             if (name.Length == 0) return false;
             if (IsCaptureTool(name)) return true;
+            // 用户或内置的加速排除名单:自动检测时就不再把它当作游戏。
+            if (BoostEngine.IsExcluded(name)) return true;
 
             // 触摸键盘 / 手写面板 / 输入法外壳:Win11 在桌面切屏时会把它们铺满屏幕,
             // 以前会被当成游戏,自动加速就转而去加速 TabTip/InputApp。

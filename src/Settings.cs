@@ -55,6 +55,12 @@ namespace FrameForge
         public string BoostWhitelist = "";
         // 锁定的游戏进程名(小写、不含 .exe)。非空时只加速它,切屏不再跟着前台跑。
         public string BoostPin = "";
+        // 加速排除名单:这些程序不会被当作目标加速。逗号分隔,不含 .exe。
+        public string BoostExclude = BoostEngine.DefaultExclude;
+        // 优先级档位:0 低 / 1 低于正常 / 2 正常 / 3 高于正常 / 4 高。
+        public int BoostPriorityLevel = 4;
+        // 实验项:只调整游戏线程的理想处理器,不改亲和性掩码。默认关闭。
+        public bool BoostIdealCpu = false;
 
         // 画面滤镜
         public int FilterMode = 0;            // 0 关 | 1 仅游戏 | 2 始终
@@ -182,6 +188,9 @@ namespace FrameForge
                 case "boostmode": BoostMode = ModeKey(v); break;
                 case "boostwhitelist": BoostWhitelist = v; break;
                 case "boostpin": BoostPin = (v ?? "").Trim().ToLowerInvariant(); break;
+                case "boostexclude": BoostExclude = v ?? ""; break;
+                case "boostprioritylevel": BoostPriorityLevel = Math.Max(0, Math.Min(4, Int(v, 4))); break;
+                case "boostidealcpu": BoostIdealCpu = Bool(v, false); break;
                 case "filtermode": FilterMode = Int(v, 0); break;
                 case "filterpreset": FilterPreset = Int(v, 0); break;
                 case "filterintensity": FilterIntensity = Int(v, 100); break;
@@ -243,6 +252,9 @@ namespace FrameForge
                 sb.AppendLine("boostMode=" + BoostMode);
                 sb.AppendLine("boostWhitelist=" + BoostWhitelist);
                 sb.AppendLine("boostPin=" + BoostPin);
+                sb.AppendLine("boostExclude=" + BoostExclude);
+                sb.AppendLine("boostPriorityLevel=" + BoostPriorityLevel.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("boostIdealCpu=" + B(BoostIdealCpu));
                 sb.AppendLine("affinityCores=" + AffinityCores.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterMode=" + FilterMode.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterPreset=" + FilterPreset.ToString(CultureInfo.InvariantCulture));
@@ -281,6 +293,8 @@ namespace FrameForge
             p.Affinity = BoostAffinity;
             p.Irq = BoostIrq;
             p.Cores = AffinityCores;
+            p.PriorityLevel = BoostPriorityLevel;
+            p.IdealCpu = BoostIdealCpu;
             return p;
         }
 
@@ -305,10 +319,10 @@ namespace FrameForge
             else if (BoostMode == "beast") SetAllItems();
         }
 
-        /// <summary>自定义优化项:数组顺序为 priority/power/timer/dvr/mem/bg/affinity/irq。</summary>
+        /// <summary>自定义优化项:数组顺序为 priority/power/timer/dvr/mem/bg/affinity/irq/ideal。</summary>
         public void ApplyCustom(bool[] v)
         {
-            if (v == null || v.Length < 8) return;
+            if (v == null || v.Length < 9) return;
             BoostPriority = v[0];
             BoostPowerPlan = v[1];
             BoostTimer = v[2];
@@ -317,19 +331,20 @@ namespace FrameForge
             BoostBackground = v[5];
             BoostAffinity = v[6];
             BoostIrq = v[7];
+            BoostIdealCpu = v[8];
             BoostMode = "custom";
         }
 
         public bool MatchesBalanced()
         {
             return BoostPriority && BoostPowerPlan && BoostTimer && BoostDvr && BoostMem
-                && !BoostBackground && !BoostAffinity && !BoostIrq;
+                && !BoostBackground && !BoostAffinity && !BoostIrq && !BoostIdealCpu;
         }
 
         public bool MatchesBeast()
         {
             return BoostPriority && BoostPowerPlan && BoostTimer && BoostDvr && BoostMem
-                && BoostBackground && BoostAffinity && BoostIrq;
+                && BoostBackground && BoostAffinity && BoostIrq && !BoostIdealCpu;
         }
 
         private void SetSafeItems()
@@ -342,6 +357,7 @@ namespace FrameForge
             BoostBackground = false;
             BoostAffinity = false;
             BoostIrq = false;
+            BoostIdealCpu = false;
         }
 
         private void SetAllItems()
@@ -354,6 +370,7 @@ namespace FrameForge
             BoostBackground = true;
             BoostAffinity = true;
             BoostIrq = true;
+            BoostIdealCpu = false;
         }
 
         /// <summary>拆出保护名单里的进程名(逗号、分号或空白分隔)。</summary>
@@ -361,6 +378,14 @@ namespace FrameForge
         {
             if (string.IsNullOrEmpty(BoostWhitelist)) return new string[0];
             return BoostWhitelist.Split(new char[] { ',', ';', ' ', '\t', '\r', '\n' },
+                StringSplitOptions.RemoveEmptyEntries);
+        }
+
+        /// <summary>拆出加速排除名单里的进程名。</summary>
+        public string[] ExcludeNames()
+        {
+            if (string.IsNullOrEmpty(BoostExclude)) return new string[0];
+            return BoostExclude.Split(new char[] { ',', ';', ' ', '\t', '\r', '\n' },
                 StringSplitOptions.RemoveEmptyEntries);
         }
 

@@ -378,14 +378,16 @@ namespace FrameForge.UI
             bool[] v = new bool[]
             {
                 p.Priority, p.PowerPlan, p.Timer, p.Dvr,
-                p.Memory, p.Background, p.Affinity, p.Irq
+                p.Memory, p.Background, p.Affinity, p.Irq, p.IdealCpu
             };
-            int cores;
-            bool[] r = BoostDialog.Edit(FindForm(), v, Host.St.AffinityCores, out cores);
+            int cores, level;
+            bool[] r = BoostDialog.Edit(FindForm(), v, Host.St.AffinityCores,
+                Host.St.BoostPriorityLevel, out cores, out level);
             if (r == null) return;
 
             Host.St.AffinityCores = cores;
             Host.St.ApplyCustom(r);
+            Host.St.BoostPriorityLevel = level;
             Host.SaveSettingsSoon();
 
             // 手动挑完选项就落到自定义模式,配色同步转紫。
@@ -394,7 +396,7 @@ namespace FrameForge.UI
             ApplyAccent();
             RefreshModeText();
             SyncChips();
-            Host.Toast(I18n.T("boost.mode.reboost"));
+            Host.Toast(level <= 1 ? I18n.T("boost.prio.warn") : I18n.T("boost.mode.reboost"));
         }
 
         // ---------------- 每秒刷新 ----------------
@@ -415,7 +417,19 @@ namespace FrameForge.UI
 
             string sub;
             if (game.Length == 0) sub = I18n.T("boost.nogame.sub");
-            else if (active) sub = I18n.T("boost.since", Since()) + (s.GameName.Length > 0 ? "  ·  " + s.GameName : "");
+            else if (active)
+            {
+                // 加速中显示目标的可核对信息:进程名、PID、优先级档位、核心数、是否锁定。
+                BoostEngine eng = Host.Boost;
+                int lv = eng.PriorityLevel >= 0 ? eng.PriorityLevel : Host.St.BoostPriorityLevel;
+                string target = eng.GameName.Length > 0 ? eng.GameName : (s.GameName.Length > 0 ? s.GameName : game);
+                sub = I18n.T("boost.since", Since()) + "  ·  "
+                    + I18n.T("boost.target.fmt", target, eng.GamePid, I18n.T(BoostEngine.PriorityKey(lv)));
+                int coreN = Host.St.AffinityCores > 0 ? Host.St.AffinityCores
+                    : CpuTopology.CoreCount(CpuTopology.AllMask());
+                sub += "  ·  " + I18n.T("boost.target.cores", coreN);
+                if (Host.St.BoostPin.Length > 0) sub += "  ·  " + I18n.T("boost.pin.tag");
+            }
             else if (s.GameName.Length > 0) sub = s.GameName;
             else if (!MemEngine.IsAdmin) sub = I18n.T("boost.hint.admin");
             else sub = I18n.T("boost.hint.short");

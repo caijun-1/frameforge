@@ -41,6 +41,7 @@ namespace FrameForge
 
                 Settings st = Settings.Load();
                 BoostEngine.SetWhitelist(st.WhitelistNames());
+                BoostEngine.SetExclude(st.ExcludeNames());
 
                 // 上次加速如果没来得及还原(崩溃/强杀),这里把注册表和电源计划拨回去。
                 try { BoostJournal.RecoverStale(); }
@@ -405,11 +406,11 @@ namespace FrameForge
                     && ms.BoostDvr && ms.BoostMem && !ms.BoostBackground && !ms.BoostAffinity && !ms.BoostIrq
                     && ms.MatchesBalanced(), "safe 5 items on");
 
-                ms.ApplyCustom(new bool[] { true, false, true, false, true, false, true, false });
+                ms.ApplyCustom(new bool[] { true, false, true, false, true, false, true, false, true });
                 check("boost mode custom",
                     ms.BoostMode == "custom" && ms.BoostPriority && !ms.BoostPowerPlan
                     && ms.BoostTimer && !ms.BoostDvr && ms.BoostMem && !ms.BoostBackground
-                    && ms.BoostAffinity && !ms.BoostIrq && !ms.MatchesBalanced() && !ms.MatchesBeast(),
+                    && ms.BoostAffinity && !ms.BoostIrq && ms.BoostIdealCpu && !ms.MatchesBalanced() && !ms.MatchesBeast(),
                     "custom flags kept");
 
                 check("boost mode key", Settings.ModeKey("BEAST") == "balanced" && Settings.ModeKey(null) == "balanced",
@@ -427,6 +428,27 @@ namespace FrameForge
                 BoostEngine.SetWhitelist(new string[0]);
             }
             catch (Exception ex) { check("boost whitelist", false, ex.Message); }
+
+            // 15b. 加速排除名单(内置界面项 + 用户项,不落盘)
+            try
+            {
+                var xs = new Settings();
+                check("boost exclude default", xs.ExcludeNames().Length >= 5,
+                    xs.ExcludeNames().Length + " default name(s)");
+
+                BoostEngine.SetExclude(new string[] { "OBS64.exe", " discord ", "" });
+                check("boost exclude",
+                    BoostEngine.IsExcluded("obs64") && BoostEngine.IsExcluded("DISCORD.exe")
+                    && !BoostEngine.IsExcluded("game") && BoostEngine.IsExcluded("ctfmon"),
+                    "normalized + built-in shell");
+                BoostEngine.SetExclude(Settings.Load().ExcludeNames());
+
+                check("boost priority key", BoostEngine.PriorityKey(0) == "boost.prio.0"
+                    && BoostEngine.PriorityKey(4) == "boost.prio.4"
+                    && BoostEngine.PriorityClassFor(4) == 0x00000080
+                    && BoostEngine.PriorityClassFor(0) == 0x00000040, "mapping ok");
+            }
+            catch (Exception ex) { check("boost exclude", false, ex.Message); }
 
             // 16. 加速日志往返(有未还原的日志时跳过,避免覆盖真实数据)
             try

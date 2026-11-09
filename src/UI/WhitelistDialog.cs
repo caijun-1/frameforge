@@ -9,24 +9,36 @@ using FrameForge.Sys;
 namespace FrameForge.UI
 {
     /// <summary>
-    /// 保护名单:直接勾选正在运行的程序,不用手输进程名。
-    /// 名单里的进程不会被「暂停后台进程」动到;游戏平台与录制工具默认保护,不可取消。
+    /// 进程名单:直接勾选正在运行的程序,不用手输进程名。
+    /// 第一页是「暂停保护」,名单里的进程不会被「暂停后台进程」动到;
+    /// 第二页是「加速排除」,名单里的进程不会被自动或手动加速。
     /// </summary>
     public sealed class WhitelistDialog : Form
     {
         private readonly Panel list;
         private readonly List<CheckRow> rows = new List<CheckRow>();
-        private readonly HashSet<string> picked;
+        private readonly HashSet<string> protect;
+        private readonly HashSet<string> exclude;
+        private readonly Segmented tabs;
+        private int mode;
 
-        /// <summary>勾选结果,逗号分隔,不含 .exe。</summary>
+        /// <summary>暂停保护名单,逗号分隔,不含 .exe。</summary>
         public string Result = "";
+        /// <summary>加速排除名单,逗号分隔,不含 .exe。</summary>
+        public string ExcludeResult = "";
 
-        public WhitelistDialog(string[] names)
+        public WhitelistDialog(string[] names) : this(names, null) { }
+
+        public WhitelistDialog(string[] names, string[] excludes)
         {
-            picked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            protect = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (names != null)
                 foreach (string n in names)
-                    if (!string.IsNullOrEmpty(n)) picked.Add(n);
+                    if (!string.IsNullOrEmpty(n)) protect.Add(n);
+            exclude = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (excludes != null)
+                foreach (string n in excludes)
+                    if (!string.IsNullOrEmpty(n)) exclude.Add(n);
 
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.CenterParent;
@@ -36,11 +48,18 @@ namespace FrameForge.UI
             KeyPreview = true;
 
             float s = Ui.S;
-            ClientSize = new Size((int)(540 * s), (int)(500 * s));
+            ClientSize = new Size((int)(540 * s), (int)(520 * s));
 
             int pad = Ui.Px(24);
             int bw = Ui.Px(120), bh = Ui.Px(34);
             int bottom = ClientSize.Height - Ui.Px(18) - bh;
+
+            tabs = new Segmented();
+            tabs.Items = new string[] { I18n.T("wl.tab.protect"), I18n.T("wl.tab.exclude") };
+            tabs.SetSilent(0);
+            tabs.SetBounds(pad, Ui.Px(48), Ui.Px(250), Ui.Px(28));
+            tabs.Changed += delegate { SwitchMode(tabs.Selected); };
+            Controls.Add(tabs);
 
             list = new Panel();
             list.BackColor = Theme.Card;
@@ -49,25 +68,7 @@ namespace FrameForge.UI
             list.Resize += delegate { LayoutRows(); };
             Controls.Add(list);
 
-            BoostEngine.AppChoice[] items = BoostEngine.ProtectChoices();
-            for (int i = 0; i < items.Length; i++)
-            {
-                BoostEngine.AppChoice c = items[i];
-                var row = new CheckRow();
-                row.Proc = c.Name;
-                row.Label = c.Label;
-                // 永久(系统/自启)和自动(小内存)都由程序判定,不允许取消勾选。
-                row.Locked = c.BuiltIn || c.Kind == 2;
-                row.Checked = row.Locked || picked.Contains(c.Name);
-                row.IconPath = c.Running ? GameDb.PathFor(c.Name) : "";
-                row.Note = c.Kind == 1 ? I18n.T("wl.permanent")
-                    : c.Kind == 2 ? I18n.T("wl.auto")
-                    : c.Kind == 3 ? I18n.T("wl.manual")
-                    : c.Running ? Fmt.Bytes(c.Memory) : I18n.T("wl.offline");
-                rows.Add(row);
-                list.Controls.Add(row);
-            }
-            LayoutRows();
+            BuildRows();
 
             var btnCancel = new FlatButton();
             btnCancel.Primary = false;
@@ -83,7 +84,9 @@ namespace FrameForge.UI
             btnOk.FontPt = 9.5f;
             btnOk.Click += delegate
             {
-                Result = BuildResult();
+                CaptureChecks();
+                Result = Join(protect);
+                ExcludeResult = Join(exclude);
                 DialogResult = DialogResult.OK;
                 Close();
             };
@@ -97,6 +100,83 @@ namespace FrameForge.UI
             };
         }
 
+        /// <summary>切页前先把当前页的勾选存下来,再按新页的数据重建行。</summary>
+        private void SwitchMode(int m)
+        {
+            if (m == mode) return;
+            CaptureChecks();
+            mode = m;
+            BuildRows();
+            Invalidate();
+        }
+
+        private void BuildRows()
+        {
+            for (int i = 0; i < rows.Count; i++) list.Controls.Remove(rows[i]);
+            rows.Clear();
+
+            BoostEngine.AppChoice[] items = mode == 0
+                ? BoostEngine.ProtectChoices()
+                : BoostEngine.ExcludeChoices();
+            HashSet<string> picked = mode == 0 ? protect : exclude;
+
+            for (int i = 0; i < items.Length; i++)
+            {
+                BoostEngine.AppChoice c = items[i];
+                var row = new CheckRow();
+                row.Proc = c.Name;
+                row.Label = c.Label;
+                row.IconPath = c.Running ? GameDb.PathFor(c.Name) : "";
+
+                if (mode == 0)
+                {
+                    // 永久(系统/自启)和自动(小内存)都由程序判定,不允许取消勾选。
+                    row.Locked = c.BuiltIn || c.Kind == 2;
+                    row.Checked = row.Locked || picked.Contains(c.Name);
+                    row.Note = c.Kind == 1 ? I18n.T("wl.permanent")
+                        : c.Kind == 2 ? I18n.T("wl.auto")
+                        : c.Kind == 3 ? I18n.T("wl.manual")
+                        : c.Running ? Fmt.Bytes(c.Memory) : I18n.T("wl.offline");
+                }
+                else
+                {
+                    // 系统界面进程恒排除,不可取消;其余按用户勾选保存。
+                    row.Locked = c.Kind == 1;
+                    row.Checked = row.Locked || picked.Contains(c.Name);
+                    row.Note = c.Kind == 1 ? I18n.T("wl.ex.locked")
+                        : c.Kind == 4 ? I18n.T("wl.ex.recommend")
+                        : c.Kind == 3 ? I18n.T("wl.manual")
+                        : c.Running ? Fmt.Bytes(c.Memory) : I18n.T("wl.offline");
+                }
+
+                rows.Add(row);
+                list.Controls.Add(row);
+            }
+
+            list.AutoScrollPosition = new Point(0, 0);
+            LayoutRows();
+            list.Invalidate();
+        }
+
+        /// <summary>把当前页的勾选写回内存;锁定的项本来就不在保存范围里。</summary>
+        private void CaptureChecks()
+        {
+            HashSet<string> picked = mode == 0 ? protect : exclude;
+            picked.Clear();
+            for (int i = 0; i < rows.Count; i++)
+            {
+                CheckRow r = rows[i];
+                if (r.Checked && !r.Locked) picked.Add(r.Proc);
+            }
+        }
+
+        private static string Join(HashSet<string> set)
+        {
+            var items = new List<string>(set);
+            items.Sort(StringComparer.OrdinalIgnoreCase);
+            return string.Join(",", items.ToArray());
+        }
+
         private void LayoutRows()
         {
             if (list == null || rows.Count == 0) return;
@@ -108,19 +188,6 @@ namespace FrameForge.UI
             {
                 rows[i].SetBounds(Ui.Px(2), i * rowH, w, rowH);
             }
-        }
-
-        /// <summary>长按内置项不参与保存:它们本来就不在可暂停范围里。</summary>
-        private string BuildResult()
-        {
-            var list2 = new List<string>();
-            for (int i = 0; i < rows.Count; i++)
-            {
-                CheckRow r = rows[i];
-                if (!r.Checked || r.Locked) continue;
-                list2.Add(r.Proc);
-            }
-            return string.Join(",", list2.ToArray());
         }
 
         private void OnDrag(object sender, MouseEventArgs e)
@@ -153,12 +220,12 @@ namespace FrameForge.UI
                 g.DrawPath(pen, p);
 
             int pad = Ui.Px(24);
-            Rectangle titleRect = new Rectangle(pad, Ui.Px(20), Width - pad * 2, Ui.Px(26));
-            TextRenderer.DrawText(g, I18n.T("wl.title"), Theme.F(11.5f, FontStyle.Bold),
+            Rectangle titleRect = new Rectangle(pad, Ui.Px(18), Width - pad * 2, Ui.Px(26));
+            TextRenderer.DrawText(g, I18n.T(mode == 0 ? "wl.title" : "wl.ex.title"), Theme.F(11.5f, FontStyle.Bold),
                 titleRect, Theme.Text, Ui.Flags(ContentAlignment.MiddleLeft, false));
 
-            Rectangle hintRect = new Rectangle(pad, Ui.Px(52), Width - pad * 2, Ui.Px(56));
-            TextRenderer.DrawText(g, I18n.T("wl.hint"), Theme.F(8.6f, FontStyle.Regular),
+            Rectangle hintRect = new Rectangle(pad, Ui.Px(80), Width - pad * 2, Ui.Px(32));
+            TextRenderer.DrawText(g, I18n.T(mode == 0 ? "wl.hint" : "wl.ex.hint"), Theme.F(8.4f, FontStyle.Regular),
                 hintRect, Theme.Sub, Ui.Flags(ContentAlignment.TopLeft, true));
         }
     }
@@ -229,7 +296,7 @@ namespace FrameForge.UI
 
             if (Checked)
             {
-                Ui.Fill(g, boxRect, Ui.Fp(5), Locked ? Theme.Mix(accent, Theme.Card, 0.45) : accent);
+                Ui.Fill(g, boxRect, Ui.Fp(5), Locked ? Theme.Mix(accent, Theme.Card, 0.45f) : accent);
                 using (var pen = new Pen(Color.White, Math.Max(1.6f, Ui.Fp(1.8f))))
                 {
                     pen.StartCap = LineCap.Round;

@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
   <img src="https://img.shields.io/badge/size-462%20KB-brightgreen" alt="size 462 KB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.4.1.3-orange" alt="1.4.1.3">
+  <img src="https://img.shields.io/badge/version-1.4.2-orange" alt="1.4.2">
 </p>
 
 <p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
@@ -261,6 +261,15 @@ frameforge/
 
 ## 更新日志
 
+### v1.4.2
+
+**新增**
+
+- 新增「**加速排除**」名单：系统输入法与触摸键盘等界面进程始终排除，壁纸、OBS、Streamlabs、Discord 等常见叠加/直播程序默认排除；名单可在「设置 → 进程名单」的第二个标签页里逐项勾选，自动和手动加速都会跳过它们。
+- 自定义优化项新增「**进程优先级档位**」：低 / 低于正常 / 正常 / 高于正常 / 高（默认高），并新增「**推荐值**」一键恢复默认勾选。
+- 加速中在加速页显示目标进程名、PID、优先级档位与核心数，锁定时附带「已锁定」标记，方便核对加速对象。
+- 自定义优化项新增实验开关「**线程理想处理器**」：仅建议游戏线程使用性能核，不修改亲和性掩码；默认关闭，自动加速不会启用。
+
 ### v1.4.1.3
 
 **修复**
@@ -339,6 +348,20 @@ frameforge/
 - Bilingual UI (Chinese / English), dark and light themes, tray mode, autostart, optional update check.
 
 ### Changelog
+
+#### v1.4.2
+
+**New**
+
+- **Boost exclude list**: input methods and touch-keyboard shell UIs are always excluded, while wallpaper engines, OBS, Streamlabs and Discord are excluded by default. Both manual and automatic boosts skip them; edit the list under Settings → App lists → Boost exclude.
+- **Priority levels**: Low / Below normal / Normal / Above normal / High (default High) in the custom options dialog, with a warning when a low level is picked.
+- **Visible boost target**: the Boost page now shows the target process, PID, priority level, core count and pin state while boosted.
+- **Thread ideal CPU (experimental)**: hints game threads toward P-cores without touching affinity masks; off by default and never enabled by automatic boost.
+
+**Improved**
+
+- Hover descriptions for every custom option, plus a **Recommended** button to restore defaults.
+- The app-lists dialog now has **Pause protection** and **Boost exclude** tabs.
 
 #### v1.4.1.3
 
