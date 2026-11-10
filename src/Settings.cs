@@ -90,7 +90,9 @@ namespace FrameForge
 
         // 内存
         public bool MemAuto = false;
+        public string MemAutoMode = "threshold";  // threshold 按阈值 | interval 按时间
         public int MemThreshold = 88;
+        public int MemIntervalMin = 15;           // 按时间模式的整理间隔(分钟)
 
         // 常规
         public bool Autostart = false;
@@ -207,7 +209,9 @@ namespace FrameForge
                 case "reportauto": ReportAuto = Bool(v, true); break;
                 case "reportminsec": ReportMinSec = Int(v, 30); break;
                 case "memauto": MemAuto = Bool(v, false); break;
+                case "memautomode": MemAutoMode = v == "interval" ? "interval" : "threshold"; break;
                 case "memthreshold": MemThreshold = Int(v, 88); break;
+                case "memintervalmin": MemIntervalMin = Int(v, 15); break;
                 case "autostart": Autostart = Bool(v, false); break;
                 case "checkupdates": CheckUpdates = Bool(v, false); break;
                 case "closetotray": CloseToTray = Bool(v, true); break;
@@ -274,7 +278,9 @@ namespace FrameForge
                 sb.AppendLine("reportAuto=" + B(ReportAuto));
                 sb.AppendLine("reportMinSec=" + ReportMinSec.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("memAuto=" + B(MemAuto));
+                sb.AppendLine("memAutoMode=" + MemAutoMode);
                 sb.AppendLine("memThreshold=" + MemThreshold.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("memIntervalMin=" + MemIntervalMin.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("autostart=" + B(Autostart));
                 sb.AppendLine("checkUpdates=" + B(CheckUpdates));
                 sb.AppendLine("closeToTray=" + B(CloseToTray));

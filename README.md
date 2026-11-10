@@ -11,9 +11,9 @@
   <img src="https://github.com/caijun-1/frameforge/actions/workflows/build.yml/badge.svg" alt="build">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue" alt="platform">
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
-  <img src="https://img.shields.io/badge/size-462%20KB-brightgreen" alt="size 462 KB">
+  <img src="https://img.shields.io/badge/size-483%20KB-brightgreen" alt="size 483 KB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.4.3-orange" alt="1.4.3">
+  <img src="https://img.shields.io/badge/version-1.4.3.1-orange" alt="1.4.3.1">
 </p>
 
 <p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
@@ -261,6 +261,16 @@ frameforge/
 
 ## 更新日志
 
+### v1.4.3.1
+
+**新增**
+
+- 自动内存整理支持两种触发方式：**按阈值**（占用达到设定值才整理，60–95%）与**按时间**（每隔 5–60 分钟整理一次），在「设置 → 内存」里切换；两种方式都会在游戏运行或加速中自动跳过。
+
+**优化**
+
+- 设置页「内存」卡片重新排版：触发方式选择移到标题下方左侧，不再和右上角开关重叠；阈值与间隔共用同一根滑杆，切换模式时量程、单位与标签一起变化。
+
 ### v1.4.3
 
 **修复**
@@ -366,6 +376,16 @@ frameforge/
 - Bilingual UI (Chinese / English), dark and light themes, tray mode, autostart, optional update check.
 
 ### Changelog
+
+#### v1.4.3.1
+
+**New**
+
+- Auto memory trim now supports two trigger modes: **Threshold** (trim only when usage reaches the configured 60–95%) and **Interval** (trim every 5–60 minutes), switchable under Settings → Memory. Both modes are skipped while a game is running or a boost is active.
+
+**Improved**
+
+- Reworked the Memory card on the Settings page: the trigger-mode selector now sits below the title on the left instead of overlapping the switch in the top-right corner, and threshold and interval share one slider whose range, unit and label follow the selected mode.
 
 #### v1.4.3
 

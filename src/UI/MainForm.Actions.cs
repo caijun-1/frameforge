@@ -595,9 +595,24 @@ namespace FrameForge.UI
             // 游戏在跑时不清缓存、不清待命列表:刚加载的资源被赶出去后要重新读盘,
             // 表现就是每隔两分钟卡一下。等退出游戏后再维护。
             if (s.GameRecent || (Boost != null && Boost.Active)) return;
-            if (s.RamPct < St.MemThreshold) return;
-            if ((DateTime.UtcNow - lastAutoTrim).TotalSeconds < 120) return;
-            lastAutoTrim = DateTime.UtcNow;
+
+            DateTime now = DateTime.UtcNow;
+            if (St.MemAutoMode == "interval")
+            {
+                // 按时间:不看占用,到点就整理。启动 / 刚开启时先起计时,
+                // 等满一个间隔再动手,免得刚开软件就清一次。
+                int minutes = St.MemIntervalMin;
+                if (minutes < 5) minutes = 5;
+                if (lastAutoTrim == DateTime.MinValue) { lastAutoTrim = now; return; }
+                if ((now - lastAutoTrim).TotalMinutes < minutes) return;
+            }
+            else
+            {
+                // 按阈值:占用达到设定值才整理;两分钟只是防抖,避免连续采样反复清。
+                if (s.RamPct < St.MemThreshold) return;
+                if ((now - lastAutoTrim).TotalSeconds < 120) return;
+            }
+            lastAutoTrim = now;
             ThreadPool.QueueUserWorkItem(delegate
             {
                 try { MemEngine.SmartClean(null); }

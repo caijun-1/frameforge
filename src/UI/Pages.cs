@@ -1613,6 +1613,7 @@ namespace FrameForge.UI
         private readonly Card genCard, memCard, fpsCard, adminCard, aboutCard, hotCard;
         private readonly Segmented segLang, segTheme;
         private readonly Toggle tgAuto, tgTray, tgMemAuto, tgBoostProfile, tgUpdates;
+        private readonly Segmented segMemMode;
         private readonly Slider sldThreshold;
         private readonly TextLabel memInfo, fpsStatus, fpsNote, adminStatus, adminNote, aboutName, aboutNotice, aboutEnv;
         private readonly TextLabel[] adminItems = new TextLabel[3];
@@ -1622,7 +1623,7 @@ namespace FrameForge.UI
         private readonly TextLabel langTitle, themeTitle, autoTitle, autoSub, trayTitle, traySub;
         private readonly TextLabel boostProfileTitle, boostProfileSub;
         private readonly TextLabel updateTitle, updateSub;
-        private readonly TextLabel memAutoTitle, memAutoSub;
+        private readonly TextLabel memAutoTitle;
         private readonly TextLabel hotOvTitle, hotOvKey, hotBoostTitle, hotBoostKey, hotFlTitle, hotFlKey;
 
         public SettingsPage(MainForm host) : base(host)
@@ -1733,7 +1734,6 @@ namespace FrameForge.UI
 
             // 内存
             memAutoTitle = RowTitle(I18n.T("set.memauto"));
-            memAutoSub = RowSub(I18n.T("set.memauto.sub"));
             tgMemAuto = new Toggle();
             tgMemAuto.SetSilent(host.St.MemAuto);
             tgMemAuto.CheckedChanged += delegate
@@ -1742,15 +1742,25 @@ namespace FrameForge.UI
                 Host.SaveSettingsSoon();
             };
 
+            segMemMode = new Segmented();
+            segMemMode.Items = new string[]
+            {
+                I18n.T("set.memmode.threshold"), I18n.T("set.memmode.interval")
+            };
+            segMemMode.SetSilent(host.St.MemAutoMode == "interval" ? 1 : 0);
+            segMemMode.Changed += delegate
+            {
+                Host.St.MemAutoMode = segMemMode.Selected == 1 ? "interval" : "threshold";
+                Host.SaveSettingsSoon();
+                SyncMemMode();
+            };
+
+            // 阈值与间隔共用一个滑杆:切模式时改量程、单位与标签。
             sldThreshold = new Slider();
-            sldThreshold.Min = 60;
-            sldThreshold.Max = 95;
-            sldThreshold.Unit = "%";
-            sldThreshold.Label = I18n.T("set.threshold");
-            sldThreshold.SetSilent(host.St.MemThreshold);
             sldThreshold.Changed += delegate
             {
-                Host.St.MemThreshold = sldThreshold.Value;
+                if (Host.St.MemAutoMode == "interval") Host.St.MemIntervalMin = sldThreshold.Value;
+                else Host.St.MemThreshold = sldThreshold.Value;
                 Host.SaveSettingsSoon();
             };
 
@@ -1760,10 +1770,11 @@ namespace FrameForge.UI
             memInfo.Ellipsis = true;
 
             memCard.Controls.Add(memAutoTitle);
-            memCard.Controls.Add(memAutoSub);
             memCard.Controls.Add(tgMemAuto);
+            memCard.Controls.Add(segMemMode);
             memCard.Controls.Add(sldThreshold);
             memCard.Controls.Add(memInfo);
+            SyncMemMode();
 
             // 帧率引擎
             fpsStatus = new TextLabel();
@@ -1950,6 +1961,26 @@ namespace FrameForge.UI
             }
         }
 
+        /// <summary>切换触发方式:按阈值看占用,按时间看间隔。</summary>
+        private void SyncMemMode()
+        {
+            bool byTime = Host.St.MemAutoMode == "interval";
+            sldThreshold.Label = byTime ? I18n.T("set.meminterval") : I18n.T("set.threshold");
+            sldThreshold.Unit = byTime ? I18n.T("set.min") : "%";
+            if (byTime)
+            {
+                sldThreshold.Min = 5;
+                sldThreshold.Max = 60;
+                sldThreshold.SetSilent(Host.St.MemIntervalMin);
+            }
+            else
+            {
+                sldThreshold.Min = 60;
+                sldThreshold.Max = 95;
+                sldThreshold.SetSilent(Host.St.MemThreshold);
+            }
+        }
+
         public override void Refresh(SysSample s)
         {
             if (s == null) return;
@@ -2078,10 +2109,12 @@ namespace FrameForge.UI
             tgUpdates.SetBounds(colW - pad - toggleW, Ui.Px(232), toggleW, Ui.Px(24));
 
             PlaceHeader(memCard, pad);
+            // 模式选择放在标题下方左侧,右侧留给开关,两者不再抢同一块位置。
+            int segMemW = Ui.Px(160);
             memAutoTitle.SetBounds(pad, Ui.Px(44), rightW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(20));
-            memAutoSub.SetBounds(pad, Ui.Px(64), rightW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(18));
             tgMemAuto.SetBounds(rightW - pad - toggleW, Ui.Px(46), toggleW, Ui.Px(24));
-            sldThreshold.SetBounds(pad, Ui.Px(92), rightW - pad * 2, Ui.Px(44));
+            segMemMode.SetBounds(pad, Ui.Px(66), segMemW, Ui.Px(28));
+            sldThreshold.SetBounds(pad, Ui.Px(98), rightW - pad * 2, Ui.Px(40));
             memInfo.SetBounds(pad, memH - Ui.Px(20), rightW - pad * 2, Ui.Px(18));
 
             PlaceHeader(fpsCard, pad);
