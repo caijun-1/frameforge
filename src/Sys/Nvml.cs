@@ -1,4 +1,6 @@
 using System;
+using System.Runtime.ExceptionServices;
+using System.Security;
 using System.Text;
 
 namespace FrameForge.Sys
@@ -13,6 +15,11 @@ namespace FrameForge.Sys
         public string DeviceName = "";
         public bool Available { get { return ready; } }
 
+        // 显卡驱动复位 / 驱动自身出问题时,nvml.dll 里可能直接抛访问违例(CSE),
+        // 普通 catch 接不住会让整个程序退出(日志里 11:29 那次就是这样崩的)。
+        // 加上这两个标记就能接住,并且把 NVML 停掉,不再反复踩。
+        [HandleProcessCorruptedStateExceptions]
+        [SecurityCritical]
         public bool Init()
         {
             try
@@ -45,6 +52,8 @@ namespace FrameForge.Sys
         }
 
         /// <summary>读取一块显卡的实时数据;失败字段保持 -1,界面显示 —。</summary>
+        [HandleProcessCorruptedStateExceptions]
+        [SecurityCritical]
         public GpuSample Read()
         {
             var g = new GpuSample();
@@ -75,7 +84,11 @@ namespace FrameForge.Sys
                     g.MemUsed = mem.Used;
                 }
             }
-            catch { broken = true; }
+            catch (Exception ex)
+            {
+                broken = true;
+                Log.Write("nvml read: " + ex.GetType().Name + " " + ex.Message + " (gpu stats off)");
+            }
             return g;
         }
 

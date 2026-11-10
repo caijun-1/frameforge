@@ -204,7 +204,9 @@ namespace FrameForge.Sys
                     string line = raw.Trim();
                     if (line.Length == 0 || line.StartsWith("#")) continue;
                     SessionRecord r = SessionRecord.Parse(line);
-                    if (r != null) all.Add(r);
+                    // 旧版本把 BattlEye Launcher 这类反作弊组件误判成游戏记了下来,
+                    // 读取时直接丢掉,不用等用户手动删。
+                    if (r != null && !GameDb.AntiCheatName(r.Exe)) all.Add(r);
                 }
             }
             catch (Exception ex) { Log.Write("sessions load: " + ex.Message); }

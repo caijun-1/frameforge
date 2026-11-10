@@ -611,8 +611,37 @@ namespace FrameForge.Sys
                 || p.IndexOf("\\cef\\") >= 0 || p.IndexOf("\\commonredist\\") >= 0
                 || p.IndexOf("\\redistributables\\") >= 0 || p.IndexOf("\\steamworks shared\\") >= 0)
                 return false;
+            // 反作弊组件同样装在游戏目录下(如 steamapps\common\PUBG\BattlEye\),
+            // 不能因为"在游戏目录里"就当成游戏本体。
+            if (p.IndexOf("\\battleye\\") >= 0 || p.IndexOf("\\easyanticheat") >= 0
+                || p.IndexOf("\\anticheatexpert\\") >= 0 || p.IndexOf("\\easy anti-cheat\\") >= 0)
+                return false;
             for (int i = 0; i < Libraries.Length; i++)
                 if (p.IndexOf(Libraries[i], StringComparison.Ordinal) >= 0) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// 反作弊 / 防护组件的进程名。它们由游戏拉起,也会自己弹窗(BattlEye 的报错框、
+        /// EAC 的安装界面),以前会被当成游戏本体记进战绩、还会被自动加速。
+        /// </summary>
+        public static bool AntiCheatName(string name)
+        {
+            if (name == null) return false;
+            string n = name.Trim().ToLowerInvariant();
+            if (n.EndsWith(".exe", StringComparison.Ordinal)) n = n.Substring(0, n.Length - 4);
+            if (n.Length == 0) return false;
+            // Vanguard 只有这几个固定名字,按关键词匹配太容易误伤。
+            if (n == "vgc" || n == "vgtray") return true;
+
+            string[] words =
+            {
+                "battleye", "beservice", "easyanticheat", "anticheatexpert",
+                "ace-guard", "ace-helper", "ace-tray", "sguard", "tenprotect",
+                "tensafe", "qqprotect", "gameguard", "nprotect", "xigncode", "krsdk"
+            };
+            for (int i = 0; i < words.Length; i++)
+                if (n.IndexOf(words[i], StringComparison.Ordinal) >= 0) return true;
             return false;
         }
 

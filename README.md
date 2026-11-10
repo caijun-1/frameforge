@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
   <img src="https://img.shields.io/badge/size-483%20KB-brightgreen" alt="size 483 KB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.4.3.1-orange" alt="1.4.3.1">
+  <img src="https://img.shields.io/badge/version-1.4.3.5-orange" alt="1.4.3.5">
 </p>
 
 <p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
@@ -261,6 +261,14 @@ frameforge/
 
 ## 更新日志
 
+### v1.4.3.5
+
+**修复**
+
+- 反作弊组件不再被当成游戏：BattlEye Launcher、ACE-Helper、EasyAntiCheat、ACE-Guard 等进程会弹全屏窗口、又装在游戏目录下，之前会被记进战绩并被自动加速；现在从进程名和安装目录两条路都排除，旧版本已写进战绩的历史记录读取时直接丢弃。
+- 显卡驱动异常时不再带崩 FrameForge：驱动复位或驱动自身出错时 `nvml.dll` 会直接抛访问违例，普通 `catch` 接不住；现在捕获后停用显卡数据采集（界面显示 —），帧率、加速、内存等功能不受影响。
+- 帧率长时间不显示：界面心跳里对已释放的进程对象读 `HasExited` 会抛异常并中断刷新；同时多个采集看门狗线程会互相杀掉对方刚启动的 PresentMon、反复拆建 ETW 会话，导致一直采不到第一行数据。现在旧看门狗会自动退出，失败按 10/20/40 秒退避，连续 6 次仍无数据才停手并记日志。
+
 ### v1.4.3.1
 
 **新增**
@@ -376,6 +384,14 @@ frameforge/
 - Bilingual UI (Chinese / English), dark and light themes, tray mode, autostart, optional update check.
 
 ### Changelog
+
+#### v1.4.3.5
+
+**Fixed**
+
+- Anti-cheat components are no longer treated as games: BattlEye Launcher, ACE-Helper, EasyAntiCheat and ACE-Guard open full-screen windows and live under the game folder, so they used to be recorded as game sessions and auto-boosted. They are now excluded by both process name and install path, and stale entries already written to the records are dropped on load.
+- A faulty GPU driver can no longer take FrameForge down with it: when the driver resets or misbehaves, `nvml.dll` can raise an access violation that a plain `catch` cannot intercept. The exception is now handled, GPU stats stop updating (shown as —), and FPS, boost and memory features keep working.
+- FPS could stay blank for a long time: reading `HasExited` on a disposed process object threw inside the UI heartbeat and stopped the refresh, while several watchdog threads kept killing each other's PresentMon and tearing down the ETW session, so the first data row never arrived. Old watchdogs now retire, failures back off at 10/20/40 s, and collection stops with a log entry after six consecutive empty attempts.
 
 #### v1.4.3.1
 

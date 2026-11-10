@@ -26,6 +26,10 @@ namespace FrameForge.Sys
     public sealed class FpsEngine : IDisposable
     {
         public const string Version = "2.6.0";
+
+        // 连续这么多次拿不到一行数据就停手:带内核反作弊的游戏(鸣潮的 ACE/KRSDK)
+        // 会挡住 ETW 呈现事件,无限重启只会白烧 CPU,还会让 ETW 会话反复被拆。
+        private const int MaxFails = 6;
         private const string DownloadUrl =
             "https://github.com/GameTechDev/PresentMon/releases/download/v" + Version + "/PresentMon-" + Version + "-x64.exe";
 
@@ -48,6 +52,8 @@ namespace FrameForge.Sys
         private DateTime nextRecoverAt = DateTime.MinValue;
         private DateTime lastEtwReset = DateTime.MinValue;
         private int watchFails;
+        private int watchGen;
+        private DateTime nextRetryAt = DateTime.MinValue;
         private long lastRowTicks;
         private volatile bool stopping;
         private volatile bool gotRow;
@@ -271,10 +277,31 @@ namespace FrameForge.Sys
             }
         }
 
+        /// <summary>
+        /// proc 可能已经被 Stop/看门狗 Dispose 掉,这时 HasExited 会抛
+        /// InvalidOperationException("没有与此对象关联的进程"),异常冒到界面定时器里
+        /// 会让整个界面心跳中断,帧率与叠加上层就都不再刷新。
+        /// </summary>
+        private static bool ExitedSafe(Process p)
+        {
+            if (p == null) return true;
+            try { return p.HasExited; }
+            catch (InvalidOperationException) { return true; }
+            catch { return true; }
+        }
+
         /// <summary>开始跟踪某个进程;pid 未变化时什么也不做。</summary>
         public void Track(int pid)
         {
-            if (pid == trackedPid && proc != null && !proc.HasExited)
+            if (pid != trackedPid)
+            {
+                // 换游戏(包括崩溃后重启)时重置失败计数,否则新游戏会被上一个
+                // 游戏留下的"放弃"状态挡住,帧率永远起不来。
+                watchFails = 0;
+                nextRetryAt = DateTime.MinValue;
+            }
+
+            if (pid == trackedPid && !ExitedSafe(proc))
             {
                 // PresentMon 有时"活着但不再输出":ETW 实时会话被系统诊断会话挤占时,
                 // 进程不退出、stderr 只刷 lost events,界面上的帧率就停在最后一个数字。
@@ -283,6 +310,7 @@ namespace FrameForge.Sys
                 // 每次重启都要拆一次 ETW 实时会话,那本身就是卡顿源。
                 long last = Interlocked.Read(ref lastRowTicks);
                 if (last == 0) return;
+                if (DateTime.UtcNow < nextRetryAt) return;
                 if ((DateTime.UtcNow - new DateTime(last, DateTimeKind.Utc)).TotalSeconds < 15) return;
                 if (DateTime.UtcNow < nextRecoverAt) return;
                 nextRecoverAt = DateTime.UtcNow.AddSeconds(6);
@@ -299,6 +327,8 @@ namespace FrameForge.Sys
             // PresentMon 2.x 在普通权限下也能采集同账户进程的帧事件(只有跨账户/短命进程
             // 才需要提权),以前在这里直接因"不是管理员"返回,叠加层就永远只显示 --。
             // 但它异常退出后会占着 ETW 会话名,失败后先等 3 秒再重启,避免每秒开一次进程。
+            if (pid == trackedPid && watchFails >= MaxFails) return;
+            if (pid == trackedPid && DateTime.UtcNow < nextRetryAt) return;
             if (pid == trackedPid && Status == FpsStatus.NeedAdmin) return;
             if (pid == trackedPid && Status == FpsStatus.Failed
                 && (DateTime.UtcNow - lastTry).TotalSeconds < 3) return;
@@ -317,7 +347,7 @@ namespace FrameForge.Sys
                 // 界面心跳(Track)和看门狗会同时走到这里。两个 PresentMon 抢同一个
                 // ETW 会话名时,后启动的会把先启动的踢掉,日志里就是 start 紧跟一行
                 // exited code=0,帧率窗口被反复清空,叠加上层统计全是抖的。
-                if (proc != null && !proc.HasExited) return;
+                if (proc != null && !ExitedSafe(proc)) return;
                 StartCore(pid);
             }
         }
@@ -325,6 +355,9 @@ namespace FrameForge.Sys
         private void StartCore(int pid)
         {
             if (pid != trackedPid) return;
+            // 每次启动领一个代号,旧的看门狗线程看到代号变了就退出;
+            // 否则它们会互相杀掉对方刚拉起的 PresentMon,永远等不到第一行数据。
+            int gen = Interlocked.Increment(ref watchGen);
             try
             {
                 lock (Gate) { window.Clear(); }
@@ -362,7 +395,7 @@ namespace FrameForge.Sys
                 Status = FpsStatus.Running;
                 Message = "";
                 Log.Write("presentmon start pid=" + pid);
-                StartWatchdog(pid);
+                StartWatchdog(pid, gen);
             }
             catch (Exception ex)
             {
@@ -379,7 +412,7 @@ namespace FrameForge.Sys
             proc = null;
             if (p != null)
             {
-                try { if (!p.HasExited) p.Kill(); }
+                try { if (!ExitedSafe(p)) p.Kill(); }
                 catch { }
                 try { p.Dispose(); }
                 catch { }
@@ -401,7 +434,7 @@ namespace FrameForge.Sys
         /// (本机实测:系统诊断会话把实时缓冲占满时,它只会刷 "ETW events were lost")。
         /// 这时清理一次噪声会话并重启,而不是一直空转。
         /// </summary>
-        private void StartWatchdog(int pid)
+        private void StartWatchdog(int pid, int gen)
         {
             Thread t = new Thread(delegate()
             {
@@ -413,8 +446,10 @@ namespace FrameForge.Sys
                 for (int i = 0; i < waitSec * 2; i++)
                 {
                     Thread.Sleep(500);
+                    if (gen != Volatile.Read(ref watchGen)) return;
                     if (stopping || gotRow || proc == null || trackedPid != pid) return;
                 }
+                if (gen != Volatile.Read(ref watchGen)) return;
                 if (stopping || gotRow || proc == null || trackedPid != pid) return;
                 if (Status == FpsStatus.NeedAdmin) return;
 
@@ -422,7 +457,7 @@ namespace FrameForge.Sys
                 Log.Write("presentmon watchdog: no rows in " + waitSec + "s, retry #" + watchFails);
                 Process p = proc;
                 proc = null;
-                try { if (!p.HasExited) p.Kill(); }
+                try { if (!ExitedSafe(p)) p.Kill(); }
                 catch { }
                 try { p.Dispose(); }
                 catch { }
@@ -433,7 +468,19 @@ namespace FrameForge.Sys
                     lastEtwReset = DateTime.UtcNow;
                     ResetEtw();
                 }
-                if (!stopping && trackedPid == pid) Start(pid);
+
+                if (watchFails >= MaxFails)
+                {
+                    // 一直采不到就停手。鸣潮(ACE/KRSDK)这类带内核反作弊的游戏会挡住
+                    // ETW 呈现事件,再重启一百次也拿不到一行,只会白烧 CPU 和日志。
+                    Status = FpsStatus.Failed;
+                    Message = "presentmon no data";
+                    Log.Write("presentmon giving up after " + watchFails + " tries (frame capture blocked?)");
+                    return;
+                }
+
+                nextRetryAt = DateTime.UtcNow.AddSeconds(waitSec >= 20 ? 30 : 10);
+                if (!stopping && trackedPid == pid && gen == Volatile.Read(ref watchGen)) Start(pid);
             });
             t.IsBackground = true;
             t.Name = "FrameForge.FpsWatch";

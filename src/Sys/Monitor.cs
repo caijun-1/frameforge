@@ -613,9 +613,13 @@ namespace FrameForge.Sys
             // 用户或内置的加速排除名单:自动检测时就不再把它当作游戏。
             if (BoostEngine.IsExcluded(name)) return true;
 
+            string lower = name.ToLowerInvariant();
+            // 反作弊组件的窗口(BattlEye Launcher、EAC 安装器)也常铺满屏幕,
+            // 而且进程就在游戏目录下,不排除就会被当成游戏本体。
+            if (GameDb.AntiCheatName(lower)) return true;
+
             // 触摸键盘 / 手写面板 / 输入法外壳:Win11 在桌面切屏时会把它们铺满屏幕,
             // 以前会被当成游戏,自动加速就转而去加速 TabTip/InputApp。
-            string lower = name.ToLowerInvariant();
             if (lower.IndexOf("textinput") >= 0 || lower.IndexOf("tabtip") >= 0
                 || lower.IndexOf("inputapp") >= 0 || lower.IndexOf("handwriting") >= 0
                 || lower.IndexOf("composableshell") >= 0
