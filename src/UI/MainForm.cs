@@ -557,10 +557,11 @@ namespace FrameForge.UI
             if (navW < Ui.Px(220)) navW = Ui.Px(220);
             nav.SetBounds((Width - navW) / 2, by, navW, bh);
 
-            int pad = Ui.Px(18);
+            // 页面的外边距和卡片内边距统一到 20:切页时内容左边缘不会左右跳。
+            int pad = Ui.Px(20);
             int top = th + Ui.Px(10);
             int pw = Width - pad * 2;
-            int ph = Height - top - Ui.Px(16);
+            int ph = Height - top - Ui.Px(20);
             for (int i = 0; i < pages.Length; i++)
                 if (pages[i] != null) pages[i].SetBounds(pad, top, pw, ph);
 

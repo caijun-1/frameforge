@@ -119,18 +119,70 @@ namespace FrameForge.Sys
         public static float[] Current(Settings st)
         {
             if (st == null) return Identity();
-            // ICC 与预设滤镜互斥:选了 ICC 就只用 ICC。
+            // ICC 与预设滤镜互斥:选了 ICC 就不再叠加预设调色。
             // 两者叠在一起时,ICC 是「把 sRGB 映射到这块屏」的校正,
             // 前面的调色会把画面推到 sRGB 之外,再走 ICC 就会二次偏色,
             // 而且用户要的是「一个滤镜」,不是两层调色。
-            if (!string.IsNullOrEmpty(st.FilterIcc))
+            float[] baseM = null;
+            if (!string.IsNullOrEmpty(st.FilterIcc)) baseM = Icc.For(st.FilterIcc);
+            if (baseM == null)
+                baseM = Build(st.FilterPreset, st.FilterIntensity,
+                    st.FilterContrast, st.FilterSaturation, st.FilterWarmth,
+                    st.FilterTint);
+
+            // 暗部场景平衡 / 数字振动是独立增强层,叠在预设或 ICC 之上。
+            // 以前这两项混在 Build 里,选了 ICC 就完全不生效;做成独立开关后
+            // 用户可以只用 ICC 校正 + 轻微抬暗部,两者不再互斥。
+            int dark = st.FilterDarkOn ? st.FilterDark : 0;
+            int vibrance = st.FilterVibranceOn ? st.FilterVibrance : 0;
+            return Enhance(baseM, dark, vibrance, st.FilterIntensity);
+        }
+
+        /// <summary>
+        /// 5×5 颜色矩阵相乘:返回 a×b,即先把 b 作用到颜色上再作用 a。
+        /// </summary>
+        public static float[] Mul(float[] a, float[] b)
+        {
+            var r = new float[25];
+            for (int i = 0; i < 5; i++)
             {
-                float[] icc = Icc.For(st.FilterIcc);
-                if (icc != null) return icc;
+                for (int j = 0; j < 5; j++)
+                {
+                    double sum = 0;
+                    for (int k = 0; k < 5; k++) sum += (double)a[i * 5 + k] * b[k * 5 + j];
+                    r[i * 5 + j] = (float)sum;
+                }
             }
-            return Build(st.FilterPreset, st.FilterIntensity,
-                st.FilterContrast, st.FilterSaturation, st.FilterWarmth,
-                st.FilterDark, st.FilterVibrance, st.FilterTint);
+            return r;
+        }
+
+        /// <summary>
+        /// 暗部场景平衡 + 数字振动。dark/vibrance 均为 0..100,50 为中性偏轻,
+        /// intensity 决定增强层整体强度(和滑杆区一致,拉到 0 就等于不增强)。
+        /// </summary>
+        public static float[] Enhance(float[] baseM, int dark, int vibrance, int intensity)
+        {
+            if (baseM == null) baseM = Identity();
+            if (dark <= 0 && vibrance <= 0) return baseM;
+
+            double t = Clamp01(intensity / 100.0);
+            if (t <= 0) return baseM;
+
+            double sat = 1.0 + vibrance / 100.0 * 0.55 * t;    // 数字振动:只往上加饱和度
+            double shadow = dark / 100.0 * 0.5 * t;            // 暗部场景平衡
+            double gain = 1.0 - 0.15 * shadow;
+            double lift = 0.06 * shadow;
+
+            double lr = 0.2126, lg = 0.7152, lb = 0.0722;
+            float[] e =
+            {
+                (float)((lr + (1 - lr) * sat) * gain), (float)((lg - lg * sat) * gain), (float)((lb - lb * sat) * gain), 0, (float)lift,
+                (float)((lr - lr * sat) * gain), (float)((lg + (1 - lg) * sat) * gain), (float)((lb - lb * sat) * gain), 0, (float)lift,
+                (float)((lr - lr * sat) * gain), (float)((lg - lg * sat) * gain), (float)((lb + (1 - lb) * sat) * gain), 0, (float)lift,
+                0, 0, 0, 1, 0,
+                0, 0, 0, 0, 1
+            };
+            return Mul(e, baseM);
         }
 
         /// <summary>把 5×5 矩阵推给系统;已是最新则什么都不做。</summary>
@@ -165,7 +217,7 @@ namespace FrameForge.Sys
         /// contrast/saturation/warmth/tint 均为 -100..100;亮度改由显示器硬件背光负责。
         /// </summary>
         public static float[] Build(int preset, int intensity, int contrast, int saturation, int warmth,
-            int dark = 0, int vibrance = 0, int tint = 0)
+            int tint = 0)
         {
             double sat = 1.0, con = 1.0, bri = 0.0, warm = 0.0; double shadow = 0.0;
             // 分割色调:正值阴影偏青、高光偏暖,负值反过来。对应 ReShade 的 LiftGammaGain。
@@ -205,8 +257,6 @@ namespace FrameForge.Sys
             sat *= 1.0 + saturation / 100.0 * 0.4;
             con *= 1.0 + contrast / 100.0 * 0.35;
             warm += warmth / 100.0 * 0.4;
-            sat *= 1.0 + vibrance / 100.0 * 0.4;            // 数字振动:只往上加饱和度
-            shadow += dark / 100.0 * 0.4;                   // 暗部场景平衡
 
             if (sat < 0) sat = 0;
             if (con < 0.2) con = 0.2;

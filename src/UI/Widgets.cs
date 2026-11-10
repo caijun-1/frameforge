@@ -44,6 +44,18 @@ namespace FrameForge.UI
 
         public Slider() { Cursor = Cursors.Hand; }
 
+        /// <summary>标签左侧显示一个迷你开关,用于带独立开关的滑块。</summary>
+        public bool ShowSwitch;
+        /// <summary>开关状态。关闭时滑杆不生效(轨道置灰)。</summary>
+        public bool Switched = true;
+        public event EventHandler SwitchChanged;
+
+        private RectangleF SwitchBox()
+        {
+            float h = Ui.Fp(14);
+            return new RectangleF(0, (Ui.Fp(18) - h) / 2f, Ui.Fp(26), h);
+        }
+
         protected override void OnEnabledChanged(EventArgs e)
         {
             Cursor = Enabled ? Cursors.Hand : Cursors.Default;
@@ -59,6 +71,18 @@ namespace FrameForge.UI
         {
             if (e.Button == MouseButtons.Left)
             {
+                if (ShowSwitch)
+                {
+                    RectangleF sb = SwitchBox();
+                    if (e.X <= sb.Right + Ui.Fp(4) && e.Y <= sb.Bottom + Ui.Fp(3))
+                    {
+                        Switched = !Switched;
+                        Invalidate();
+                        if (SwitchChanged != null) SwitchChanged(this, EventArgs.Empty);
+                        base.OnMouseDown(e);
+                        return;
+                    }
+                }
                 drag = true;
                 Apply(e.X);
             }
@@ -79,6 +103,12 @@ namespace FrameForge.UI
 
         private void Apply(int x)
         {
+            // 直接拖滑杆视为要使用这一项:自动打开开关,免得拖了没反应。
+            if (ShowSwitch && !Switched)
+            {
+                Switched = true;
+                if (SwitchChanged != null) SwitchChanged(this, EventArgs.Empty);
+            }
             float left = Ui.Fp(2);
             float right = Width - Ui.Fp(2);
             float t = (x - left) / Math.Max(1f, right - left);
@@ -98,10 +128,24 @@ namespace FrameForge.UI
 
             float s = Ui.S;
             float labelH = Ui.Fp(18);
+            bool live = Enabled && (!ShowSwitch || Switched);
+
+            float labelLeft = 0;
+            if (ShowSwitch)
+            {
+                RectangleF sb = SwitchBox();
+                Ui.Fill(g, sb, sb.Height / 2f, Switched ? Theme.Accent : Theme.Track);
+                float d = sb.Height - Ui.Fp(4);
+                float bx = Switched ? sb.Right - d - Ui.Fp(2) : sb.Left + Ui.Fp(2);
+                using (var b = new SolidBrush(Switched ? Theme.Card : Theme.Faint))
+                    g.FillEllipse(b, bx, sb.Y + Ui.Fp(2), d, d);
+                labelLeft = sb.Right + Ui.Fp(8);
+            }
+
             // 双极性滑杆(-100~100)正值补一个加号,数值方向一眼可辨。
             string shown = val > 0 && Min < 0 ? "+" + val : val.ToString();
             TextRenderer.DrawText(g, Label, Theme.F(9f, FontStyle.Regular),
-                new Rectangle(0, 0, Width, (int)labelH), Enabled ? Theme.Sub : Theme.Faint,
+                Rectangle.Round(new RectangleF(labelLeft, 0, Width - labelLeft, labelH)), Enabled ? Theme.Sub : Theme.Faint,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
             TextRenderer.DrawText(g, shown + Unit, Theme.F(9.5f, FontStyle.Bold),
                 new Rectangle(0, 0, Width, (int)labelH), Enabled ? Theme.Accent : Theme.Faint,
@@ -119,7 +163,7 @@ namespace FrameForge.UI
             float to = left + (right - left) * (float)t;
             var filled = new RectangleF(Math.Min(from, to), cy - Ui.Fp(3), Math.Abs(to - from), Ui.Fp(6));
             if (filled.Width > 0.5f)
-                Ui.Fill(g, filled, filled.Height / 2f, Enabled ? Theme.Accent : Theme.Track);
+                Ui.Fill(g, filled, filled.Height / 2f, live ? Theme.Accent : Theme.Track);
 
             float knob = Ui.Fp(14);
             float stroke = Math.Max(2f, Ui.Fp(2.6));
@@ -132,7 +176,7 @@ namespace FrameForge.UI
             using (var sh = new SolidBrush(Color.FromArgb(Theme.Dark ? 90 : 26, 15, 23, 42)))
                 g.FillEllipse(sh, kr.X, kr.Y + Ui.Fp(1.2f), kr.Width, kr.Height);
             using (var b = new SolidBrush(Theme.Card)) g.FillEllipse(b, kr);
-            using (var pen = new Pen(!Enabled ? Theme.Faint : hover || drag ? Theme.AccentHover : Theme.Accent, stroke))
+            using (var pen = new Pen(!live ? Theme.Faint : hover || drag ? Theme.AccentHover : Theme.Accent, stroke))
                 g.DrawEllipse(pen, kr);
         }
     }

@@ -47,6 +47,15 @@ namespace FrameForge
         private IntPtr oldObj = IntPtr.Zero;
         private int bmpW, bmpH;
 
+        // 预乘 alpha 的临时缓冲。每秒重画 5 次,每次都 new 一块几百 KB 的数组会一直给 GC
+        // 添乱(叠加层和游戏在抢合成),按需扩到最大尺寸后复用即可。
+        private byte[] premul = new byte[0];
+        // 画布同理:尺寸不变就复用同一张 Bitmap,不必每帧新建/释放一块 32bpp 位图。
+        private Bitmap canvas;
+        private int canvasW, canvasH;
+        // 渲染异常按分钟记一次日志:真出问题时不至于每 200ms 写一次盘。
+        private DateTime lastErrLog = DateTime.MinValue;
+
         public Overlay(Settings settings)
         {
             st = settings;
@@ -129,7 +138,9 @@ namespace FrameForge
             string corner = st.OverlayCorner;
             if (corner != null && corner != "auto")
             {
-                int m = (int)Math.Round(24 * k);
+                // 小飞机那种 OSD 是贴着屏幕角的:离边只留一点点,越靠边越不挡画面。
+                // 边距跟着缩放同比放大,大字号时也不会压到屏幕边。
+                int m = (int)Math.Round(10 * k);
                 int cx = (corner == "tl" || corner == "bl") ? wa.Left + m : wa.Right - w - m;
                 int cy = (corner == "tl" || corner == "tr") ? wa.Top + m : wa.Bottom - h - m;
                 Location = new Point(cx, cy);
@@ -232,11 +243,15 @@ namespace FrameForge
                 if (k < 0.6f) k = 0.6f;
                 if (k > 2.4f) k = 2.4f;
 
-                string[] labels = BuildLabels();
-                string[] values = BuildValues();
+                string style = st.OverlayStyle;
+                List<Row> rows = BuildRows();
                 // 一个显示项都没勾时窗口收起,但这只是"暂时没内容",开关并没有关。
+                // 简洁样式只画帧率/低帧/温度,别的项即使勾了也不会出现在那一行里,
+                // 所以它的"有内容"和堆叠样式分开判断,免得挂一条"-- FPS"在屏幕上。
                 // 这里不 Show,否则会和下面的 Hide 每 200ms 来回切,画面一直闪。
-                if (labels.Length == 0) { lastKey = ""; if (Visible) Hide(); return; }
+                bool miniData = st.ShowFps || st.ShowLow || st.ShowGpuTemp;
+                bool hasData = style == "mini" ? miniData : rows.Count > 0;
+                if (!hasData) { lastKey = ""; if (Visible) Hide(); return; }
 
                 // 开关还开着却看不见窗口(内容清空过、或被游戏切全屏时系统收走了),
                 // 先自愈:重新 Show 并清掉缓存,下一帧全量重画。
@@ -253,11 +268,9 @@ namespace FrameForge
                 Rectangle wa = TargetBounds();
                 if (wa != lastWa) { lastWa = wa; lastKey = ""; }
 
-                string style = st.OverlayStyle;
                 string key = style + "|" + st.OverlayScale.ToString("0.00", CultureInfo.InvariantCulture)
                            + "|" + k.ToString("0.00", CultureInfo.InvariantCulture)
-                           + "|" + st.OverlayCorner
-                           + "|" + string.Join(",", labels) + "|" + string.Join(",", values);
+                           + "|" + st.OverlayCorner + "|" + RowsKey(rows);
                 if (key == lastKey)
                 {
                     // 位置可能被游戏顶掉,内容没变也要重新声明置顶。
@@ -265,64 +278,100 @@ namespace FrameForge
                     return;
                 }
                 lastKey = key;
-                int pad = (int)Math.Round(12 * k);
                 float labelPt = 9.2f * k;
                 float valuePt = 12f * k;
+                // 内边距按样式分开给:堆叠 OSD 是贴角的窄条,上下左右只留几个像素,
+                // 行距也压紧,整块面积比原来小一圈,挡住的画面更少。
+                int padX = (int)Math.Round(8 * k);
+                int padY = (int)Math.Round(6 * k);
 
-                // 横向样式:每块占的宽度必须和绘制时的推进量一字不差地对应,
-                // 否则误差会随列数累加,最后一两列被挤出画布,看起来就是"后面的字显示不全"。
-                float gap1 = 4 * k;    // 标签与数值之间
-                float gap2 = 12 * k;   // 两组数据之间
+                // 每块占的宽度必须和绘制时的推进量一字不差地对应,否则误差会随列数累加,
+                // 最后一两列被挤出画布,看起来就是"后面的字显示不全"。
+                float gap1 = 4 * k;    // 同一组内:标签与数值、数值与数值之间
+                float gap2 = 10 * k;   // 横向样式:两组数据之间
+                float gapV = 12 * k;   // 竖向:设备名与第一列数值之间
+                float gapC = 10 * k;   // 竖向:数值列之间
+                float rowH = (float)Math.Round(19 * k);   // 竖向行距(小飞机那种紧凑行距)
 
                 int w = 0, h = 0;
-                int[] colW = new int[labels.Length];
+                int labelMax = 0;
+                int[] colW = new int[0];
                 using (Bitmap probe = new Bitmap(1, 1))
                 using (Graphics pg = Graphics.FromImage(probe))
                 {
                     pg.TextRenderingHint = TextRenderingHint.AntiAlias;
-                    for (int i = 0; i < labels.Length; i++)
+                    Font lf = OverlayFont(labelPt, FontStyle.Regular);
+                    Font vf = OverlayFont(valuePt, FontStyle.Bold);
+
+                    // 分组排布:同一台设备的数值并到一行(CPU 只写一次),
+                    // 同一列在所有行里按最宽的那一项对齐。
+                    int cols = 0;
+                    for (int i = 0; i < rows.Count; i++)
                     {
-                        SizeF a = pg.MeasureString(labels[i], OverlayFont(labelPt, FontStyle.Regular), int.MaxValue, Typo);
-                        SizeF b = pg.MeasureString(values[i], OverlayFont(valuePt, FontStyle.Bold), int.MaxValue, Typo);
-                        colW[i] = (int)Math.Ceiling(a.Width + gap1 + b.Width + gap2);
+                        Row r = rows[i];
+                        int lw = (int)Math.Ceiling(pg.MeasureString(r.Label, lf, int.MaxValue, Typo).Width);
+                        if (lw > labelMax) labelMax = lw;
+                        if (r.Cells.Count > cols) cols = r.Cells.Count;
                     }
+                    if (cols < 1) cols = 1;
+                    colW = new int[cols];
+                    for (int i = 0; i < rows.Count; i++)
+                    {
+                        Row r = rows[i];
+                        for (int c = 0; c < r.Cells.Count; c++)
+                        {
+                            int cw = (int)Math.Ceiling(pg.MeasureString(r.Cells[c], vf, int.MaxValue, Typo).Width);
+                            if (cw > colW[c]) colW[c] = cw;
+                        }
+                    }
+
                     if (style == "v")
                     {
-                        int labelMax = 0, valueMax = 0;
-                        for (int i = 0; i < labels.Length; i++)
-                        {
-                            int lw = (int)Math.Ceiling(pg.MeasureString(labels[i], OverlayFont(labelPt, FontStyle.Regular), int.MaxValue, Typo).Width);
-                            int vw = (int)Math.Ceiling(pg.MeasureString(values[i], OverlayFont(valuePt, FontStyle.Bold), int.MaxValue, Typo).Width);
-                            if (lw > labelMax) labelMax = lw;
-                            if (vw > valueMax) valueMax = vw;
-                        }
-                        w = labelMax + valueMax + pad * 3;
-                        h = labels.Length * (int)Math.Round(21 * k) + pad * 2;
+                        int body = labelMax + (int)Math.Ceiling(gapV);
+                        for (int c = 0; c < cols; c++)
+                            body += colW[c] + (c + 1 < cols ? (int)Math.Ceiling(gapC) : 0);
+                        w = body + padX * 2;
+                        h = (int)Math.Round(rows.Count * rowH) + padY * 2;
                     }
                     else if (style == "mini")
                     {
-                        w = (int)Math.Ceiling(pg.MeasureString(values[0], OverlayFont(valuePt * 1.35f, FontStyle.Bold), int.MaxValue, Typo).Width) + pad * 2;
-                        h = (int)Math.Round(34 * k) + pad;
+                        w = (int)Math.Ceiling(pg.MeasureString(MiniText(), OverlayFont(valuePt * 1.35f, FontStyle.Bold), int.MaxValue, Typo).Width) + padX * 2;
+                        h = (int)Math.Round(28 * k) + padY * 2;
                     }
                     else
                     {
-                        for (int i = 0; i < labels.Length; i++) w += colW[i];
-                        w += pad * 2;
-                        h = (int)Math.Round(34 * k) + pad;
+                        // 横向:每组"设备名 + 若干数值"占一块,块与块之间留 gap2。
+                        int width = 0;
+                        for (int i = 0; i < rows.Count; i++)
+                        {
+                            Row r = rows[i];
+                            width += (int)Math.Ceiling(pg.MeasureString(r.Label, lf, int.MaxValue, Typo).Width + gap1);
+                            for (int c = 0; c < r.Cells.Count; c++)
+                                width += (int)Math.Ceiling(pg.MeasureString(r.Cells[c], vf, int.MaxValue, Typo).Width + gap1);
+                            width += (int)Math.Ceiling(gap2);
+                        }
+                        w = width + padX * 2;
+                        h = (int)Math.Round(24 * k) + padY * 2;
                     }
                 }
                 if (w < 40) w = 40;
                 if (h < 24) h = 24;
+                // 尺寸上限:读数异常(比如某传感器返回了超长字符串)时也不去申请一张
+                // 几万像素宽的位图,避免一次性吃光 GDI 内存。
+                if (w > 4096) w = 4096;
+                if (h > 2048) h = 2048;
 
                 // 尺寸算出来后再摆放:居中要按实际宽高算。
                 // 用户正在拖动时不能改 Location,否则每 200ms 会被拉回原位置。
                 if (!moving) PlaceIfNeeded(w, h, k);
                 KeepTopmost();
 
-                using (Bitmap bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb))
+                Bitmap bmp = Canvas(w, h);
+                if (bmp != null)
                 {
                     using (Graphics g = Graphics.FromImage(bmp))
                     {
+                        g.Clear(Color.Transparent);
                         g.SmoothingMode = SmoothingMode.AntiAlias;
                         g.TextRenderingHint = TextRenderingHint.AntiAlias;
                         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
@@ -332,17 +381,27 @@ namespace FrameForge
                         // 相当于数字自带描边,背景仍然完全透明。
                         if (style == "v")
                         {
-                            int y = pad;
-                            int rowH = (int)Math.Round(21 * k);
+                            // 小飞机那种分组排布:左边设备名只出现一次,右边是这台设备的各项数值。
+                            // 同一列的数值右对齐,读数长短变化时列不会左右抖。
+                            float y = padY;
                             Font lf = OverlayFont(labelPt, FontStyle.Regular);
                             Font vf = OverlayFont(valuePt, FontStyle.Bold);
-                            for (int i = 0; i < labels.Length; i++)
+                            for (int i = 0; i < rows.Count; i++)
                             {
+                                Row r = rows[i];
+                                SizeF ls = g.MeasureString(r.Label, lf, int.MaxValue, Typo);
                                 using (var b = new SolidBrush(Color.FromArgb(225, 206, 214, 226)))
-                                    ShadowString(g, labels[i], lf, b, pad, y + 2 * k, k);
-                                float vw = g.MeasureString(values[i], vf, int.MaxValue, Typo).Width;
-                                using (var b = new SolidBrush(ValueColor(i)))
-                                    ShadowString(g, values[i], vf, b, w - pad - vw, y + 1 * k, k);
+                                    ShadowString(g, r.Label, lf, b, padX, y + (rowH - ls.Height) / 2f, k);
+
+                                float cx = padX + labelMax + gapV;
+                                for (int c = 0; c < r.Cells.Count; c++)
+                                {
+                                    SizeF cs = g.MeasureString(r.Cells[c], vf, int.MaxValue, Typo);
+                                    using (var b = new SolidBrush(r.FpsCell && c == 0 ? FpsColor : Color.White))
+                                        ShadowString(g, r.Cells[c], vf, b, cx + colW[c] - cs.Width,
+                                            y + (rowH - cs.Height) / 2f, k);
+                                    cx += colW[c] + gapC;
+                                }
                                 y += rowH;
                             }
                         }
@@ -350,7 +409,7 @@ namespace FrameForge
                         {
                             // 帧率数字用粉色,后面的温度保持白色,和小飞机那种"只高亮帧率"一致。
                             Font f = OverlayFont(valuePt * 1.35f, FontStyle.Bold);
-                            string text = values[0];
+                            string text = MiniText();
                             int cut = text.IndexOf("   ", StringComparison.Ordinal);
                             string head = cut > 0 ? text.Substring(0, cut) : text;
                             string tail = cut > 0 ? text.Substring(cut).Trim() : "";
@@ -367,20 +426,25 @@ namespace FrameForge
                         }
                         else
                         {
-                            float x = pad;
+                            float x = padX;
                             float cy = h / 2f;
                             Font lf = OverlayFont(labelPt, FontStyle.Regular);
                             Font vf = OverlayFont(valuePt, FontStyle.Bold);
-                            for (int i = 0; i < labels.Length; i++)
+                            for (int i = 0; i < rows.Count; i++)
                             {
-                                SizeF ls = g.MeasureString(labels[i], lf, int.MaxValue, Typo);
+                                Row r = rows[i];
+                                SizeF ls = g.MeasureString(r.Label, lf, int.MaxValue, Typo);
                                 using (var b = new SolidBrush(Color.FromArgb(220, 196, 206, 220)))
-                                    ShadowString(g, labels[i], lf, b, x, cy - ls.Height / 2f, k);
+                                    ShadowString(g, r.Label, lf, b, x, cy - ls.Height / 2f, k);
                                 x += ls.Width + gap1;
-                                SizeF vs = g.MeasureString(values[i], vf, int.MaxValue, Typo);
-                                using (var b = new SolidBrush(ValueColor(i)))
-                                    ShadowString(g, values[i], vf, b, x, cy - vs.Height / 2f, k);
-                                x += vs.Width + gap2;
+                                for (int c = 0; c < r.Cells.Count; c++)
+                                {
+                                    SizeF cs = g.MeasureString(r.Cells[c], vf, int.MaxValue, Typo);
+                                    using (var b = new SolidBrush(r.FpsCell && c == 0 ? FpsColor : Color.White))
+                                        ShadowString(g, r.Cells[c], vf, b, x, cy - cs.Height / 2f, k);
+                                    x += cs.Width + gap1;
+                                }
+                                x += gap2;
                             }
                         }
                     }
@@ -390,7 +454,12 @@ namespace FrameForge
             }
             catch (Exception ex)
             {
-                Log.Write("overlay render: " + ex.Message);
+                // 渲染失败不能把整个程序带走,也不能每 200ms 写一次日志。一分钟记一条就够定位。
+                if ((DateTime.Now - lastErrLog).TotalSeconds >= 60)
+                {
+                    lastErrLog = DateTime.Now;
+                    Log.Write("overlay render: " + ex.Message);
+                }
             }
         }
 
@@ -416,57 +485,96 @@ namespace FrameForge
             g.DrawString(text, font, brush, x, y, Typo);
         }
 
-        /// <summary>帧率那一项用"小飞机"粉,其他数值保持白色。</summary>
-        private Color ValueColor(int i)
+        /// <summary>叠加层的一行:一个设备名 + 它的若干项数值(占用 / 温度 / 时钟……)。</summary>
+        private sealed class Row
         {
-            return (i == 0 && st.ShowFps) ? FpsColor : Color.White;
+            public string Label = "";
+            public readonly List<string> Cells = new List<string>();
+            public bool FpsCell;
         }
 
-        private string[] BuildLabels()
+        /// <summary>
+        /// 按设备分组生成行,和小飞机的 OSD 一样:CPU 只写一次,占用和温度并排放在后面,
+        /// 而不是每项都带一遍"CPU"前缀。行顺序即显示顺序。
+        /// </summary>
+        private List<Row> BuildRows()
         {
-            var l = new System.Collections.Generic.List<string>();
-            if (st.ShowFps) l.Add("FPS");
-            if (st.ShowLow) l.Add("1% LOW");
-            if (st.ShowCpu) l.Add("CPU");
-            if (st.ShowGpu) l.Add("GPU");
-            if (st.ShowCpuTemp) l.Add(I18n.IsEn ? "CPU TEMP" : "CPU 温度");
-            if (st.ShowGpuTemp) l.Add(I18n.IsEn ? "GPU TEMP" : "GPU 温度");
-            if (st.ShowRam) l.Add(I18n.IsEn ? "RAM" : "内存");
-            if (st.ShowRamPct) l.Add(I18n.IsEn ? "RAM %" : "内存%");
-            if (st.ShowClock) l.Add(I18n.IsEn ? "TIME" : "时间");
-            if (st.ShowSession) l.Add(I18n.IsEn ? "UPTIME" : "时长");
-            if (st.OverlayStyle == "mini") { l.Clear(); l.Add("FPS"); }
-            return l.ToArray();
-        }
+            var rows = new List<Row>();
 
-        private string[] BuildValues()
-        {
-            var v = new System.Collections.Generic.List<string>();
-            string fpsText = fps > 0 ? fps.ToString("0") : "--";
-            if (st.ShowFps) v.Add(fpsText);
-            if (st.ShowLow) v.Add(low > 0 ? low.ToString("0") : "--");
-            if (st.ShowCpu) v.Add(last.Cpu >= 0 ? last.Cpu.ToString("0") + "%" : "--");
-            if (st.ShowGpu) v.Add(last.Gpu >= 0 ? last.Gpu.ToString("0") + "%" : "--");
-            if (st.ShowCpuTemp) v.Add(last.CpuTemp >= 0 ? last.CpuTemp.ToString("0") + "°" : "--");
-            if (st.ShowGpuTemp) v.Add(last.GpuTemp >= 0 ? last.GpuTemp.ToString("0") + "°" : "--");
-            if (st.ShowRam) v.Add(last.RamUsed > 0 ? ((double)last.RamUsed / 1073741824.0).ToString("0.0") + "G" : "--");
-            if (st.ShowRamPct) v.Add(last.RamPct >= 0 ? last.RamPct.ToString("0") + "%" : "--");
-            if (st.ShowClock) v.Add(DateTime.Now.ToString("HH:mm:ss"));
+            if (st.ShowFps || st.ShowLow)
+            {
+                Row r = new Row();
+                r.Label = "FPS";
+                r.FpsCell = st.ShowFps;
+                if (st.ShowFps) r.Cells.Add(fps > 0 ? fps.ToString("0") : "--");
+                if (st.ShowLow) r.Cells.Add("1% " + (low > 0 ? low.ToString("0") : "--"));
+                rows.Add(r);
+            }
+            if (st.ShowCpu)
+            {
+                Row r = new Row();
+                r.Label = "CPU";
+                r.Cells.Add(last.Cpu >= 0 ? last.Cpu.ToString("0") + "%" : "--");
+                rows.Add(r);
+            }
+            if (st.ShowGpu || st.ShowGpuTemp)
+            {
+                Row r = new Row();
+                r.Label = "GPU";
+                if (st.ShowGpu) r.Cells.Add(last.Gpu >= 0 ? last.Gpu.ToString("0") + "%" : "--");
+                if (st.ShowGpuTemp) r.Cells.Add(last.GpuTemp >= 0 ? last.GpuTemp.ToString("0") + "°" : "--");
+                rows.Add(r);
+            }
+            if (st.ShowRam || st.ShowRamPct)
+            {
+                Row r = new Row();
+                r.Label = I18n.IsEn ? "RAM" : "内存";
+                if (st.ShowRam) r.Cells.Add(last.RamUsed > 0 ? ((double)last.RamUsed / 1073741824.0).ToString("0.0") + "G" : "--");
+                if (st.ShowRamPct) r.Cells.Add(last.RamPct >= 0 ? last.RamPct.ToString("0") + "%" : "--");
+                rows.Add(r);
+            }
+            if (st.ShowClock)
+            {
+                Row r = new Row();
+                r.Label = I18n.IsEn ? "TIME" : "时间";
+                r.Cells.Add(DateTime.Now.ToString("HH:mm:ss"));
+                rows.Add(r);
+            }
             if (st.ShowSession)
             {
                 TimeSpan t = DateTime.Now - upFrom;
                 if (t.TotalSeconds < 0) t = TimeSpan.Zero;
-                v.Add(((int)t.TotalMinutes).ToString() + ":" + t.Seconds.ToString("00"));
+                Row r = new Row();
+                r.Label = I18n.IsEn ? "UPTIME" : "时长";
+                r.Cells.Add(((int)t.TotalMinutes).ToString() + ":" + t.Seconds.ToString("00"));
+                rows.Add(r);
             }
-            if (st.OverlayStyle == "mini")
+            return rows;
+        }
+
+        /// <summary>简洁样式:一行"帧率 + 温度",用三空格分隔,绘制时拆成两段上色。</summary>
+        private string MiniText()
+        {
+            string text = (fps > 0 ? fps.ToString("0") : "--") + " FPS";
+            if (st.ShowGpuTemp && last.GpuTemp >= 0) text += "   " + last.GpuTemp.ToString("0") + "°";
+            return text;
+        }
+
+        /// <summary>内容签名:只有文字或排布变了才重新量尺寸、重画。</summary>
+        private static string RowsKey(List<Row> rows)
+        {
+            string s = "";
+            for (int i = 0; i < rows.Count; i++)
             {
-                v.Clear();
-                string text = fpsText + " FPS";
-                if (st.ShowGpuTemp && last.GpuTemp >= 0) text += "   " + last.GpuTemp.ToString("0") + "°";
-                if (st.ShowCpuTemp && last.CpuTemp >= 0) text += "   " + last.CpuTemp.ToString("0") + "°";
-                v.Add(text);
+                if (i > 0) s += "|";
+                s += rows[i].Label + ":";
+                for (int c = 0; c < rows[i].Cells.Count; c++)
+                {
+                    if (c > 0) s += ",";
+                    s += rows[i].Cells[c];
+                }
             }
-            return v.ToArray();
+            return s;
         }
 
         private Font OverlayFont(float px, FontStyle style)
@@ -475,7 +583,9 @@ namespace FrameForge
             Font f;
             if (fonts.TryGetValue(key, out f)) return f;
 
-            if (fonts.Count > 12)
+            // 缩放在滑杆上是 1% 一档的,每动一下就是一组新字号。缓存留够两档 DPI 的余量,
+            // 拖滑杆时不会走到"清空缓存→重新建字体"的抖动里。
+            if (fonts.Count > 24)
             {
                 foreach (Font old in fonts.Values) { try { old.Dispose(); } catch { } }
                 fonts.Clear();
@@ -488,15 +598,48 @@ namespace FrameForge
             return f;
         }
 
+        /// <summary>复用的绘制画布:尺寸没变就不重新分配,尺寸变了换一张。</summary>
+        private Bitmap Canvas(int w, int h)
+        {
+            if (canvas != null && canvasW == w && canvasH == h) return canvas;
+            ReleaseCanvas();
+            try
+            {
+                canvas = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+                canvasW = w;
+                canvasH = h;
+            }
+            catch
+            {
+                // 内存紧张时这一帧放弃绘制,下一帧再试;不要把异常抛到定时器外面。
+                canvas = null;
+                canvasW = 0;
+                canvasH = 0;
+            }
+            return canvas;
+        }
+
+        private void ReleaseCanvas()
+        {
+            if (canvas != null) { try { canvas.Dispose(); } catch { } }
+            canvas = null;
+            canvasW = 0;
+            canvasH = 0;
+        }
+
         /// <summary>把 GDI+ 绘制的 32bpp 位图预乘 alpha 后交给 UpdateLayeredWindow。</summary>
         private void Blit(Bitmap bmp, int w, int h)
         {
+            if (bmp == null || w <= 0 || h <= 0) return;
+
             if (memDc == IntPtr.Zero || bmpW != w || bmpH != h)
             {
                 ReleaseDib();
                 IntPtr screen = Native.GetDC(IntPtr.Zero);
+                if (screen == IntPtr.Zero) return;
                 memDc = Native.CreateCompatibleDC(screen);
                 Native.ReleaseDC(IntPtr.Zero, screen);
+                if (memDc == IntPtr.Zero) return;
 
                 var header = new Native.BITMAPINFOHEADER();
                 header.biSize = (uint)Marshal.SizeOf(typeof(Native.BITMAPINFOHEADER));
@@ -506,10 +649,18 @@ namespace FrameForge
                 header.biBitCount = 32;
                 header.biCompression = 0;     // BI_RGB
                 dib = Native.CreateDIBSection(memDc, ref header, 0, out dibBits, IntPtr.Zero, 0);
+                if (dib == IntPtr.Zero || dibBits == IntPtr.Zero)
+                {
+                    // 建 DIB 失败时绝不能继续往 dibBits 里写:那不是托管异常,
+                    // 而是访问冲突,整个进程会被直接终止(游戏还开着的话就成了"优化器把游戏带崩")。
+                    ReleaseDib();
+                    return;
+                }
                 oldObj = Native.SelectObject(memDc, dib);
                 bmpW = w; bmpH = h;
             }
 
+            if (dibBits == IntPtr.Zero) return;
             BitmapData data = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
             try { Premultiply(data.Scan0, dibBits, w * h); }
             finally { bmp.UnlockBits(data); }
@@ -522,25 +673,32 @@ namespace FrameForge
             blend.BlendFlags = 0;
             blend.SourceConstantAlpha = 255;
             blend.AlphaFormat = Native.AC_SRC_ALPHA;
-            Native.UpdateLayeredWindow(Handle, IntPtr.Zero, ref dst, ref size, memDc, ref src, 0, ref blend, Native.ULW_ALPHA);
+            if (!Native.UpdateLayeredWindow(Handle, IntPtr.Zero, ref dst, ref size, memDc, ref src, 0, ref blend, Native.ULW_ALPHA))
+            {
+                // 失败通常只是这一帧没上屏(窗口正在重建/切全屏)。DIB 本身仍然有效,
+                // 保留它下一帧直接重试,反复重建反而会一直分配 GDI 内存。
+                return;
+            }
         }
 
         /// <summary>UpdateLayeredWindow 的 AC_SRC_ALPHA 要求颜色分量已按 alpha 预乘。</summary>
-        private static void Premultiply(IntPtr src, IntPtr dst, int pixels)
+        private void Premultiply(IntPtr src, IntPtr dst, int pixels)
         {
             int bytes = pixels * 4;
-            var row = new byte[bytes];
-            Marshal.Copy(src, row, 0, bytes);
+            if (bytes <= 0) return;
+            // 缓冲按最大尺寸留一次,之后每帧复用,避免 5 次/秒的几百 KB 临时分配。
+            if (premul.Length < bytes) premul = new byte[bytes];
+            Marshal.Copy(src, premul, 0, bytes);
             for (int i = 0; i < bytes; i += 4)
             {
-                int a = row[i + 3];
+                int a = premul[i + 3];
                 if (a == 255) continue;
-                if (a == 0) { row[i] = 0; row[i + 1] = 0; row[i + 2] = 0; continue; }
-                row[i] = (byte)(row[i] * a / 255);
-                row[i + 1] = (byte)(row[i + 1] * a / 255);
-                row[i + 2] = (byte)(row[i + 2] * a / 255);
+                if (a == 0) { premul[i] = 0; premul[i + 1] = 0; premul[i + 2] = 0; continue; }
+                premul[i] = (byte)(premul[i] * a / 255);
+                premul[i + 1] = (byte)(premul[i + 1] * a / 255);
+                premul[i + 2] = (byte)(premul[i + 2] * a / 255);
             }
-            Marshal.Copy(row, 0, dst, bytes);
+            Marshal.Copy(premul, 0, dst, bytes);
         }
 
         private void ReleaseDib()
@@ -560,6 +718,7 @@ namespace FrameForge
         {
             timer.Stop();
             ReleaseDib();
+            ReleaseCanvas();
             base.OnFormClosing(e);
         }
 
@@ -567,9 +726,12 @@ namespace FrameForge
         {
             if (disposing)
             {
+                try { timer.Stop(); timer.Dispose(); } catch { }
                 ReleaseDib();
+                ReleaseCanvas();
                 foreach (Font f in fonts.Values) { try { f.Dispose(); } catch { } }
                 fonts.Clear();
+                premul = new byte[0];
             }
             base.Dispose(disposing);
         }

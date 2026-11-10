@@ -20,9 +20,10 @@ namespace FrameForge
 
         // 叠加层
         public bool OverlayOn = false;
-        public string OverlayStyle = "h";     // h | v | mini
+        // 默认竖向 + 左上:和小飞机一样是贴角的窄条,占地最小。
+        public string OverlayStyle = "v";     // h | v | mini
         // auto = 按样式默认摆位(可拖动)| tl/tr/bl/br = 固定在屏幕四角
-        public string OverlayCorner = "auto";
+        public string OverlayCorner = "tl";
         public int OverlayX = -1;             // -1 = 自动放右上角
         public int OverlayY = -1;
         public double OverlayScale = 1.0;
@@ -30,7 +31,6 @@ namespace FrameForge
         public bool ShowFps = true;
         public bool ShowCpu = false;
         public bool ShowGpu = true;
-        public bool ShowCpuTemp = true;       // CPU 温度(WMI,取不到显示 --)
         public bool ShowGpuTemp = true;       // GPU 温度(NVML)
         public bool ShowRam = false;
         public bool ShowRamPct = false;       // 内存占用百分比
@@ -70,8 +70,10 @@ namespace FrameForge
         public int FilterSaturation = 0;
         public int FilterWarmth = 0;
         public int FilterTint = 0;            // 色调:负值偏绿、正值偏洋红 -100..100
-        public int FilterDark = 0;            // 暗部场景平衡 0..100
-        public int FilterVibrance = 0;        // 数字振动 0..100
+        public int FilterDark = 50;           // 暗部场景平衡 0..100(50 为默认)
+        public bool FilterDarkOn = false;     // 暗部场景平衡开关
+        public int FilterVibrance = 50;       // 数字振动 0..100(50 为默认)
+        public bool FilterVibranceOn = false; // 数字振动开关
         public string FilterIcc = "";         // 当前生效的 ICC 配置文件路径,空 = 只用 sRGB
 
         /// <summary>导入过的 ICC 配置文件:路径固定,名字由用户自己起。</summary>
@@ -163,11 +165,9 @@ namespace FrameForge
                 case "showcpu": ShowCpu = Bool(v, false); break;
                 case "showgpu": ShowGpu = Bool(v, true); break;
                 case "showtemp":
-                    // 旧版本只有一个"温度"项,按 GPU 温度处理;两个都置为同值,升级后不会突然少一项。
-                    bool t = Bool(v, true);
-                    ShowCpuTemp = t; ShowGpuTemp = t;
+                    // 旧版本只有一个"温度"项,现在只剩 GPU 温度,直接按它处理。
+                    ShowGpuTemp = Bool(v, true);
                     break;
-                case "showcputemp": ShowCpuTemp = Bool(v, true); break;
                 case "showgputemp": ShowGpuTemp = Bool(v, true); break;
                 case "showram": ShowRam = Bool(v, false); break;
                 case "showrampct": ShowRamPct = Bool(v, false); break;
@@ -198,8 +198,10 @@ namespace FrameForge
                 case "filtersaturation": FilterSaturation = Int(v, 0); break;
                 case "filterwarmth": FilterWarmth = Int(v, 0); break;
                 case "filtertint": FilterTint = Int(v, 0); break;
-                case "filterdark": FilterDark = Int(v, 0); break;
-                case "filtervibrance": FilterVibrance = Int(v, 0); break;
+                case "filterdark": FilterDark = Int(v, 50); break;
+                case "filterdarkon": FilterDarkOn = Bool(v, false); break;
+                case "filtervibrance": FilterVibrance = Int(v, 50); break;
+                case "filtervibranceon": FilterVibranceOn = Bool(v, false); break;
                 case "filtericc": FilterIcc = v; break;
                 case "iccprofile": AddIccProfile(v); break;
                 case "reportauto": ReportAuto = Bool(v, true); break;
@@ -232,7 +234,6 @@ namespace FrameForge
                 sb.AppendLine("showFps=" + B(ShowFps));
                 sb.AppendLine("showCpu=" + B(ShowCpu));
                 sb.AppendLine("showGpu=" + B(ShowGpu));
-                sb.AppendLine("showCpuTemp=" + B(ShowCpuTemp));
                 sb.AppendLine("showGpuTemp=" + B(ShowGpuTemp));
                 sb.AppendLine("showRam=" + B(ShowRam));
                 sb.AppendLine("showRamPct=" + B(ShowRamPct));
@@ -264,7 +265,9 @@ namespace FrameForge
                 sb.AppendLine("filterWarmth=" + FilterWarmth.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterTint=" + FilterTint.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterDark=" + FilterDark.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("filterDarkOn=" + B(FilterDarkOn));
                 sb.AppendLine("filterVibrance=" + FilterVibrance.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("filterVibranceOn=" + B(FilterVibranceOn));
                 sb.AppendLine("filterIcc=" + FilterIcc);
                 for (int i = 0; i < IccList.Count; i++)
                     sb.AppendLine("iccProfile=" + IccList[i].Name + "|" + IccList[i].Path);

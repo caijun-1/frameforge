@@ -606,8 +606,42 @@ namespace FrameForge.Sys
         {
             if (path.Length == 0) return false;
             string p = path.ToLowerInvariant().Replace('/', '\\');
+            // 平台自带的启动器 / 内嵌浏览器 / 运行库也装在游戏目录下,但它们不是游戏。
+            if (p.IndexOf("\\launcher\\") >= 0 || p.IndexOf("\\portal\\") >= 0
+                || p.IndexOf("\\cef\\") >= 0 || p.IndexOf("\\commonredist\\") >= 0
+                || p.IndexOf("\\redistributables\\") >= 0 || p.IndexOf("\\steamworks shared\\") >= 0)
+                return false;
             for (int i = 0; i < Libraries.Length; i++)
                 if (p.IndexOf(Libraries[i], StringComparison.Ordinal) >= 0) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// 按引擎特征识别游戏本体的进程。内置库没收录、又没装在常见游戏目录里的
+        /// 游戏(独立游戏、自建安装目录)靠这一条也能认出来:
+        /// Unreal 的 Binaries\Win64 + *-Win64-Shipping、Unity 的 &lt;exe&gt;_Data 或 UnityPlayer.dll、
+        /// Godot 的 .pck。只认游戏本体的产物,Unreal 编辑器等 Engine\Binaries 一律排除。
+        /// </summary>
+        public static bool EngineGame(int pid)
+        {
+            string path = ProcessPath(pid);
+            if (path.Length == 0) return false;
+            string p = path.ToLowerInvariant().Replace('/', '\\');
+            if (p.IndexOf("\\engine\\binaries\\") >= 0) return false;
+            if (p.IndexOf("\\binaries\\win64\\") >= 0 || p.IndexOf("\\binaries\\win32\\") >= 0) return true;
+            if (p.IndexOf("-win64-shipping") >= 0 || p.IndexOf("-win32-shipping") >= 0) return true;
+            try
+            {
+                string dir = Path.GetDirectoryName(path);
+                string stem = Path.GetFileNameWithoutExtension(path);
+                if (dir != null && stem != null && stem.Length > 0)
+                {
+                    if (Directory.Exists(Path.Combine(dir, stem + "_Data"))) return true;   // Unity
+                    if (File.Exists(Path.Combine(dir, stem + ".pck"))) return true;         // Godot
+                }
+                if (dir != null && File.Exists(Path.Combine(dir, "UnityPlayer.dll"))) return true;
+            }
+            catch { }
             return false;
         }
 

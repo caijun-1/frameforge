@@ -57,7 +57,7 @@ namespace FrameForge.UI
                 card.Controls.Add(d);
 
                 var t = new TextLabel();
-                t.Size = 9.6f;
+                t.Size = 9.8f;
                 titles[i] = t;
                 card.Controls.Add(t);
 
@@ -69,7 +69,7 @@ namespace FrameForge.UI
                 card.Controls.Add(v);
 
                 var n = new TextLabel();
-                n.Size = 8.3f;
+                n.Size = 8.5f;
                 n.ForeColor = Theme.Faint;
                 n.Ellipsis = true;
                 notes[i] = n;
@@ -356,7 +356,9 @@ namespace FrameForge.UI
             int w = Width - pad * 2;
             int top = Ui.Px(92);
             int bottom = pad;
-            int rowH = Math.Max(Ui.Px(46), (Height - top - bottom) / Rows);
+            // 行高下限 43:十行加上顶部标题在最小窗口高度里也刚好排得下。
+            // 标题 20 + 说明 18 的节奏仍保留,只是行间不再硬留 46 的余量。
+            int rowH = Math.Max(Ui.Px(43), (Height - top - bottom) / Rows);
 
             int dotW = Ui.Px(10);
             // 右侧留一块固定宽度的控件区,开关居中、分段选择吃满,数值列才能对齐。

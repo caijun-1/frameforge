@@ -2,8 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
-using System.Globalization;
-using System.Management;
 using System.Net.NetworkInformation;
 using System.Text;
 using System.Threading;
@@ -15,7 +13,6 @@ namespace FrameForge.Sys
     public class SysSample
     {
         public double Cpu = -1;
-        public double CpuTemp = -1;   // 主板 ACPI 热区温度(WMI),取不到保持 -1
         public double Gpu = -1;
         public double GpuTemp = -1;
         public double GpuClock = -1;
@@ -66,12 +63,6 @@ namespace FrameForge.Sys
         private int lastLoggedPid = -2;
         private int lastLoggedGamePid = -2;
         private DateTime lastScan = DateTime.MinValue;
-
-        // CPU 温度只能走 WMI(ACPI 热区),一次查询要几十毫秒,没必要每秒都查。
-        // 3 秒缓存一次,查不到就一直是 -1,界面显示 -- 而不是编一个数字。
-        private ManagementObjectSearcher thermal;
-        private double lastCpuTemp = -1;
-        private DateTime lastCpuTempAt = DateTime.MinValue;
 
         public volatile SysSample Current = new SysSample();
         public event Action<SysSample> Updated;
@@ -143,9 +134,6 @@ namespace FrameForge.Sys
             }
             if (s.Cpu < 0) s.Cpu = CpuByTimes();
 
-            // ---- CPU 温度 ----
-            s.CpuTemp = ReadCpuTemp();
-
             // ---- GPU ----
             GpuSample g = nvml.Read();
             if (nvml.Available)
@@ -205,8 +193,8 @@ namespace FrameForge.Sys
                 if (FindFullscreenWindow(out found)) gamePid = found;
             }
 
-            // 最后一层兜底:窗口化、小窗口、窗口尺寸读不到的游戏都够不到上面的全屏判定。
-            // 直接扫进程,只要进程是内置库里认识的游戏,且有可见窗口,就算"检测到游戏"。
+            // 最后一层兜底:窗口化、小窗口、以及窗口尺寸读不到的游戏。
+            // 直接扫有可见窗口的进程,命中内置库 / 游戏目录 / 引擎特征任意一条就算检测到游戏。
             // 已经在跟踪的游戏还活着就不用扫,省开销。
             if (gamePid <= 0 && lastGamePid <= 0 && (DateTime.UtcNow - lastScan).TotalMilliseconds > 1500)
             {
@@ -430,7 +418,7 @@ namespace FrameForge.Sys
         }
 
         /// <summary>
-        /// 最后一层兜底:直接扫进程。只要进程是内置库里认识的游戏(或 Java 版我的世界),
+        /// 最后一层兜底:直接扫进程。只要进程命中内置库、游戏平台目录或引擎特征,
         /// 并且有可见、未最小化的窗口,就认为"有游戏在跑"。
         /// 窗口化、小窗口、无边框但尺寸读不到的情况都能靠这一层认出来。
         /// </summary>
@@ -442,6 +430,9 @@ namespace FrameForge.Sys
             catch { return false; }
             if (list == null) return false;
 
+            // 用"有可见窗口的进程"代替 MainWindowHandle:很多游戏的本体窗口不是
+            // 进程的主窗口(MainWindowHandle 为 0),靠它会把已经在跑的游戏漏掉。
+            HashSet<int> visible = VisiblePids();
             try
             {
                 for (int i = 0; i < list.Length; i++)
@@ -455,21 +446,9 @@ namespace FrameForge.Sys
                         // 启动器不是游戏本体:我的世界启动器、各种 game launcher 都要跳过。
                         if (name.IndexOf("launcher", StringComparison.OrdinalIgnoreCase) >= 0) continue;
                         if (IsNonGameName(name)) continue;
-
-                        IntPtr h = p.MainWindowHandle;
-                        if (h == IntPtr.Zero) continue;
-                        if (!Native.IsWindowVisible(h)) continue;
-                        if (Native.IsIconic(h)) continue;
-
-                        // 通用引擎进程名(Client-Win64-Shipping 之类)不认,否则会把
-                        // 任何 Unreal 程序当成游戏;Java 进程靠窗口标题判断;
-                        // 内置库没收录的新游戏,装在 Steam/Epic 等游戏目录下也认。
-                        bool game = GameDb.Known(name);
-                        if (!game && (string.Equals(name, "java", StringComparison.OrdinalIgnoreCase)
-                            || string.Equals(name, "javaw", StringComparison.OrdinalIgnoreCase)))
-                            game = GameDb.JavaGame(p.Id);
-                        if (!game) game = GameDb.LibraryGame(p.Id);
-                        if (!game) continue;
+                        // 有界面才算"在玩",后台进程(更新、服务)不算。
+                        if (!visible.Contains(p.Id)) continue;
+                        if (!KnownGameProcess(p.Id, name)) continue;
 
                         pid = p.Id;
                         return true;
@@ -485,6 +464,27 @@ namespace FrameForge.Sys
                 }
             }
             return false;
+        }
+
+        /// <summary>当前有可见、未最小化顶层窗口的进程集合。</summary>
+        private static HashSet<int> VisiblePids()
+        {
+            var set = new HashSet<int>();
+            try
+            {
+                Native.EnumWindows(delegate(IntPtr h, IntPtr l)
+                {
+                    if (!Native.IsWindowVisible(h) || Native.IsIconic(h)) return true;
+                    int cloaked;
+                    if (Native.DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0) return true;
+                    int p;
+                    Native.GetWindowThreadProcessId(h, out p);
+                    if (p > 4) set.Add(p);
+                    return true;
+                }, IntPtr.Zero);
+            }
+            catch { }
+            return set;
         }
 
         /// <summary>按进程名找正在运行的游戏,优先返回有可见窗口的那个;找不到返回 -1。</summary>
@@ -622,6 +622,11 @@ namespace FrameForge.Sys
                 || lower == "osk" || lower == "ctfmon" || lower == "msctf")
                 return true;
 
+            // 浏览器全屏(F11)和 Chromium 内核的窗口经常铺满屏幕,但显然不是游戏。
+            // 360 全家桶的进程名五花八门(360se / 360chrome / 360ChromeX ...),
+            // 名字里带 360 的一律按浏览器处理,避免再被当成游戏去加速。
+            if (IsBrowserName(lower)) return true;
+
             switch (lower)
             {
                 case "explorer":
@@ -719,10 +724,33 @@ namespace FrameForge.Sys
             }
         }
 
+        /// <summary>浏览器 / Chromium 外壳的进程名关键词,统一在游戏识别里排除。</summary>
+        private static bool IsBrowserName(string lower)
+        {
+            if (lower.Length == 0) return false;
+            if (lower.StartsWith("360", StringComparison.Ordinal)) return true;
+
+            string[] words =
+            {
+                "browser", "chrome", "chromium", "firefox", "msedge", "iexplore",
+                "sogouexplorer", "2345explorer", "maxthon", "liebao", "quark",
+                "wechatappex", "vivaldi", "electron"
+            };
+            for (int i = 0; i < words.Length; i++)
+                if (lower.IndexOf(words[i], StringComparison.Ordinal) >= 0) return true;
+
+            // Opera / Brave 只认精确的进程名:按关键词匹配会误伤 operation 之类的游戏名。
+            if (lower == "opera" || lower.StartsWith("opera_", StringComparison.Ordinal)
+                || lower == "brave" || lower.StartsWith("brave_", StringComparison.Ordinal))
+                return true;
+            return false;
+        }
+
         /// <summary>
-        /// 前台窗口铺满其所在显示器即视为游戏(含无边框全屏)。
-        /// 只看窗口尺寸是否覆盖显示器:不少游戏的无边框全屏窗口仍带 WS_CAPTION 样式却看不到
-        /// 标题栏,以前按窗口样式排除,会把这类游戏误判成普通窗口(界面显示"未检测到游戏")。
+        /// 判定一个窗口是不是游戏。先看正向证据(内置库 / 游戏平台目录 / 引擎特征),
+        /// 有证据就与窗口大小无关,所以窗口化、小窗口、无边框、全屏都能认出来;
+        /// 没有证据的程序只有「铺满屏幕 + 名字读不到或窗口类是游戏引擎」才算,
+        /// 浏览器这类能读到名字的普通程序无论怎么全屏都不会被当成游戏。
         /// </summary>
         public static bool IsGameWindow(IntPtr hwnd, int pid)
         {
@@ -735,6 +763,11 @@ namespace FrameForge.Sys
                 if (IsNonGameName(name)) return false;
                 if (!Native.IsWindowVisible(hwnd)) return false;
 
+                // 先按正向证据判定:内置库 / 游戏平台目录 / Unreal·Unity·Godot 引擎特征。
+                // 这条路径与窗口大小无关,所以小窗口、大窗口、无边框、全屏都能认出来;
+                // 反过来,认不出的程序(比如浏览器)不会因为铺满屏幕就被当成游戏。
+                if (KnownGameProcess(pid, name)) return true;
+
                 Native.RECT r;
                 if (!Native.GetWindowRect(hwnd, out r)) return false;
                 int w = r.Right - r.Left;
@@ -746,55 +779,90 @@ namespace FrameForge.Sys
                 // 部分窗口还带一圈不可见的缩放边框。
                 long area = (long)w * h;
                 long screen = (long)b.Width * b.Height;
-                if (w >= b.Width - 8 && h >= b.Height - 8 && area >= screen * 95 / 100) return true;
+                if (w < b.Width - 8 || h < b.Height - 8 || area < screen * 95 / 100) return false;
 
-                // 我的世界这类常以「最大化窗口」跑的游戏够不到 95%,
-                // 为了不漏检,对明确认得出的游戏放宽到 88%(普通软件仍然不算)。
-                if (area < screen * 88 / 100) return false;
-                return GameDb.Known(name) || GameDb.JavaGame(pid) || GameDb.LibraryGame(pid);
+                // 全屏但认不出进程:只有两种情况还可能是游戏——
+                // 1) 进程名读不到(反作弊保护 / 权限不足);
+                // 2) 窗口类属于游戏引擎(UnrealWindow、UnityWndClass 等)。
+                // 其余未知全屏程序(浏览器、播放器、UWP 应用)一律不算。
+                string cls = WindowClass(hwnd);
+                if (IsNonGameClass(cls)) return false;
+                if (name.Length == 0) return true;
+                return IsGameClass(cls);
             }
             catch { return false; }
         }
 
-        /// <summary>
-        /// CPU 温度:WMI 的 MSAcpi_ThermalZoneTemperature 以"开尔文×10"返回。
-        /// 优先取名里带 CPU/Processor 的热区,没有就取其他热区里最高的一个。
-        /// 主板不暴露 ACPI 热区(部分台式机/虚拟机)就返回 -1,界面显示 --。
-        /// </summary>
-        private double ReadCpuTemp()
+        /// <summary>明确认得出的游戏进程,与窗口尺寸无关。</summary>
+        private static bool KnownGameProcess(int pid, string name)
         {
-            if (lastCpuTempAt != DateTime.MinValue && (DateTime.Now - lastCpuTempAt).TotalSeconds < 3)
-                return lastCpuTemp;
-            lastCpuTempAt = DateTime.Now;
+            if (pid <= 0) return false;
+            // 所有 Java 进程都叫 javaw,内置库里的 javaw 只代表我的世界,
+            // 必须再读窗口标题确认,否则任何 Java 程序都会被当成游戏。
+            if (string.Equals(name, "java", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(name, "javaw", StringComparison.OrdinalIgnoreCase))
+                return GameDb.JavaGame(pid);
+
+            // 枚举窗口时同一个进程会被反复问到,缓存 2 秒避免重复读路径。
+            DateTime now = DateTime.UtcNow;
+            bool hit;
+            lock (gameProcCache)
+            {
+                if ((now - gameProcCacheAt).TotalSeconds > 2)
+                {
+                    gameProcCache.Clear();
+                    gameProcCacheAt = now;
+                }
+                if (gameProcCache.TryGetValue(pid, out hit)) return hit;
+            }
+
+            bool r = false;
             try
             {
-                if (thermal == null)
-                    thermal = new ManagementObjectSearcher("root\\WMI",
-                        "SELECT CurrentTemperature, InstanceName FROM MSAcpi_ThermalZoneTemperature");
-
-                double best = -1, other = -1;
-                foreach (ManagementBaseObject o in thermal.Get())
-                {
-                    try
-                    {
-                        object raw = o["CurrentTemperature"];
-                        if (raw == null) continue;
-                        double c = Convert.ToDouble(raw, CultureInfo.InvariantCulture) / 10.0 - 273.15;
-                        if (c <= 0 || c >= 150) continue;
-                        string name = o["InstanceName"] as string;
-                        name = name == null ? "" : name.ToLowerInvariant();
-                        if (name.IndexOf("cpu") >= 0 || name.IndexOf("proc") >= 0)
-                        {
-                            if (c > best) best = c;
-                        }
-                        else if (c > other) other = c;
-                    }
-                    finally { o.Dispose(); }
-                }
-                lastCpuTemp = best >= 0 ? best : other;
+                if (name.Length > 0 && GameDb.Known(name)) r = true;
+                if (!r) r = GameDb.LibraryGame(pid);
+                if (!r) r = GameDb.EngineGame(pid);
             }
-            catch { lastCpuTemp = -1; }
-            return lastCpuTemp;
+            catch { r = false; }
+
+            lock (gameProcCache) { gameProcCache[pid] = r; }
+            return r;
+        }
+
+        private static readonly Dictionary<int, bool> gameProcCache = new Dictionary<int, bool>();
+        private static DateTime gameProcCacheAt = DateTime.MinValue;
+
+        private static string WindowClass(IntPtr hwnd)
+        {
+            try
+            {
+                var sb = new StringBuilder(256);
+                if (Native.GetClassName(hwnd, sb, sb.Capacity) > 0) return sb.ToString();
+            }
+            catch { }
+            return "";
+        }
+
+        /// <summary>Chromium / 浏览器 / UWP 外壳的窗口类:全屏也不算游戏。</summary>
+        private static bool IsNonGameClass(string cls)
+        {
+            if (cls.Length == 0) return false;
+            if (cls.StartsWith("Chrome_WidgetWin", StringComparison.OrdinalIgnoreCase)) return true;
+            if (cls.StartsWith("MozillaWindowClass", StringComparison.OrdinalIgnoreCase)) return true;
+            if (cls.StartsWith("IEFrame", StringComparison.OrdinalIgnoreCase)) return true;
+            if (cls.StartsWith("ApplicationFrameWindow", StringComparison.OrdinalIgnoreCase)) return true;
+            if (cls.StartsWith("Windows.UI.Core", StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        /// <summary>常见游戏引擎的顶层窗口类:名字读不到时靠它兜底。</summary>
+        private static bool IsGameClass(string cls)
+        {
+            if (cls.Length == 0) return false;
+            string c = cls.ToLowerInvariant();
+            return c == "unrealwindow" || c == "unitywndclass" || c == "valve001"
+                || c == "cryengine" || c == "glfw30" || c == "sdl_app"
+                || c.StartsWith("riotwindowclass") || c.StartsWith("godot");
         }
 
         private static double Clamp(double v, double lo, double hi)
@@ -811,7 +879,6 @@ namespace FrameForge.Sys
             cpuUtility.Dispose();
             gpuEngine.Dispose();
             nvml.Dispose();
-            try { if (thermal != null) thermal.Dispose(); } catch { }
         }
     }
 }

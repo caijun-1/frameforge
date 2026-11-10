@@ -554,7 +554,9 @@ namespace FrameForge.UI
         private void LayoutCards()
         {
             if (Width <= 0 || Height <= 0) return;
-            int pad = Ui.Px(20);
+            // 页面外距由主窗口统一给 20,这里不再叠加:其它页的卡片都是贴着页面排的,
+            // 加速页多一层内缩会让切页时整块内容左右跳 20 像素。
+            int pad = 0;
             int gap = Ui.Px(12);
             int heroH = Math.Max(Ui.Px(160), Math.Min(Ui.Px(178), Height / 5));
             int stripH = Ui.Px(46);
@@ -565,7 +567,8 @@ namespace FrameForge.UI
             hero.SetBounds(pad, y, bodyW, heroH);
             y += heroH + gap;
 
-            int dashH = Math.Max(Ui.Px(200), Height - y - stripH - modeH - gap * 3 - pad);
+            // 底部不再额外留一条:减掉 2 个行间距就够(上方到 y 时已经隔了一个)。
+            int dashH = Math.Max(Ui.Px(200), Height - y - stripH - modeH - gap * 2 - pad);
             int gaugeW = (int)(bodyW * 0.30f);
             int cw = bodyW - gaugeW * 2 - gap * 2;
 
@@ -615,8 +618,9 @@ namespace FrameForge.UI
             trimBtn.SetBounds(btnX, by0 + btnH + Ui.Px(8), btnW, trimH);
             int pinY = by0 + btnH + Ui.Px(8) + trimH + Ui.Px(6);
             pinBtn.SetBounds(btnX, pinY, btnW, pinH);
-            int hintY = pinY + pinH + Ui.Px(4);
-            hint.SetBounds(btnX, hintY, btnW, Math.Max(Ui.Px(14), heroH - hintY - Ui.Px(6)));
+            int hintY = pinY + pinH + Ui.Px(2);
+            // 结果行至少留 16 高(8.5pt 一行的高度),否则最后一行字会被卡片下沿压掉。
+            hint.SetBounds(btnX, hintY, btnW, Math.Max(Ui.Px(16), heroH - hintY - Ui.Px(4)));
 
             // 两侧大圆表(刻度盘已包含标题)
             cpuRing.SetBounds(Ui.Px(4), Ui.Px(6), gaugeW - Ui.Px(8), dashH - Ui.Px(12));
@@ -846,11 +850,11 @@ namespace FrameForge.UI
         private readonly Segmented style, corner;
         private readonly Slider scale;
         private readonly OverlayPreview preview;
-        private readonly Chip[] chips = new Chip[10];
+        private readonly Chip[] chips = new Chip[9];
 
         private static readonly string[] ItemKeys =
         {
-            "fps", "low", "cpu", "cputemp", "gpu", "gputemp", "ram", "rampct", "clock", "session"
+            "fps", "low", "cpu", "gpu", "gputemp", "ram", "rampct", "clock", "session"
         };
         private static readonly string[] CornerKeys = { "auto", "tl", "tr", "bl", "br" };
 
@@ -1027,7 +1031,8 @@ namespace FrameForge.UI
         private static TextLabel Header(string text)
         {
             var l = new TextLabel();
-            l.Size = 9.5f;
+            // 与其它页的区块标题保持同一字号(行标题 9.8,区块标题 10.2)。
+            l.Size = 10.2f;
             l.Style = FontStyle.Bold;
             l.ForeColor = Theme.Sub;
             l.Text = text;
@@ -1079,12 +1084,11 @@ namespace FrameForge.UI
                 case 0: return st.ShowFps;
                 case 1: return st.ShowLow;
                 case 2: return st.ShowCpu;
-                case 3: return st.ShowCpuTemp;
-                case 4: return st.ShowGpu;
-                case 5: return st.ShowGpuTemp;
-                case 6: return st.ShowRam;
-                case 7: return st.ShowRamPct;
-                case 8: return st.ShowClock;
+                case 3: return st.ShowGpu;
+                case 4: return st.ShowGpuTemp;
+                case 5: return st.ShowRam;
+                case 6: return st.ShowRamPct;
+                case 7: return st.ShowClock;
                 default: return st.ShowSession;
             }
         }
@@ -1096,12 +1100,11 @@ namespace FrameForge.UI
                 case 0: st.ShowFps = v; break;
                 case 1: st.ShowLow = v; break;
                 case 2: st.ShowCpu = v; break;
-                case 3: st.ShowCpuTemp = v; break;
-                case 4: st.ShowGpu = v; break;
-                case 5: st.ShowGpuTemp = v; break;
-                case 6: st.ShowRam = v; break;
-                case 7: st.ShowRamPct = v; break;
-                case 8: st.ShowClock = v; break;
+                case 3: st.ShowGpu = v; break;
+                case 4: st.ShowGpuTemp = v; break;
+                case 5: st.ShowRam = v; break;
+                case 6: st.ShowRamPct = v; break;
+                case 7: st.ShowClock = v; break;
                 default: st.ShowSession = v; break;
             }
         }
@@ -1206,7 +1209,7 @@ namespace FrameForge.UI
             itemCard.SetBounds(0, cardH + gap, Width, itemH);
             hintCard.SetBounds(0, cardH + itemH + gap * 2, Width, hintH);
 
-            int pad = Ui.Px(18);
+            int pad = Ui.Px(20);
             int right = ovCard.Width - pad;
             int toggleW = Ui.Px(48);
 
@@ -1282,7 +1285,7 @@ namespace FrameForge.UI
             // 假数据:数值长度覆盖 2~8 个字符(含带秒的时间),用来检验换行/挤位问题。
             private static readonly string[] Samples =
             {
-                "144", "112", "38%", "58°", "76%", "64°", "9.8G", "62%", "21:40:36", "32:08"
+                "144", "112", "38%", "76%", "64°", "9.8G", "62%", "21:40:36", "32:08"
             };
 
             // 和真实叠加层保持同一支粉色(小飞机风格的帧率配色)。
@@ -1364,9 +1367,8 @@ namespace FrameForge.UI
                 Color lc = Color.FromArgb(225, 208, 216, 228);
                 Color vc = Color.White;
 
-                int n = 0;
-                for (int i = 0; i < ItemKeys.Length; i++) if (ItemValue(st, i)) n++;
-                if (n == 0)
+                List<PvRow> rows = PreviewRows();
+                if (rows.Count == 0)
                 {
                     ShadowText(g, I18n.T("ov.preview.none"), Theme.F(9.5f, FontStyle.Regular), lc,
                         Ui.Fp(16), Height / 2f - Ui.Fp(9));
@@ -1379,7 +1381,6 @@ namespace FrameForge.UI
                     // 帧率粉色、温度白色,和真实叠层保持一致。
                     string s = "144 FPS";
                     if (st.ShowGpuTemp) s += "   64°";
-                    if (st.ShowCpuTemp) s += "   58°";
                     int cut = s.IndexOf("   ", StringComparison.Ordinal);
                     string head = cut > 0 ? s.Substring(0, cut) : s;
                     string tail = cut > 0 ? s.Substring(cut).Trim() : "";
@@ -1389,64 +1390,86 @@ namespace FrameForge.UI
                         ? TextRenderer.MeasureText(g, tail, f, Size.Empty, TextFormatFlags.NoPadding) : Size.Empty;
                     float gap = tail.Length > 0 ? Ui.Fp(10) : 0;
                     float total = hs.Width + (tail.Length > 0 ? gap + ts.Width : 0);
-                    float mx = CornerFixed && !CornerLeft ? Width - total - Ui.Fp(16) : (Width - total) / 2f;
-                    float my = CornerFixed && CornerBottom ? Height - hs.Height - Ui.Fp(14) : Ui.Fp(14);
+                    float mx = CornerFixed && !CornerLeft ? Width - total - Ui.Fp(12) : (Width - total) / 2f;
+                    float my = CornerFixed && CornerBottom ? Height - hs.Height - Ui.Fp(12) : Ui.Fp(12);
                     if (mx < Ui.Fp(8)) mx = Ui.Fp(8);
                     ShadowText(g, head, f, FpsColor, mx, my);
                     if (tail.Length > 0) ShadowText(g, tail, f, vc, mx + hs.Width + gap, my);
                     return;
                 }
 
+                float gap1 = Ui.Fp(4) * Scaled();
+                float gapV = Ui.Fp(12) * Scaled();
+                float gapC = Ui.Fp(10) * Scaled();
+                float gap2 = Ui.Fp(14) * Scaled();
+
                 if (st.OverlayStyle == "v")
                 {
-                    // 竖向:两列,列宽按最长标签收窄,和真实叠层的窄条一致。
-                    float rowH = Ui.Fp(16) * Scaled();
-                    float labelW = 0, maxVw = 0;
-                    for (int i = 0; i < ItemKeys.Length; i++)
+                    // 竖向:和真实叠加层一样按设备分组——设备名只写一次,
+                    // 这台设备的各项数值排在后面,同一列右对齐。
+                    float rowH = Ui.Fp(18) * Scaled();
+                    float labelW = 0;
+                    int cols = 1;
+                    for (int i = 0; i < rows.Count; i++)
                     {
-                        if (!ItemValue(st, i)) continue;
-                        Size ls = TextRenderer.MeasureText(g, I18n.T("ov.item." + ItemKeys[i]), lf,
+                        Size ls = TextRenderer.MeasureText(g, rows[i].Label, lf,
                             Size.Empty, TextFormatFlags.NoPadding);
                         if (ls.Width > labelW) labelW = ls.Width;
-                        Size vs = TextRenderer.MeasureText(g, Samples[i], vf,
-                            Size.Empty, TextFormatFlags.NoPadding);
-                        if (vs.Width > maxVw) maxVw = vs.Width;
+                        if (rows[i].Cells.Count > cols) cols = rows[i].Cells.Count;
                     }
-                    float blockW = labelW + Ui.Fp(12) + maxVw;
-                    float bx = CornerFixed && !CornerLeft ? Width - Ui.Fp(16) - blockW : Ui.Fp(16);
+                    float[] colW = new float[cols];
+                    for (int i = 0; i < rows.Count; i++)
+                    {
+                        for (int c = 0; c < rows[i].Cells.Count; c++)
+                        {
+                            float cw = TextRenderer.MeasureText(g, rows[i].Cells[c], vf,
+                                Size.Empty, TextFormatFlags.NoPadding).Width;
+                            if (cw > colW[c]) colW[c] = cw;
+                        }
+                    }
+                    float blockW = labelW + gapV;
+                    for (int c = 0; c < cols; c++)
+                        blockW += colW[c] + (c + 1 < cols ? gapC : 0);
+                    float bx = CornerFixed && !CornerLeft ? Width - Ui.Fp(12) - blockW : Ui.Fp(12);
                     if (bx < Ui.Fp(8)) bx = Ui.Fp(8);
-                    float total = n * rowH;
+                    float total = rows.Count * rowH;
                     float y0;
                     if (!CornerFixed) y0 = (Height - total) / 2f;
-                    else if (CornerBottom) y0 = Height - Ui.Fp(14) - total;
-                    else y0 = Ui.Fp(14);
+                    else if (CornerBottom) y0 = Height - Ui.Fp(12) - total;
+                    else y0 = Ui.Fp(12);
                     float y = y0;
-                    for (int i = 0; i < ItemKeys.Length; i++)
+                    for (int i = 0; i < rows.Count; i++)
                     {
-                        if (!ItemValue(st, i)) continue;
-                        ShadowText(g, I18n.T("ov.item." + ItemKeys[i]), lf, lc, bx, y + Ui.Fp(2));
-                        Size vs = TextRenderer.MeasureText(g, Samples[i], vf, Size.Empty, TextFormatFlags.NoPadding);
-                        Color c = (i == 0 && st.ShowFps) ? FpsColor : vc;
-                        ShadowText(g, Samples[i], vf, c, bx + blockW - vs.Width, y);
+                        PvRow pr = rows[i];
+                        ShadowText(g, pr.Label, lf, lc, bx, y + Ui.Fp(2));
+                        float cx = bx + labelW + gapV;
+                        for (int c = 0; c < pr.Cells.Count; c++)
+                        {
+                            float cw = TextRenderer.MeasureText(g, pr.Cells[c], vf,
+                                Size.Empty, TextFormatFlags.NoPadding).Width;
+                            Color cc = (pr.FpsCell && c == 0) ? FpsColor : vc;
+                            ShadowText(g, pr.Cells[c], vf, cc, cx + colW[c] - cw, y);
+                            cx += colW[c] + gapC;
+                        }
                         y += rowH;
                     }
                     return;
                 }
 
-                // 横向:一行"标签 + 数值",显示项多时按可用宽度折行,否则整行会撑出卡片。
-                float gap1 = Ui.Fp(4) * Scaled(), gap2 = Ui.Fp(14) * Scaled();
-                float[] lw = new float[ItemKeys.Length];
-                float[] iw = new float[ItemKeys.Length];
-                int[] vis = new int[ItemKeys.Length];
-                int nv = 0;
-                for (int i = 0; i < ItemKeys.Length; i++)
+                // 横向:每组"设备名 + 若干数值"占一块,放不下就整组换行。
+                int nr = rows.Count;
+                float[] lw = new float[nr];
+                float[] gw = new float[nr];
+                for (int i = 0; i < nr; i++)
                 {
-                    if (!ItemValue(st, i)) continue;
-                    lw[i] = TextRenderer.MeasureText(g, I18n.T("ov.item." + ItemKeys[i]), lf,
+                    PvRow pr = rows[i];
+                    lw[i] = TextRenderer.MeasureText(g, pr.Label, lf,
                         Size.Empty, TextFormatFlags.NoPadding).Width;
-                    iw[i] = lw[i] + gap1 + TextRenderer.MeasureText(g, Samples[i], vf,
-                        Size.Empty, TextFormatFlags.NoPadding).Width;
-                    vis[nv++] = i;
+                    float wsum = lw[i] + gap1;
+                    for (int c = 0; c < pr.Cells.Count; c++)
+                        wsum += TextRenderer.MeasureText(g, pr.Cells[c], vf,
+                            Size.Empty, TextFormatFlags.NoPadding).Width + gap1;
+                    gw[i] = wsum;
                 }
                 float avail = Width - Ui.Fp(12) * 2f;
                 float lineH = Ui.Fp(19) * Scaled();
@@ -1455,13 +1478,13 @@ namespace FrameForge.UI
                 var lineEnd = new List<int>();
                 var lineWidths = new List<float>();
                 int start = 0;
-                while (start < nv)
+                while (start < nr)
                 {
                     int end = start;
                     float lineW = 0;
-                    while (end < nv)
+                    while (end < nr)
                     {
-                        float cand = lineW + (end > start ? gap2 : 0f) + iw[vis[end]];
+                        float cand = lineW + (end > start ? gap2 : 0f) + gw[end];
                         if (end > start && cand > avail) break;
                         lineW = cand;
                         end++;
@@ -1472,25 +1495,94 @@ namespace FrameForge.UI
                     start = end;
                 }
                 float baseY = CornerFixed && CornerBottom
-                    ? Height - Ui.Fp(14) - lineWidths.Count * lineH
-                    : Ui.Fp(14);
+                    ? Height - Ui.Fp(12) - lineWidths.Count * lineH
+                    : Ui.Fp(12);
                 for (int ln = 0; ln < lineWidths.Count; ln++)
                 {
                     float hx;
                     if (!CornerFixed) hx = (Width - lineWidths[ln]) / 2f;
-                    else if (CornerLeft) hx = Ui.Fp(14);
-                    else hx = Width - Ui.Fp(14) - lineWidths[ln];
+                    else if (CornerLeft) hx = Ui.Fp(12);
+                    else hx = Width - Ui.Fp(12) - lineWidths[ln];
                     if (hx < Ui.Fp(8)) hx = Ui.Fp(8);
                     float hy = baseY + ln * lineH;
                     for (int k = lineStart[ln]; k < lineEnd[ln]; k++)
                     {
-                        int i = vis[k];
-                        ShadowText(g, I18n.T("ov.item." + ItemKeys[i]), lf, lc, hx, hy + Ui.Fp(3));
-                        Color c = (i == 0 && st.ShowFps) ? FpsColor : vc;
-                        ShadowText(g, Samples[i], vf, c, hx + lw[i] + gap1, hy);
-                        hx += iw[i] + gap2;
+                        PvRow pr = rows[k];
+                        ShadowText(g, pr.Label, lf, lc, hx, hy + Ui.Fp(3));
+                        hx += lw[k] + gap1;
+                        for (int c = 0; c < pr.Cells.Count; c++)
+                        {
+                            float cw = TextRenderer.MeasureText(g, pr.Cells[c], vf,
+                                Size.Empty, TextFormatFlags.NoPadding).Width;
+                            Color cc = (pr.FpsCell && c == 0) ? FpsColor : vc;
+                            ShadowText(g, pr.Cells[c], vf, cc, hx, hy);
+                            hx += cw + gap1;
+                        }
+                        hx += gap2;
                     }
                 }
+            }
+
+            /// <summary>预览用的一行:设备名 + 这台设备的若干项数值,和真实叠加层一一对应。</summary>
+            private sealed class PvRow
+            {
+                public string Label = "";
+                public readonly List<string> Cells = new List<string>();
+                public bool FpsCell;
+            }
+
+            /// <summary>按设备分组生成预览行:CPU 只写一次,占用和温度并排放在后面。</summary>
+            private List<PvRow> PreviewRows()
+            {
+                var rows = new List<PvRow>();
+
+                if (ItemValue(st, 0) || ItemValue(st, 1))
+                {
+                    PvRow r = new PvRow();
+                    r.Label = "FPS";
+                    r.FpsCell = st.ShowFps;
+                    if (ItemValue(st, 0)) r.Cells.Add(Samples[0]);
+                    if (ItemValue(st, 1)) r.Cells.Add("1% " + Samples[1]);
+                    rows.Add(r);
+                }
+                if (ItemValue(st, 2))
+                {
+                    PvRow r = new PvRow();
+                    r.Label = "CPU";
+                    r.Cells.Add(Samples[2]);
+                    rows.Add(r);
+                }
+                if (ItemValue(st, 3) || ItemValue(st, 4))
+                {
+                    PvRow r = new PvRow();
+                    r.Label = "GPU";
+                    if (ItemValue(st, 3)) r.Cells.Add(Samples[3]);
+                    if (ItemValue(st, 4)) r.Cells.Add(Samples[4]);
+                    rows.Add(r);
+                }
+                if (ItemValue(st, 5) || ItemValue(st, 6))
+                {
+                    PvRow r = new PvRow();
+                    r.Label = I18n.IsEn ? "RAM" : "内存";
+                    if (ItemValue(st, 5)) r.Cells.Add(Samples[5]);
+                    if (ItemValue(st, 6)) r.Cells.Add(Samples[6]);
+                    rows.Add(r);
+                }
+                if (ItemValue(st, 7))
+                {
+                    PvRow r = new PvRow();
+                    r.Label = I18n.IsEn ? "TIME" : "时间";
+                    r.Cells.Add(Samples[7]);
+                    rows.Add(r);
+                }
+                if (ItemValue(st, 8))
+                {
+                    PvRow r = new PvRow();
+                    r.Label = I18n.IsEn ? "UPTIME" : "时长";
+                    r.Cells.Add(Samples[8]);
+                    rows.Add(r);
+                }
+                return rows;
             }
 
             /// <summary>预览里的缩放:实际 0.7~2.0 映射到 0.8~1.35,避免撑破卡片。</summary>
@@ -1878,7 +1970,8 @@ namespace FrameForge.UI
         private static TextLabel CardHeader(Card c, string text)
         {
             var l = new TextLabel();
-            l.Size = 9.5f;
+            // 区块标题要比行标题(9.8)略大一档,层级才不会倒过来。
+            l.Size = 10.2f;
             l.Style = FontStyle.Bold;
             l.ForeColor = Theme.Sub;
             l.Text = text;
@@ -1933,9 +2026,12 @@ namespace FrameForge.UI
             int genH = Ui.Px(286);
             int hotH = Ui.Px(152);
             int aboutH = Height - genH - hotH - gap * 2;
-            if (aboutH < Ui.Px(150))
+            if (aboutH < Ui.Px(166))
             {
-                aboutH = Ui.Px(150);
+                // 关于卡最小 166:版本、声明、环境三行加上底部按钮正好占 158,再留 8 的呼吸。
+                // 高度不够时先让热键卡(三行 142)和常规卡(274)收,别让"打开日志"被卡片下沿切掉。
+                aboutH = Ui.Px(166);
+                hotH = Math.Max(Ui.Px(142), Height - genH - aboutH - gap * 2);
                 genH = Math.Max(Ui.Px(274), Height - hotH - aboutH - gap * 2);
             }
 
@@ -1955,7 +2051,7 @@ namespace FrameForge.UI
             fpsCard.SetBounds(rightX, memH + gap, rightW, fpsH);
             adminCard.SetBounds(rightX, memH + fpsH + gap * 2, rightW, adminH);
 
-            int pad = Ui.Px(18);
+            int pad = Ui.Px(20);
             int toggleW = Ui.Px(48);
             int segW = Ui.Px(200);
 
@@ -2228,6 +2324,14 @@ namespace FrameForge.UI
             sDark = MakeSlider(I18n.T("flt.dark"), 0, 100, "", host.St.FilterDark);
             sVibrance = MakeSlider(I18n.T("flt.vibrance"), 0, 100, "", host.St.FilterVibrance);
 
+            // 暗部场景平衡 / 数字振动各带一个独立开关,ICC 生效时也能单独叠加。
+            sDark.ShowSwitch = true;
+            sDark.Switched = host.St.FilterDarkOn;
+            sDark.SwitchChanged += delegate { CommitCustom(); };
+            sVibrance.ShowSwitch = true;
+            sVibrance.Switched = host.St.FilterVibranceOn;
+            sVibrance.SwitchChanged += delegate { CommitCustom(); };
+
             customCard.Controls.Add(customTitle);
             customCard.Controls.Add(resetBtn);
             customCard.Controls.Add(sIntensity);
@@ -2287,7 +2391,8 @@ namespace FrameForge.UI
         private static TextLabel Header(string text)
         {
             var l = new TextLabel();
-            l.Size = 9.5f;
+            // 与其它页的区块标题保持同一字号(行标题 9.8,区块标题 10.2)。
+            l.Size = 10.2f;
             l.Style = FontStyle.Bold;
             l.ForeColor = Theme.Sub;
             l.Text = text;
@@ -2345,7 +2450,9 @@ namespace FrameForge.UI
             Host.St.FilterWarmth = sWarm.Value;
             Host.St.FilterTint = sTint.Value;
             Host.St.FilterDark = sDark.Value;
+            Host.St.FilterDarkOn = sDark.Switched;
             Host.St.FilterVibrance = sVibrance.Value;
+            Host.St.FilterVibranceOn = sVibrance.Switched;
             Host.SaveSettingsSoon();
             Host.ApplyFilter();
             UpdatePreview();
@@ -2358,8 +2465,10 @@ namespace FrameForge.UI
             sSat.SetSilent(0);
             sWarm.SetSilent(0);
             sTint.SetSilent(0);
-            sDark.SetSilent(0);
-            sVibrance.SetSilent(0);
+            sDark.SetSilent(50);
+            sDark.Switched = false;
+            sVibrance.SetSilent(50);
+            sVibrance.Switched = false;
             CommitCustom();
         }
 
@@ -2566,7 +2675,7 @@ namespace FrameForge.UI
         private void LayoutChips()
         {
             if (Width <= 0) return;
-            int pad = Ui.Px(18);
+            int pad = Ui.Px(20);
             bool icc = group == 2;
 
             iccAdd.Visible = icc;
@@ -2673,7 +2782,7 @@ namespace FrameForge.UI
             int presetH = Ui.Px(176);
             if (group == 2)
             {
-                int iccRowCount = IccRows(Width - Ui.Px(18) * 2);
+                int iccRowCount = IccRows(Width - Ui.Px(20) * 2);
                 // 导入按钮那一行 46~74,条目从 88 开始;一行条目时 142 高,每多一行加 38。
                 presetH = Ui.Px(142 + (iccRowCount > 1 ? (iccRowCount - 1) * 38 : 0));
             }
@@ -2688,7 +2797,7 @@ namespace FrameForge.UI
             presetCard.SetBounds(0, modeH + gap, Width, presetH);
             customCard.SetBounds(0, modeH + presetH + gap * 2, Width, customH);
 
-            int pad = Ui.Px(18);
+            int pad = Ui.Px(20);
             // 英文的 Popular games 比中文长,分组条按语言留宽度,否则最后一项会被截断。
             int segW = I18n.IsEn ? Ui.Px(348) : Ui.Px(252), segH = Ui.Px(32);
             modeTitle.SetBounds(pad, Ui.Px(12), Width - pad * 2 - segW - Ui.Px(12), Ui.Px(24));
@@ -2983,7 +3092,8 @@ namespace FrameForge.UI
         private static TextLabel Head(string text)
         {
             var l = new TextLabel();
-            l.Size = 9.5f;
+            // 三处 Header 统一到 10.2:区块标题比行标题大,视觉层级才立得住。
+            l.Size = 10.2f;
             l.Style = FontStyle.Bold;
             l.ForeColor = Theme.Sub;
             l.Text = text;
@@ -3046,7 +3156,7 @@ namespace FrameForge.UI
             detailCard.SetBounds(0, optH + gap, Width, detailH);
             listCard.SetBounds(0, optH + gap + detailH + gap, Width, listH);
 
-            int pad = Ui.Px(18);
+            int pad = Ui.Px(20);
             tgAuto.SetBounds(pad, Ui.Px(20), Ui.Px(48), Ui.Px(26));
             autoLbl.SetBounds(pad + Ui.Px(58), Ui.Px(21), Math.Max(Ui.Px(80), Width / 2 - pad * 2 - Ui.Px(58)), Ui.Px(24));
             int sw = Math.Max(Ui.Px(160), Math.Min(Ui.Px(300), Width / 2 - pad));
