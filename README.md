@@ -11,9 +11,9 @@
   <img src="https://github.com/caijun-1/frameforge/actions/workflows/build.yml/badge.svg" alt="build">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue" alt="platform">
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
-  <img src="https://img.shields.io/badge/size-484%20KB-brightgreen" alt="size 484 KB">
+  <img src="https://img.shields.io/badge/size-498%20KB-brightgreen" alt="size 498 KB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.4.3.5-orange" alt="1.4.3.5">
+  <img src="https://img.shields.io/badge/version-1.4.3.6-orange" alt="1.4.3.6">
 </p>
 
 <p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
@@ -417,7 +417,7 @@ frameforge/
 
 ## English
 
-**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay, desktop-wide screen filters, and an automatic post-game performance report. It ships as a single 484 KB executable with about 20 MB of resident memory, and it never injects into games or installs a driver.
+**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay, desktop-wide screen filters, and an automatic post-game performance report. It ships as a single 498 KB executable with about 20 MB of resident memory, and it never injects into games or installs a driver.
 
 ### Highlights
 

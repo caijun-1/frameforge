@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+# 单文件免安装程序,用 portable:winget 只做下载 + 建一个命令别名,不写注册表和卸载项。
+PackageIdentifier: JunCai.FrameForge
+PackageVersion: 1.4.3.6
+InstallerType: portable
+MinimumOSVersion: 10.0.0.0
+Commands:
+  - FrameForge
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/caijun-1/frameforge/releases/download/v1.4.3.6/FrameForge.exe
+    InstallerSha256: 6D720E7DD295AF1FECA17E08ACF27B0F012F8C23CC144D9E83E951CFA4360E4B
+ManifestType: installer
+ManifestVersion: 1.6.0
