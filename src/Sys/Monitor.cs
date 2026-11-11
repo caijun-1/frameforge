@@ -42,6 +42,7 @@ namespace FrameForge.Sys
 
         public string GpuName = "";
         public bool GpuFromNvml;
+        public bool GpuFromAmd;
     }
 
     /// <summary>每秒采样一次 CPU / GPU / 内存 / 网速 / 前台应用。单线程,开销极低。</summary>
@@ -50,7 +51,9 @@ namespace FrameForge.Sys
         private readonly PdhCounter cpuUtil;
         private readonly PdhCounter cpuUtility;
         private readonly PdhCounter gpuEngine;
+        private readonly PdhCounter gpuMem;
         private readonly Nvml nvml;
+        private readonly AmdGpu amd;
         private readonly List<NetworkInterface> nics = new List<NetworkInterface>();
         private Thread thread;
         private volatile bool running;
@@ -160,13 +163,25 @@ namespace FrameForge.Sys
             cpuUtil = new PdhCounter(@"\Processor Information(_Total)\% Processor Time");
             cpuUtility = new PdhCounter(@"\Processor Information(_Total)\% Processor Utility");
             gpuEngine = new PdhCounter(@"\GPU Engine(*)\Utilization Percentage");
+            gpuMem = new PdhCounter(@"\GPU Adapter Memory(*)\Dedicated Usage");
             nvml = new Nvml();
             nvml.Init();
+            // NVML 不认 AMD 卡,这时改用驱动自带的 ADL;都没有就只剩系统计数器。
+            amd = new AmdGpu();
+            if (!nvml.Available) amd.Init();
             CacheNics();
             Native.GetSystemTimes(out lastIdle, out lastKernel, out lastUser);
         }
 
-        public string GpuName { get { return nvml.Available ? nvml.DeviceName : ""; } }
+        public string GpuName
+        {
+            get
+            {
+                if (nvml.Available) return nvml.DeviceName;
+                if (amd.Available) return amd.DeviceName;
+                return GpuInfo.Name();
+            }
+        }
 
         public void Start()
         {
@@ -223,7 +238,7 @@ namespace FrameForge.Sys
             if (s.Cpu < 0) s.Cpu = CpuByTimes();
 
             // ---- GPU ----
-            GpuSample g = nvml.Read();
+            GpuSample g = nvml.Available ? nvml.Read() : null;
             if (nvml.Available)
             {
                 s.GpuFromNvml = true;
@@ -236,9 +251,19 @@ namespace FrameForge.Sys
                 s.VramUsed = g.MemUsed;
                 s.VramTotal = g.MemTotal;
             }
+            else if (amd.Available)
+            {
+                // AMD 卡:NVML 完全不认,温度/频率/功耗走 ADL。
+                GpuSample a = amd.Read();
+                s.GpuFromAmd = true;
+                s.GpuName = a.Name;
+                s.GpuTemp = a.Temp;
+                s.GpuClock = a.ClockCore;
+                s.GpuPower = a.Power;
+            }
             else
             {
-                s.GpuName = "GPU";
+                s.GpuName = GpuName;
             }
 
             // GPU Engine 计数器带 pid,即使 NVML 可用也要读:游戏识别用得到。
@@ -255,6 +280,19 @@ namespace FrameForge.Sys
                     for (int i = 0; i < vals.Length; i++) if (vals[i] > 0) sum += vals[i];
                     if (sum > 0) s.Gpu = Clamp(sum, 0, 100);
                 }
+            }
+
+            // ---- 显存 ----
+            // 厂商 SDK 没给出容量时,总量从注册表读,已用量用 WDDM 的「专用显存」
+            // 计数器;这两条对 NVIDIA / AMD / Intel 都有效。
+            if (s.VramTotal == 0) s.VramTotal = GpuInfo.TotalVram();
+            if (s.VramUsed == 0 && gpuMem.Valid)
+            {
+                gpuMem.Collect();
+                double[] mv = gpuMem.ReadArray();
+                double used = 0;
+                for (int i = 0; i < mv.Length; i++) if (mv[i] > 0) used += mv[i];
+                if (used > 0) s.VramUsed = (ulong)used;
             }
 
             // ---- 内存 ----
@@ -1279,7 +1317,9 @@ namespace FrameForge.Sys
             cpuUtil.Dispose();
             cpuUtility.Dispose();
             gpuEngine.Dispose();
+            gpuMem.Dispose();
             nvml.Dispose();
+            amd.Dispose();
         }
     }
 }

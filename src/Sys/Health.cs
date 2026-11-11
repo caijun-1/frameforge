@@ -291,10 +291,12 @@ namespace FrameForge.Sys
                 return it;
             }
 
-            it.Level = s.GpuFromNvml ? HealthLevel.Ok : HealthLevel.Info;
+            // NVML 走 NVIDIA,ADL 走 AMD,两者都算正常;只剩系统计数器时才提示可能缺温度。
+            bool sensed = s.GpuFromNvml || s.GpuFromAmd;
+            it.Level = sensed ? HealthLevel.Ok : HealthLevel.Info;
             // NVML 的名字去掉了厂商前缀,这里补回来,显示完整的显卡型号。
             it.Value = s.GpuFromNvml ? "NVIDIA " + s.GpuName : s.GpuName;
-            it.Note = I18n.T(s.GpuFromNvml ? "health.gpu.ready" : "health.gpu.pdh");
+            it.Note = I18n.T(sensed ? "health.gpu.ready" : "health.gpu.pdh");
             return it;
         }
 

@@ -164,7 +164,14 @@ namespace FrameForge
                 else if (s.Gpu < 0) skip("gpu load", "no GPU performance counters");
                 else check("gpu load", true,
                     s.Gpu.ToString("0.0", CultureInfo.InvariantCulture) + "%" +
-                        (s.GpuFromNvml ? " nvml" : " pdh"));
+                        (s.GpuFromNvml ? " nvml" : (s.GpuFromAmd ? " adl" : " pdh")));
+
+                // 温度:有厂商传感器(NVML/ADL)就必须读出来,系统计数器本身没有温度。
+                if (s == null) check("gpu temp", false, "null");
+                else if (!s.GpuFromNvml && !s.GpuFromAmd) skip("gpu temp", "no vendor sensor");
+                else if (s.GpuTemp <= 0) check("gpu temp", false, "sensor returned nothing");
+                else check("gpu temp", true,
+                    s.GpuTemp.ToString("0", CultureInfo.InvariantCulture) + " C");
             }
             catch (Exception ex) { check("monitor", false, ex.Message); }
             finally { if (mon != null) mon.Dispose(); }

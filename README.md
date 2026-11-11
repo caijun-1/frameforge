@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
   <img src="https://img.shields.io/badge/size-498%20KB-brightgreen" alt="size 498 KB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.4.4-orange" alt="1.4.4">
+  <img src="https://img.shields.io/badge/version-1.4.4.1-orange" alt="1.4.4.1">
 </p>
 
 <p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
@@ -294,6 +294,19 @@ frameforge/
 
 ## 更新日志
 
+### v1.4.4.1
+
+**新增**
+
+- AMD 显卡传感器：接入 AMD 驱动自带的 ADL（`atiadlxx.dll`），RX 6000 / 7000 系列（例如 RX 6750 GRE）现在能读到显卡温度、核心频率、显存频率与功耗，不再只有 NVIDIA 显卡才有数值。
+- 显存兜底：显存总容量从显示适配器注册表读取，已用量用 WDDM 的「专用显存」计数器，NVIDIA / AMD / Intel 三种显卡都能显示。
+- 「健康检查」显示完整显卡型号，并标注数据来自 NVML（NVIDIA）还是 ADL（AMD）。
+
+**修复**
+
+- 部分机型「温度 / 频率 / 功耗 / 显存」全是 —：NVIDIA 以外的显卡 NVML 完全不认，之前直接放弃采集；现在改走 ADL，两者都不可用时再退回系统计数器。
+- 自检新增显卡温度检查项，温度读不到时会明确写出是传感器缺失还是驱动没返回。
+
 ### v1.4.4
 
 **新增**
@@ -446,6 +459,19 @@ frameforge/
 - Bilingual UI (Chinese / English), dark and light themes, tray mode, autostart, optional update check.
 
 ### Changelog
+
+#### v1.4.4.1
+
+**New**
+
+- AMD GPU sensors: the AMD driver's own ADL (`atiadlxx.dll`) is now used, so RX 6000 / 7000 cards (e.g. RX 6750 GRE) report GPU temperature, core clock, memory clock and power — previously only NVIDIA cards had numbers.
+- VRAM fallback: total VRAM is read from the display adapter registry and usage from the WDDM "Dedicated Usage" counter, so NVIDIA, AMD and Intel GPUs all show it.
+- The health check shows the full GPU model and whether the data comes from NVML (NVIDIA) or ADL (AMD).
+
+**Fixed**
+
+- "Temperature / clock / power / VRAM" showing dashes on some machines: NVML does not support non-NVIDIA cards and the app previously gave up. It now goes through ADL and falls back to system counters when neither is available.
+- The self test now checks GPU temperature and states whether the sensor is missing or the driver returned nothing.
 
 #### v1.4.4
 
