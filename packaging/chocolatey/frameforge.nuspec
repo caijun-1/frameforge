@@ -3,7 +3,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
   <metadata>
     <id>frameforge</id>
-    <version>1.4.4.1</version>
+    <version>1.4.4.2</version>
     <packageSourceUrl>https://github.com/caijun-1/frameforge/tree/main/packaging/chocolatey</packageSourceUrl>
     <owners>Jun Cai</owners>
     <title>FrameForge</title>
@@ -22,7 +22,7 @@
 功能包括一键加速（进程优先级、电源计划、系统计时器，均可还原）、帧率与硬件监测、游戏内叠加层、画面滤镜和每局性能报告。
 
 部分功能（电源计划、系统内存整理、帧率采集）需要以管理员身份运行。</description>
-    <releaseNotes>https://github.com/caijun-1/frameforge/releases/tag/v1.4.4.1</releaseNotes>
+    <releaseNotes>https://github.com/caijun-1/frameforge/releases/tag/v1.4.4.2</releaseNotes>
   </metadata>
   <files>
     <file src="tools\**" target="tools" />
