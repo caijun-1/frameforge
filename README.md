@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
   <img src="https://img.shields.io/badge/size-498%20KB-brightgreen" alt="size 498 KB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.4.3.6-orange" alt="1.4.3.6">
+  <img src="https://img.shields.io/badge/version-1.4.4-orange" alt="1.4.4">
 </p>
 
 <p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
@@ -294,6 +294,20 @@ frameforge/
 
 ## 更新日志
 
+### v1.4.4
+
+**新增**
+
+- 「我的游戏」页面：自动扫描 Steam、Epic、GOG、卸载注册表和本机常见安装目录，把装过的游戏列在一起；双击启动、锁定为加速目标、移除条目，没扫到的可以手动添加 .exe。
+- 新游戏也能认出来：内置游戏目录名匹配（含 WeGame 的 `三角洲行动(2001918)` 目录、`WeGameApps\rail_apps` 与腾讯系两层安装路径）、卸载注册表「安装体积 ≥ 3 GB + 引擎特征 exe」兜底，以及各固定盘常见位置的补扫。
+- 列表显示游戏真名：`Client-Win64-Shipping.exe` → 「鸣潮」、`DeltaForceClient-Win64-Shipping.exe` → 「三角洲行动」，并去掉 WeGame 目录名后面的 `(2001918)`。
+- 页面细节：行悬停高亮、底部「双击一行可直接启动」提示、扫描中状态与新增数量提示。
+
+**修复**
+
+- 反作弊与启动器被当成游戏：`AntiCheatExpert`、`BattlEye`、`EasyAntiCheat`、运行库目录整棵跳过，`ACE-Setup64.exe`、`launcher.exe`、`*launcher` 不再作为主程序，名字就是反作弊组件的卸载项直接忽略。
+- 深层目录主程序漏检：扫描递归深度 3 → 5 层，`<游戏根>\xx Game\Client\Binaries\Win64\` 下的真主程序能选中。
+
 ### v1.4.3.6
 
 **新增**
@@ -432,6 +446,20 @@ frameforge/
 - Bilingual UI (Chinese / English), dark and light themes, tray mode, autostart, optional update check.
 
 ### Changelog
+
+#### v1.4.4
+
+**New**
+
+- A "My Games" page: Steam, Epic, GOG, the uninstall registry and common local install folders are scanned automatically, listing every installed game. Double-click to launch, pin a game as the boost target, remove entries, or add a game manually via "Add .exe" — manual entries are treated as games by the detector.
+- Coverage for newer titles: games with their own launcher or shipped through WeGame (Wuthering Waves, Delta Force) were missed when only platform folders were trusted. Added a built-in folder-name list (including WeGame's `三角洲行动(2001918)` folders, `WeGameApps\rail_apps` and two-level Tencent install paths), a ≥ 3 GB + engine-binary fallback for uninstall entries, and a final sweep of common locations on each fixed drive.
+- Real game names in the list: `Client-Win64-Shipping.exe` shows as "鸣潮", `DeltaForceClient-Win64-Shipping.exe` as "三角洲行动"; the `(2001918)` appid suffix is stripped. Raw `.exe` or machine names no longer reach the UI.
+- Page polish: hovered rows highlight, a "double-click a row to launch" hint sits at the bottom, the scan button reports progress, and a toast reports how many games were added.
+
+**Fixed**
+
+- Anti-cheat components and launchers detected as games: `AntiCheatExpert`, `BattlEye`, `EasyAntiCheat` and redistributable folders are skipped entirely; `ACE-Setup64.exe`, `launcher.exe` and `*launcher` are never chosen as the game binary; uninstall entries named after anti-cheat components are ignored.
+- Game binaries missed in deep folders: executable discovery now recurses 5 levels instead of 3, reaching the real binary under `<game root>\xx Game\Client\Binaries\Win64\`.
 
 #### v1.4.3.6
 

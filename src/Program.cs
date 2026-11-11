@@ -42,6 +42,10 @@ namespace FrameForge
                 Settings st = Settings.Load();
                 BoostEngine.SetWhitelist(st.WhitelistNames());
                 BoostEngine.SetExclude(st.ExcludeNames());
+                // 手动锁定/排除名单要在启动采样前就生效,否则第一轮扫描还会误判。
+                FrameForge.Sys.Monitor.SetManualTargets(st.BoostPin, st.BlockNames());
+                // 「我的游戏」里的程序直接按游戏处理,启动时先灌进去。
+                FrameForge.Sys.Monitor.SetMyGames(st.MyGameNames());
 
                 // 上次加速如果没来得及还原(崩溃/强杀),这里把注册表和电源计划拨回去。
                 try { BoostJournal.RecoverStale(); }

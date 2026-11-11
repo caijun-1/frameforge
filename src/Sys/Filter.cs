@@ -51,6 +51,9 @@ namespace FrameForge.Sys
         private static readonly List<IntPtr> gammaDcs = new List<IntPtr>();
         private static readonly List<ushort[]> gammaSaved = new List<ushort[]>();
         private static bool gammaDirty;
+        // 每秒都会重试一次 gamma(见 MainForm.OnTick 的补装逻辑),
+        // 驱动不支持时不能每次都写日志,否则日志会被刷爆。
+        private static DateTime gammaLogAt = DateTime.MinValue;
 
         /// <summary>放大镜是否可用(远程桌面等场景不可用)。只探测,不长期占用。</summary>
         public static bool Supported
@@ -70,11 +73,11 @@ namespace FrameForge.Sys
             }
         }
 
-        /// <summary>真正要上滤镜时才初始化。</summary>
-        public static void Init()
+        /// <summary>真正要上滤镜时才初始化。force 用于用户手动切换(不受冷却限制)。</summary>
+        public static void Init(bool force)
         {
             if (active || !Supported) return;
-            if ((DateTime.UtcNow - offAt).TotalMilliseconds < CoolMs) return;
+            if (!force && (DateTime.UtcNow - offAt).TotalMilliseconds < CoolMs) return;
             try
             {
                 if (Native.MagInitialize())
@@ -117,6 +120,15 @@ namespace FrameForge.Sys
         /// </summary>
         public static void ApplySettings(Settings st, bool isGame, int gamePid)
         {
+            ApplySettings(st, isGame, gamePid, false);
+        }
+
+        /// <summary>
+        /// force 表示这是用户刚点的切换:冷却期内也要立刻装上,
+        /// 否则会出现「界面已经切过去了,画面还是原样」。
+        /// </summary>
+        public static void ApplySettings(Settings st, bool isGame, int gamePid, bool force)
+        {
             if (st == null) return;
             bool on = st.FilterMode == 2 || (st.FilterMode == 1 && isGame);
             if (!on)
@@ -139,9 +151,22 @@ namespace FrameForge.Sys
 
             // 回到普通窗口:先撤销 gamma,否则放大镜和 LUT 会叠在一起,画面被调两次。
             RestoreGamma();
-            Init();
-            if (!active) return;
+            Init(force);
+            if (!active)
+            {
+                // 放大镜被系统关掉或被别的放大类工具占着时,颜色矩阵根本推不出去,
+                // 表现就是「界面上已经开了,画面一点没变」。退回显卡 LUT,
+                // 至少亮度/对比度/色温仍然起作用(饱和度仍只能靠放大镜)。
+                ApplyGamma(m);
+                return;
+            }
             Apply(m);
+        }
+
+        /// <summary>滤镜当前是否真的在起作用(放大镜生效中或已改写 gamma LUT)。</summary>
+        public static bool On
+        {
+            get { return active || gammaDirty; }
         }
 
         /// <summary>独占全屏下用显示器 gamma LUT 近似整套调色。</summary>
@@ -160,9 +185,13 @@ namespace FrameForge.Sys
             if (ok)
             {
                 gammaDirty = true;
-                Log.Write("filter gamma lut (exclusive fullscreen)");
+                Log.Write("filter gamma lut");
             }
-            else Log.Write("SetDeviceGammaRamp failed");
+            else if ((DateTime.UtcNow - gammaLogAt).TotalSeconds > 30)
+            {
+                gammaLogAt = DateTime.UtcNow;
+                Log.Write("SetDeviceGammaRamp failed");
+            }
         }
 
         /// <summary>把显示器 LUT 还原成启动时保存的原样。</summary>

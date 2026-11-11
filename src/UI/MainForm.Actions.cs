@@ -281,9 +281,7 @@ namespace FrameForge.UI
         public void ToggleBoostPin()
         {
             string current = St.BoostPin;
-            string target = "";
-            if (Boost != null && Boost.Active && Boost.GameName.Length > 0) target = Boost.GameName;
-            else if (Mon.Current != null && Mon.Current.GameName.Length > 0) target = Mon.Current.GameName;
+            string target = ManualTarget();
 
             if (target.Length == 0)
             {
@@ -299,18 +297,100 @@ namespace FrameForge.UI
             {
                 St.BoostPin = "";
                 SaveSettingsSoon();
+                SyncManualTargets();
                 Toast(I18n.T("toast.pin.off"));
             }
             else
             {
                 St.BoostPin = target.ToLowerInvariant();
                 SaveSettingsSoon();
+                SyncManualTargets();
                 int pid = FrameForge.Sys.Monitor.FindProcessByName(St.BoostPin);
                 string title = pid > 0 ? GameDb.Title(pid, St.BoostPin) : St.BoostPin;
                 if (title.Length == 0) title = St.BoostPin;
                 Toast(I18n.T("toast.pin.on", title));
             }
             if (boostPage != null) boostPage.SyncPin();
+        }
+
+        /// <summary>
+        /// 误检时一键纠正:把当前程序加入「不是游戏」名单,以后扫描直接跳过它。
+        /// 这样识别结果不再由启发式评分决定,而是用户说了算。
+        /// </summary>
+        public void MarkNotGame()
+        {
+            string target = ManualTarget();
+            if (target.Length == 0)
+            {
+                Toast(I18n.T("boost.notgame.none"));
+                return;
+            }
+            target = target.ToLowerInvariant();
+
+            var names = new List<string>();
+            names.Add(target);
+            string[] old = St.BlockNames();
+            for (int i = 0; i < old.Length; i++)
+            {
+                if (!string.Equals(old[i], target, StringComparison.OrdinalIgnoreCase))
+                    names.Add(old[i]);
+            }
+            St.GameBlock = string.Join(",", names.ToArray());
+            // 锁定和排除互斥:既然说了它不是游戏,就不能再当加速目标。
+            if (string.Equals(St.BoostPin, target, StringComparison.OrdinalIgnoreCase)) St.BoostPin = "";
+            // 正在加速这个误判程序的话先还原,别把系统设置留在它身上。
+            if (Boost != null && Boost.Active
+                && string.Equals(Boost.GameName, target, StringComparison.OrdinalIgnoreCase))
+                RestoreBoost(false);
+            SaveSettingsSoon();
+            SyncManualTargets();
+            if (boostPage != null) boostPage.SyncPin();
+            Toast(I18n.T("toast.notgame.on", target));
+        }
+
+        /// <summary>
+        /// 用户点按钮时前台是 FrameForge 自己,所以目标取:正在加速的游戏 →
+        /// 当前识别到的游戏 → 切回来之前的前台程序。
+        /// </summary>
+        private string ManualTarget()
+        {
+            if (Boost != null && Boost.Active && Boost.GameName.Length > 0) return Boost.GameName;
+            SysSample s = Mon.Current;
+            if (s != null && s.GamePid > 0 && s.GameName.Length > 0) return s.GameName;
+            return lastOtherFg != null ? lastOtherFg : "";
+        }
+
+        /// <summary>名单变化后同步给识别线程,并让它立刻重扫,不用等下一个周期。</summary>
+        public void SyncManualTargets()
+        {
+            FrameForge.Sys.Monitor.SetManualTargets(St.BoostPin, St.BlockNames());
+            Mon.Rescan();
+        }
+
+        /// <summary>「我的游戏」名单变化(扫描/手动添加/移除)后同步识别器。</summary>
+        public void SyncGameLibrary()
+        {
+            FrameForge.Sys.Monitor.SetMyGames(St.MyGameNames());
+            SyncManualTargets();
+        }
+
+        /// <summary>
+        /// 「我的游戏」页里锁定/取消一款游戏:与加速页的锁定共用同一个 BoostPin。
+        /// 返回 true 表示现在是锁定状态。
+        /// </summary>
+        public bool PinGame(string procName)
+        {
+            string n = (procName ?? "").Trim().ToLowerInvariant();
+            if (n.EndsWith(".exe", StringComparison.Ordinal)) n = n.Substring(0, n.Length - 4);
+            if (n.Length == 0) return false;
+
+            bool on = !string.Equals(St.BoostPin, n, StringComparison.OrdinalIgnoreCase);
+            St.BoostPin = on ? n : "";
+            SaveSettingsSoon();
+            SyncManualTargets();
+            if (boostPage != null) boostPage.SyncPin();
+            Toast(I18n.T(on ? "games.pin.on" : "games.pin.off", n));
+            return on;
         }
 
         public void RestoreBoost(bool notify)
@@ -480,7 +560,7 @@ namespace FrameForge.UI
             if (!St.ReportAuto) return;
             try
             {
-                var f = new ReportForm(r, delegate { RestoreFromTray(); ShowPage(3); });
+                var f = new ReportForm(r, delegate { RestoreFromTray(); ShowPage(4); });
                 f.Show();
             }
             catch (Exception ex) { Log.Write("report form: " + ex.Message); }
@@ -519,6 +599,12 @@ namespace FrameForge.UI
         /// <summary>把当前滤镜设置推给系统;「仅游戏」模式下切出游戏会自动还原。</summary>
         public void ApplyFilter()
         {
+            ApplyFilter(false);
+        }
+
+        /// <summary>force=true 表示用户刚手动切换,跳过放大镜的冷却期立即生效。</summary>
+        public void ApplyFilter(bool force)
+        {
             bool isGame = Mon != null && Mon.Current != null && Mon.Current.Fullscreen;
             int gamePid = Mon != null && Mon.Current != null ? Mon.Current.GamePid : -1;
             try
@@ -527,7 +613,7 @@ namespace FrameForge.UI
                 // Win+Shift+S 的取色层会和它抢同一帧,整屏就卡住。这里直接把放大镜卸掉,
                 // 工具栏收起后由守卫重新装回来。
                 if (captureGuard) Sys.Filter.Suspend();
-                else Sys.Filter.ApplySettings(St, isGame, gamePid);
+                else Sys.Filter.ApplySettings(St, isGame, gamePid, force);
             }
             catch (Exception ex) { Log.Write("filter: " + ex.Message); }
         }
@@ -550,7 +636,7 @@ namespace FrameForge.UI
                 St.FilterMode = 0;
             }
             St.Save();
-            ApplyFilter();
+            ApplyFilter(true);
             Toast(St.FilterMode != 0 ? I18n.T("toast.filter.on") : I18n.T("toast.filter.off"));
         }
 

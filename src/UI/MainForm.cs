@@ -44,6 +44,7 @@ namespace FrameForge.UI
         private bool[] pageDirty;
         private int activePage;
         private BoostPage boostPage;
+        private GamesPage gamesPage;
         private SettingsPage setPage;
         private ReportPage reportPage;
         private HealthPage healthPage;
@@ -62,6 +63,9 @@ namespace FrameForge.UI
         private bool lastFullscreen;
         private int lastFilterPid = -1;
         private int exclusiveWarnPid = -1;
+        // 最近一个"外部前台程序"。用户在自家窗口里点「锁定/不是游戏」时,
+        // 真正想操作的是切回来之前那个程序。
+        private string lastOtherFg = "";
         private bool trimming;
         private bool downloading;
         private DateTime lastAutoTrim = DateTime.MinValue;
@@ -212,8 +216,8 @@ namespace FrameForge.UI
         }
 
         /// <summary>
-        /// 只建首屏:其余 5 页标成待建,第一次切过去再建。
-        /// 启动时省掉 5 棵控件树的构造和字体测量,常驻内存也少一截。
+        /// 只建首屏:其余 6 页标成待建,第一次切过去再建。
+        /// 启动时省掉 6 棵控件树的构造和字体测量,常驻内存也少一截。
         /// </summary>
         private void BuildPages()
         {
@@ -222,8 +226,8 @@ namespace FrameForge.UI
             Page first = CreatePage(0);
             first.Visible = false;
 
-            pages = new Page[6];
-            pageDirty = new bool[6];
+            pages = new Page[7];
+            pageDirty = new bool[7];
             for (int i = 0; i < pageDirty.Length; i++) pageDirty[i] = i != 0;
             pages[0] = first;
             Controls.Add(first);
@@ -236,10 +240,11 @@ namespace FrameForge.UI
             switch (i)
             {
                 case 0: boostPage = new BoostPage(this); return boostPage;
-                case 1: return new FilterPage(this);
-                case 2: return new OverlayPage(this);
-                case 3: reportPage = new ReportPage(this); return reportPage;
-                case 4: healthPage = new HealthPage(this); return healthPage;
+                case 1: gamesPage = new GamesPage(this); return gamesPage;
+                case 2: return new FilterPage(this);
+                case 3: return new OverlayPage(this);
+                case 4: reportPage = new ReportPage(this); return reportPage;
+                case 5: healthPage = new HealthPage(this); return healthPage;
                 default: setPage = new SettingsPage(this); return setPage;
             }
         }
@@ -259,6 +264,7 @@ namespace FrameForge.UI
                 Controls.Remove(old);
                 old.Dispose();
                 if (ReferenceEquals(boostPage, old)) boostPage = null;
+                if (ReferenceEquals(gamesPage, old)) gamesPage = null;
                 if (ReferenceEquals(setPage, old)) setPage = null;
                 if (ReferenceEquals(reportPage, old)) reportPage = null;
                 if (ReferenceEquals(healthPage, old)) healthPage = null;
@@ -367,9 +373,10 @@ namespace FrameForge.UI
         {
             return new string[]
             {
-                I18n.T("nav.boost"), I18n.T("nav.filter"),
-                I18n.T("nav.overlay"), I18n.T("nav.report"),
-                I18n.T("nav.health"), I18n.T("nav.settings")
+                I18n.T("nav.boost"), I18n.T("nav.games"),
+                I18n.T("nav.filter"), I18n.T("nav.overlay"),
+                I18n.T("nav.report"), I18n.T("nav.health"),
+                I18n.T("nav.settings")
             };
         }
 
@@ -431,6 +438,10 @@ namespace FrameForge.UI
             SysSample s = Mon.Current;
             if (s == null) return;
 
+            if (!string.IsNullOrEmpty(s.ForegroundName)
+                && !string.Equals(s.ForegroundName, "frameforge", StringComparison.OrdinalIgnoreCase))
+                lastOtherFg = s.ForegroundName;
+
             // 换了游戏或全屏状态变了都要重算:独占全屏走 gamma LUT,窗口/无边框全屏走放大镜,
             // 只跟着 Fullscreen 判断的话,换成一个窗口化游戏会一直停在 LUT 模式。
             if (s.Fullscreen != lastFullscreen || s.GamePid != lastFilterPid)
@@ -440,6 +451,12 @@ namespace FrameForge.UI
                 SyncOverlay();
                 ApplyFilter();
             }
+
+            // 自动装滤镜可能被放大镜的冷却期挡下(刚卸下 2 秒内不重建 DWM 效果链),
+            // 那样界面状态已经切好、画面却还是原样,而且之后再没有任何事件触发重装。
+            // 这里每秒补一次:冷却一过去就自己装回去。
+            bool wantFilter = St.FilterMode == 2 || (St.FilterMode == 1 && s.Fullscreen);
+            if (wantFilter && !captureGuard && !Sys.Filter.On && Sys.Filter.Supported) ApplyFilter();
 
             // 独占全屏的交换链绕过 DWM,再置顶的叠加层也会被游戏盖住。
             // 检测到就提示一次(每局一次),把"看不到数据"变成可操作的提示,
@@ -557,7 +574,7 @@ namespace FrameForge.UI
             btnTheme.SetBounds(x, by, bh, bh); x -= bh + gap;
             btnLang.SetBounds(x, by, bh, bh);
 
-            int navW = Ui.Px(I18n.IsEn ? 566 : 454);
+            int navW = Ui.Px(I18n.IsEn ? 660 : 530);
             int limit = Width - Ui.Px(480);
             if (navW > limit) navW = limit;
             if (navW < Ui.Px(220)) navW = Ui.Px(220);

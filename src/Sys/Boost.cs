@@ -700,10 +700,13 @@ namespace FrameForge.Sys
             string priorityFail = "";
             if (plan.Priority)
             {
-                if (ApplyPriority(gamePid, plan.PriorityLevel, out priorityFail))
+                int applied;
+                if (ApplyPriority(gamePid, plan.PriorityLevel, out priorityFail, out applied))
                 {
                     r.PriorityOk = 1;
-                    PriorityLevel = plan.PriorityLevel;
+                    // 记录"实际生效"的档位:反作弊只允许较高的普通优先级时,
+                    // 界面要如实写「高于正常」,不能还挂着用户选的「高」。
+                    PriorityLevel = applied;
                 }
             }
             // PCBoost 的两层一起落地:先把前台游戏提到高优先级,再立刻把主线程
@@ -807,9 +810,10 @@ namespace FrameForge.Sys
         /// 返回成功但优先级没变的情况是存在的,不能据此谎报"已优化"。
         /// failKey 为空表示失败原因不明,由调用方用通用的「优先级」文案。
         /// </summary>
-        private bool ApplyPriority(int pid, int level, out string failKey)
+        private bool ApplyPriority(int pid, int level, out string failKey, out int applied)
         {
             failKey = "";
+            applied = level;
             bool denied;
             if (TrySetPriority(pid, level, out denied)) return true;
 
@@ -820,6 +824,15 @@ namespace FrameForge.Sys
                 try { System.Threading.Thread.Sleep(400); }
                 catch { }
                 if (TrySetPriority(pid, level, out denied)) return true;
+            }
+
+            // 不少带反作弊的游戏只拦「高」,会放过「高于正常」。退一档再试,
+            // 至少让优先级真的比默认值高,而不是整项作废。
+            if (level >= 4 && TrySetPriority(pid, 3, out denied))
+            {
+                applied = 3;
+                Log.Write("boost priority: high denied, fell back to above normal");
+                return true;
             }
 
             if (denied) failKey = IsAdmin ? "boost.skip.priorityDenied" : "boost.skip.priorityAdmin";

@@ -57,6 +57,10 @@ namespace FrameForge
         public string BoostPin = "";
         // 加速排除名单:这些程序不会被当作目标加速。逗号分隔,不含 .exe。
         public string BoostExclude = BoostEngine.DefaultExclude;
+        // 识别排除名单:用户点过「不是游戏」的程序。逗号分隔,不含 .exe。
+        public string GameBlock = "";
+        // 「我的游戏」:自动扫描结果 + 手动添加的 exe。每行一个,存成 myGame=名称|exe路径|来源。
+        public readonly List<InstalledGame> MyGames = new List<InstalledGame>();
         // 优先级档位:0 低 / 1 低于正常 / 2 正常 / 3 高于正常 / 4 高。
         public int BoostPriorityLevel = 4;
         // 实验项:只调整游戏线程的理想处理器,不改亲和性掩码。默认关闭。
@@ -191,6 +195,8 @@ namespace FrameForge
                 case "boostwhitelist": BoostWhitelist = v; break;
                 case "boostpin": BoostPin = (v ?? "").Trim().ToLowerInvariant(); break;
                 case "boostexclude": BoostExclude = v ?? ""; break;
+                case "gameblock": GameBlock = v ?? ""; break;
+                case "mygame": AddMyGame(v); break;
                 case "boostprioritylevel": BoostPriorityLevel = Math.Max(0, Math.Min(4, Int(v, 4))); break;
                 case "boostidealcpu": BoostIdealCpu = Bool(v, false); break;
                 case "filtermode": FilterMode = Int(v, 0); break;
@@ -258,6 +264,13 @@ namespace FrameForge
                 sb.AppendLine("boostWhitelist=" + BoostWhitelist);
                 sb.AppendLine("boostPin=" + BoostPin);
                 sb.AppendLine("boostExclude=" + BoostExclude);
+                sb.AppendLine("gameBlock=" + GameBlock);
+                for (int i = 0; i < MyGames.Count; i++)
+                {
+                    InstalledGame g = MyGames[i];
+                    if (g == null || string.IsNullOrEmpty(g.ExePath)) continue;
+                    sb.AppendLine("myGame=" + CleanGameName(g.Name) + "|" + g.ExePath + "|" + g.Source);
+                }
                 sb.AppendLine("boostPriorityLevel=" + BoostPriorityLevel.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("boostIdealCpu=" + B(BoostIdealCpu));
                 sb.AppendLine("affinityCores=" + AffinityCores.ToString(CultureInfo.InvariantCulture));
@@ -396,6 +409,117 @@ namespace FrameForge
             if (string.IsNullOrEmpty(BoostExclude)) return new string[0];
             return BoostExclude.Split(new char[] { ',', ';', ' ', '\t', '\r', '\n' },
                 StringSplitOptions.RemoveEmptyEntries);
+        }
+
+        /// <summary>拆出「不是游戏」名单里的进程名。</summary>
+        public string[] BlockNames()
+        {
+            if (string.IsNullOrEmpty(GameBlock)) return new string[0];
+            return GameBlock.Split(new char[] { ',', ';', ' ', '\t', '\r', '\n' },
+                StringSplitOptions.RemoveEmptyEntries);
+        }
+
+        /// <summary>「我的游戏」列表(按名称排序的副本,页面直接拿去用)。</summary>
+        public InstalledGame[] MyGameList()
+        {
+            var arr = new InstalledGame[MyGames.Count];
+            MyGames.CopyTo(arr);
+            Array.Sort(arr, delegate(InstalledGame a, InstalledGame b)
+            {
+                return string.Compare(a.Name, b.Name, StringComparison.CurrentCultureIgnoreCase);
+            });
+            return arr;
+        }
+
+        /// <summary>加入一款游戏(同路径已存在就跳过)。返回是否新增。</summary>
+        public bool UpsertMyGame(string name, string exePath, string source)
+        {
+            if (string.IsNullOrEmpty(exePath)) return false;
+            // 名字统一走 GameDb:平台名优先,机器名(exe / client-win64-shipping)换成真名。
+            string pretty = CleanGameName(GameDb.DisplayName(name, exePath));
+            for (int i = 0; i < MyGames.Count; i++)
+            {
+                if (!string.Equals(MyGames[i].ExePath, exePath, StringComparison.OrdinalIgnoreCase)) continue;
+                // 老版本存下来的机器名,下次保存时顺手修掉。
+                if (pretty.Length > 0) MyGames[i].Name = pretty;
+                return false;
+            }
+
+            var g = new InstalledGame();
+            g.Name = pretty;
+            if (g.Name.Length == 0)
+            {
+                try { g.Name = Path.GetFileNameWithoutExtension(exePath); }
+                catch { g.Name = exePath; }
+            }
+            g.ExePath = exePath;
+            g.Source = source ?? "";
+            MyGames.Add(g);
+            return true;
+        }
+
+        public bool RemoveMyGame(string exePath)
+        {
+            if (string.IsNullOrEmpty(exePath)) return false;
+            for (int i = 0; i < MyGames.Count; i++)
+            {
+                if (!string.Equals(MyGames[i].ExePath, exePath, StringComparison.OrdinalIgnoreCase)) continue;
+                MyGames.RemoveAt(i);
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>「我的游戏」里的进程名,启动时交给识别器,省得再靠启发式猜。</summary>
+        public string[] MyGameNames()
+        {
+            var names = new List<string>();
+            for (int i = 0; i < MyGames.Count; i++)
+            {
+                string n = MyGames[i].ProcName;
+                if (n.Length == 0) continue;
+                bool dup = false;
+                for (int k = 0; k < names.Count; k++)
+                    if (string.Equals(names[k], n, StringComparison.OrdinalIgnoreCase)) { dup = true; break; }
+                if (!dup) names.Add(n);
+            }
+            return names.ToArray();
+        }
+
+        /// <summary>用户明确添加了一个程序:把旧的「不是游戏」标记撤掉。</summary>
+        public bool UnblockName(string procName)
+        {
+            string n = (procName ?? "").Trim().ToLowerInvariant();
+            if (n.EndsWith(".exe", StringComparison.Ordinal)) n = n.Substring(0, n.Length - 4);
+            if (n.Length == 0) return false;
+
+            string[] old = BlockNames();
+            var keep = new List<string>();
+            bool changed = false;
+            for (int i = 0; i < old.Length; i++)
+            {
+                if (string.Equals(old[i], n, StringComparison.OrdinalIgnoreCase)) { changed = true; continue; }
+                keep.Add(old[i]);
+            }
+            if (changed) GameBlock = string.Join(",", keep.ToArray());
+            return changed;
+        }
+
+        private void AddMyGame(string v)
+        {
+            if (string.IsNullOrEmpty(v)) return;
+            string[] parts = v.Split('|');
+            if (parts.Length < 2) return;
+            UpsertMyGame(parts[0], parts[1].Trim(), parts.Length > 2 ? parts[2].Trim() : "");
+        }
+
+        /// <summary>显示名写进 ini 的一行,去掉分隔符与换行,并限长。</summary>
+        public static string CleanGameName(string n)
+        {
+            if (n == null) return "";
+            n = n.Replace('|', ' ').Replace('\r', ' ').Replace('\n', ' ').Trim();
+            if (n.Length > 64) n = n.Substring(0, 64).Trim();
+            return n;
         }
 
         private static string B(bool v) { return v ? "1" : "0"; }

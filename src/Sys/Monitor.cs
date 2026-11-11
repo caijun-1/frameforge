@@ -75,6 +75,83 @@ namespace FrameForge.Sys
         private static readonly Dictionary<int, DateTime> confirmedGames = new Dictionary<int, DateTime>();
         private const int GameScore = 50;
 
+        // 用户手动指定的判定:pin 命中的进程无条件算游戏,block 命中的永远不算。
+        // 自动识别终究是启发式的,这两个名单让用户能一锤定音。
+        private static string pinnedGame = "";
+        private static readonly HashSet<string> blockedGames =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private static readonly HashSet<string> knownGames =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private static readonly object manualLock = new object();
+
+        /// <summary>同步「锁定游戏」与「不是游戏」两个名单,进程名大小写不敏感、可带 .exe。</summary>
+        public static void SetManualTargets(string pin, string[] blocked)
+        {
+            string p = CleanProcName(pin);
+            lock (manualLock)
+            {
+                pinnedGame = p;
+                blockedGames.Clear();
+                if (blocked != null)
+                {
+                    for (int i = 0; i < blocked.Length; i++)
+                    {
+                        string b = CleanProcName(blocked[i]);
+                        if (b.Length > 0) blockedGames.Add(b);
+                    }
+                }
+            }
+        }
+
+        /// <summary>同步「我的游戏」名单:扫描和手动添加的游戏都按游戏处理,不再靠启发式猜。</summary>
+        public static void SetMyGames(string[] names)
+        {
+            lock (manualLock)
+            {
+                knownGames.Clear();
+                if (names != null)
+                {
+                    for (int i = 0; i < names.Length; i++)
+                    {
+                        string n = CleanProcName(names[i]);
+                        if (n.Length > 0) knownGames.Add(n);
+                    }
+                }
+            }
+        }
+
+        private static bool IsKnownGameName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            lock (manualLock) return knownGames.Contains(name);
+        }
+
+        private static string CleanProcName(string name)
+        {
+            string s = (name ?? "").Trim().ToLowerInvariant();
+            if (s.EndsWith(".exe")) s = s.Substring(0, s.Length - 4);
+            return s;
+        }
+
+        private static bool IsPinnedName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            lock (manualLock) return pinnedGame.Length > 0 && pinnedGame == name.ToLowerInvariant();
+        }
+
+        private static bool IsBlockedName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            lock (manualLock) return blockedGames.Contains(name);
+        }
+
+        /// <summary>手动标记/排除后立刻重扫,不必等下一个 1.5 秒周期。</summary>
+        public void Rescan()
+        {
+            lastScan = DateTime.MinValue;
+            lastForegroundPid = -1;
+        }
+
         public volatile SysSample Current = new SysSample();
         public event Action<SysSample> Updated;
 
@@ -403,6 +480,10 @@ namespace FrameForge.Sys
             public int Height;
             public bool Covers;
             public bool Foreground;
+            /// <summary>用户手动锁定为游戏:跳过启发式判定,直接算游戏。</summary>
+            public bool Pinned;
+            /// <summary>在「我的游戏」名单里:同样跳过名字/标题过滤。</summary>
+            public bool Known;
         }
 
         /// <summary>
@@ -482,12 +563,21 @@ namespace FrameForge.Sys
             if ((long)w * ht < (long)b.Width * b.Height * 8 / 100) return false;
 
             string name = Native.ProcessName(p);
-            if (IsNonGameName(name)) return false;
+            // 用户点过「不是游戏」的进程直接淘汰,连手动锁定都救不回来。
+            if (IsBlockedName(name)) return false;
+            // 手动锁定的游戏不再看名字/标题特征:冷门游戏、改名版、模拟器外壳
+            // 正是靠这一条保证能识别出来。
+            bool pinned = IsPinnedName(name);
+            bool known = IsKnownGameName(name);
             string cls = WindowClass(h);
-            if (IsNonGameClass(cls)) return false;
             string title = WindowTitle(h);
-            if (IsUtilityTitle(title)) return false;
-            if (IsUtilityName(name)) return false;
+            if (!pinned && !known)
+            {
+                if (IsNonGameName(name)) return false;
+                if (IsNonGameClass(cls)) return false;
+                if (IsUtilityTitle(title)) return false;
+                if (IsUtilityName(name)) return false;
+            }
 
             wi.Name = name;
             wi.Class = cls;
@@ -497,6 +587,8 @@ namespace FrameForge.Sys
             wi.Covers = w >= b.Width - 8 && ht >= b.Height - 8
                 && (long)w * ht >= (long)b.Width * b.Height * 92 / 100;
             wi.Foreground = h == Native.GetForegroundWindow();
+            wi.Pinned = pinned;
+            wi.Known = known;
             return true;
         }
 
@@ -506,6 +598,11 @@ namespace FrameForge.Sys
         /// </summary>
         private static int ScoreWindow(ref WindowInfo wi)
         {
+            // 手动锁定优先级最高:用户说了算,不再和启发式评分讨价还价。
+            if (wi.Pinned) return 1000;
+            // 「我的游戏」里的程序:用户扫描或手动添加过,直接按游戏处理。
+            if (wi.Known) return 900;
+
             int score = 0;
             int level = KnownGameLevel(wi.Pid, wi.Name);
             if (level >= 3) score += 70;        // 内置游戏库明确认识

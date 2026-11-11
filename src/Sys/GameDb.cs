@@ -235,6 +235,10 @@ namespace FrameForge.Sys
             { "palworld", "幻兽帕鲁|Palworld" },
             { "marvelrivals", "漫威争锋|Marvel Rivals" },
             { "deltaforce", "三角洲行动|Delta Force" },
+            { "delta force", "三角洲行动|Delta Force" },
+            { "delta force game", "三角洲行动|Delta Force" },
+            { "infinity nikki", "无限暖暖|Infinity Nikki" },
+            { "无限暖暖", "无限暖暖|Infinity Nikki" },
             { "arena breakout", "暗区突围|Arena Breakout: Infinite" },
             { "thefinals", "总决赛|THE FINALS" },
             { "deadbydaylight", "黎明杀机|Dead by Daylight" },
@@ -304,6 +308,81 @@ namespace FrameForge.Sys
             LoadUser();
             if (user.ContainsKey(key)) return true;
             return Map.ContainsKey(key);
+        }
+
+        /// <summary>路径里是否有内置库认识的游戏目录(鸣潮这类通用 exe 名靠它认)。</summary>
+        public static bool FolderKnown(string path)
+        {
+            return FolderHint(path).Length > 0;
+        }
+
+        /// <summary>
+        /// 给「我的游戏」命名:平台给的名字(Steam / Epic / 注册表 DisplayName)优先,
+        /// 只有名字本身就是 exe 那类机器名时,才按安装目录和内置库推断真名。
+        /// </summary>
+        public static string DisplayName(string name, string exePath)
+        {
+            string key = Norm(exePath);
+            string n = Clean(StripAppId(name));
+            if (n.Length > 0 && !MachineName(n, key)) return n;
+
+            string t = Clean(LangPair(FolderHint(exePath)));
+            if (t.Length > 0 && !MachineName(t, key)) return t;
+            t = Clean(FromFile(exePath, key));
+            if (t.Length > 0 && !MachineName(t, key)) return t;
+            t = Clean(StripAppId(FolderName(exePath)));
+            if (t.Length > 0 && !MachineName(t, key)) return t;
+
+            t = KeyTitle(key);
+            if (t.Length > 0) return t;
+            return n;
+        }
+
+        /// <summary>去掉 WeGame 目录名后面的 appid:「三角洲行动(2001918)」→「三角洲行动」。</summary>
+        private static string StripAppId(string s)
+        {
+            if (s == null) return "";
+            string t = s.Trim();
+            if (!t.EndsWith(")", StringComparison.Ordinal)) return t;
+            int par = t.LastIndexOf('(');
+            if (par <= 0) return t;
+            string inner = t.Substring(par + 1, t.Length - par - 2);
+            if (inner.Length == 0) return t;
+            for (int i = 0; i < inner.Length; i++)
+                if (!char.IsDigit(inner[i])) return t;
+            return t.Substring(0, par).Trim();
+        }
+
+        private static string KeyTitle(string key)
+        {
+            if (key.Length == 0) return "";
+            LoadUser();
+            string pair;
+            if (user.TryGetValue(key, out pair)) return LangPair(pair);
+            if (Map.TryGetValue(key, out pair)) return LangPair(pair);
+            return "";
+        }
+
+        private static string LangPair(string pair)
+        {
+            if (pair == null) return "";
+            int bar = pair.IndexOf('|');
+            if (bar < 0) return pair;
+            return I18n.Lang == "en" ? pair.Substring(bar + 1) : pair.Substring(0, bar);
+        }
+
+        /// <summary>名字是不是机器名:xxx.exe / Client-Win64-Shipping / 跟 exe 同名。</summary>
+        private static bool MachineName(string s, string key)
+        {
+            if (s.Length == 0) return true;
+            string l = s.ToLowerInvariant();
+            if (l.EndsWith(".exe")) return true;
+            if (key.Length > 0 && l == key) return true;
+            if (l.Contains("win64-shipping") || l.Contains("win32-shipping")) return true;
+            if (l.Contains("shipping")) return true;
+            if (l.StartsWith("client-")) return true;
+            if (l.Contains("unreal")) return true;
+            return false;
         }
 
         /// <summary>给界面显示来源:内置库 / 用户配置 / 文件信息 / 进程名。</summary>

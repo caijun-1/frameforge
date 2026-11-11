@@ -47,7 +47,7 @@ namespace FrameForge.UI
         private readonly Card cpuCard, gpuCard, radarCard, ramCard, stripCard, modeCard;
         private readonly TextLabel stateLbl, gameLbl, gameSub, hint;
         private readonly TabBar modes;
-        private readonly FlatButton mainBtn, trimBtn, pinBtn, editBtn;
+        private readonly FlatButton mainBtn, trimBtn, pinBtn, negBtn, editBtn;
         // “游戏启动自动优化”的快捷开关,直接摆在一键加速旁边,不用再进设置页。
         private readonly Toggle tgAuto;
         private readonly TextLabel autoLbl;
@@ -148,6 +148,13 @@ namespace FrameForge.UI
             pinBtn.FontPt = 8.5f;
             pinBtn.Click += delegate { Host.ToggleBoostPin(); };
 
+            // 识别错了的兜底:把当前程序拉进「不是游戏」名单,以后不再被当成游戏。
+            negBtn = new FlatButton();
+            negBtn.Primary = false;
+            negBtn.FontPt = 8.5f;
+            negBtn.Text = I18n.T("boost.notgame");
+            negBtn.Click += delegate { Host.MarkNotGame(); };
+
             tgAuto = new Toggle();
             tgAuto.SetSilent(Host.St.AutoBoost);
             tgAuto.CheckedChanged += delegate
@@ -202,6 +209,7 @@ namespace FrameForge.UI
             tips.ReshowDelay = 120;
             tips.SetToolTip(trimBtn, I18n.T("boost.mem.sub"));
             tips.SetToolTip(pinBtn, I18n.T("boost.pin.sub"));
+            tips.SetToolTip(negBtn, I18n.T("boost.notgame.sub"));
             tips.SetToolTip(tgAuto, I18n.T("boost.autoboost.sub"));
             tips.SetToolTip(editBtn, I18n.T("boost.opt.edit"));
 
@@ -215,6 +223,7 @@ namespace FrameForge.UI
             hero.Controls.Add(mainBtn);
             hero.Controls.Add(trimBtn);
             hero.Controls.Add(pinBtn);
+            hero.Controls.Add(negBtn);
             hero.Controls.Add(tgAuto);
             hero.Controls.Add(autoLbl);
 
@@ -344,9 +353,10 @@ namespace FrameForge.UI
             }
             else
             {
-                pinBtn.Text = I18n.T("boost.pin.on", Shorten(pin, I18n.IsEn ? 16 : 10));
+                // 按钮只有一半宽,长名字会被截断;名字放进气泡,按钮只留状态。
+                pinBtn.Text = I18n.T("boost.pin.tag");
                 pinBtn.Ghost = true;
-                tips.SetToolTip(pinBtn, pin + "\n" + I18n.T("boost.pin.sub"));
+                tips.SetToolTip(pinBtn, I18n.T("boost.pin.on", pin) + "\n" + I18n.T("boost.pin.sub"));
             }
             pinBtn.Invalidate();
         }
@@ -618,7 +628,9 @@ namespace FrameForge.UI
             tgAuto.SetBounds(btnX + btnW - tgW, by0, tgW, btnH);
             trimBtn.SetBounds(btnX, by0 + btnH + Ui.Px(8), btnW, trimH);
             int pinY = by0 + btnH + Ui.Px(8) + trimH + Ui.Px(6);
-            pinBtn.SetBounds(btnX, pinY, btnW, pinH);
+            int pinW = (btnW - Ui.Px(8)) / 2;
+            pinBtn.SetBounds(btnX, pinY, pinW, pinH);
+            negBtn.SetBounds(btnX + pinW + Ui.Px(8), pinY, btnW - pinW - Ui.Px(8), pinH);
             int hintY = pinY + pinH + Ui.Px(2);
             // 结果行至少留 16 高(8.5pt 一行的高度),否则最后一行字会被卡片下沿压掉。
             hint.SetBounds(btnX, hintY, btnW, Math.Max(Ui.Px(16), heroH - hintY - Ui.Px(4)));
@@ -2234,7 +2246,7 @@ namespace FrameForge.UI
             {
                 Host.St.FilterMode = mode.Selected;
                 Host.St.Save();
-                Host.ApplyFilter();
+                Host.ApplyFilter(true);
                 UpdateNote();
             };
 
@@ -3579,6 +3591,558 @@ namespace FrameForge.UI
             selectedId = items[idx].Id;
             Invalidate();
             if (SelectionChanged != null) SelectionChanged(items[idx]);
+        }
+
+        protected override void OnMouseWheel(MouseEventArgs e)
+        {
+            base.OnMouseWheel(e);
+            int max = items.Length * RowH() - Height;
+            if (max < 0) max = 0;
+            scroll -= e.Delta / 120 * Ui.Px(46);
+            if (scroll < 0) scroll = 0;
+            if (scroll > max) scroll = max;
+            Invalidate();
+        }
+    }
+
+    // =====================================================================
+    //  我的游戏:自动扫描本机游戏,扫不到就手动添加 exe
+    // =====================================================================
+    public class GamesPage : Page
+    {
+        private static DateTime lastAutoScan = DateTime.MinValue;
+
+        private readonly Card topCard, listCard;
+        private readonly TextLabel title, sub, status, hintLbl;
+        private readonly FlatButton scanBtn, addBtn, playBtn, pinBtn, delBtn;
+        private readonly GamesList list;
+
+        private bool scanning;
+        private DateTime lastScan = DateTime.MinValue;
+        // 扫描线程回来时句柄可能还没建好(页面刚创建就自动扫描)。
+        // 这时先把结果存下来,等句柄建好再回填,不然首批结果会丢。
+        private InstalledGame[] pendingScan;
+        private volatile bool pendingReady;
+
+        public GamesPage(MainForm host) : base(host)
+        {
+            topCard = new Card();
+            topCard.BackColor = Theme.Card;
+            listCard = new Card();
+            listCard.BackColor = Theme.Card;
+
+            title = new TextLabel();
+            title.Size = 15f;
+            title.Style = FontStyle.Bold;
+            title.Text = I18n.T("games.title");
+
+            sub = new TextLabel();
+            sub.Size = 8.6f;
+            sub.ForeColor = Theme.Sub;
+            sub.Ellipsis = true;
+            sub.Text = I18n.T("games.sub");
+
+            status = new TextLabel();
+            status.Size = 8.4f;
+            status.ForeColor = Theme.Faint;
+            status.Ellipsis = true;
+
+            // 底部操作栏左侧的提示,把「双击启动」这种隐藏操作说出来。
+            hintLbl = new TextLabel();
+            hintLbl.Size = 8.2f;
+            hintLbl.ForeColor = Theme.Faint;
+            hintLbl.Ellipsis = true;
+            hintLbl.Text = I18n.T("games.hint");
+
+            scanBtn = new FlatButton();
+            scanBtn.Primary = false;
+            scanBtn.FontPt = 9.2f;
+            scanBtn.Text = I18n.T("games.scan");
+            scanBtn.Click += delegate { Scan(); };
+
+            addBtn = new FlatButton();
+            addBtn.Primary = true;
+            addBtn.FontPt = 9.2f;
+            addBtn.Text = I18n.T("games.add");
+            addBtn.Click += delegate { AddManual(); };
+
+            list = new GamesList();
+            list.SelectionChanged += delegate { SyncActions(); };
+            list.Activated += delegate { Launch(); };
+
+            playBtn = new FlatButton();
+            playBtn.Primary = true;
+            playBtn.FontPt = 9.2f;
+            playBtn.Text = I18n.T("games.play");
+            playBtn.Click += delegate { Launch(); };
+
+            pinBtn = new FlatButton();
+            pinBtn.Primary = false;
+            pinBtn.FontPt = 9.2f;
+            pinBtn.Text = I18n.T("games.pin");
+            pinBtn.Click += delegate { TogglePin(); };
+
+            delBtn = new FlatButton();
+            delBtn.Primary = false;
+            delBtn.FontPt = 9.2f;
+            delBtn.Text = I18n.T("games.remove");
+            delBtn.Click += delegate { RemoveSel(); };
+
+            topCard.Controls.Add(title);
+            topCard.Controls.Add(sub);
+            topCard.Controls.Add(status);
+            topCard.Controls.Add(scanBtn);
+            topCard.Controls.Add(addBtn);
+
+            listCard.Controls.Add(list);
+            listCard.Controls.Add(hintLbl);
+            listCard.Controls.Add(playBtn);
+            listCard.Controls.Add(pinBtn);
+            listCard.Controls.Add(delBtn);
+
+            Controls.Add(topCard);
+            Controls.Add(listCard);
+
+            Reload();
+
+            // 第一次进页面自动扫一次;十分钟内再进来不重复扫,免得每次切页都读硬盘。
+            if ((DateTime.UtcNow - lastAutoScan).TotalMinutes >= 10) Scan();
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            LayoutCards();
+        }
+
+        private void LayoutCards()
+        {
+            int w = Width, h = Height;
+            if (w <= 0 || h <= 0) return;
+
+            int gap = Ui.Px(12);
+            int topH = Ui.Px(98);
+            topCard.SetBounds(0, 0, w, topH);
+            listCard.SetBounds(0, topH + gap, w, h - topH - gap);
+
+            int pad = Ui.Px(20);
+            int bh = Ui.Px(30), bw = Ui.Px(108);
+            int textW = w - pad * 2 - bw * 2 - Ui.Px(20);
+            if (textW < Ui.Px(120)) textW = Ui.Px(120);
+            title.SetBounds(pad, Ui.Px(14), textW, Ui.Px(24));
+            sub.SetBounds(pad, Ui.Px(40), textW, Ui.Px(18));
+            status.SetBounds(pad, Ui.Px(66), w - pad * 2, Ui.Px(20));
+
+            int rx = w - pad;
+            addBtn.SetBounds(rx - bw, Ui.Px(22), bw, bh);
+            scanBtn.SetBounds(rx - bw * 2 - Ui.Px(8), Ui.Px(22), bw, bh);
+
+            int barH = Ui.Px(46);
+            int innerH = listCard.Height - Ui.Px(14) - barH;
+            if (innerH < Ui.Px(80)) innerH = Ui.Px(80);
+            list.SetBounds(pad, Ui.Px(14), w - pad * 2, innerH);
+
+            int by = Ui.Px(14) + innerH + Ui.Px(8);
+            int abw = Ui.Px(96), abh = Ui.Px(28);
+            int ax = w - pad - abw;
+            delBtn.SetBounds(ax, by, abw, abh);
+            pinBtn.SetBounds(ax - abw - Ui.Px(8), by, abw, abh);
+            playBtn.SetBounds(ax - abw * 2 - Ui.Px(16), by, abw, abh);
+
+            int hintW = playBtn.Left - pad - Ui.Px(12);
+            if (hintW < 0) hintW = 0;
+            hintLbl.SetBounds(pad, by, hintW, abh);
+        }
+
+        public override void Refresh(SysSample s)
+        {
+            // 别的页面可能改了锁定状态,这里顺手对齐徽标。
+            if (!string.Equals(list.PinName, Host.St.BoostPin, StringComparison.OrdinalIgnoreCase))
+            {
+                list.PinName = Host.St.BoostPin;
+                SyncActions();
+            }
+        }
+
+        private void Reload()
+        {
+            string keep = "";
+            InstalledGame cur = list.Selected;
+            if (cur != null) keep = cur.ProcName;
+
+            InstalledGame[] all = Host.St.MyGameList();
+            list.SetItems(all, keep);
+            list.PinName = Host.St.BoostPin;
+            SyncActions();
+            UpdateStatus(all.Length);
+        }
+
+        private void SyncActions()
+        {
+            InstalledGame g = list.Selected;
+            playBtn.Enabled = g != null;
+            pinBtn.Enabled = g != null;
+            delBtn.Enabled = g != null;
+
+            bool on = g != null && g.ProcName.Length > 0
+                && string.Equals(Host.St.BoostPin, g.ProcName, StringComparison.OrdinalIgnoreCase);
+            pinBtn.Text = I18n.T(on ? "games.pinned" : "games.pin");
+        }
+
+        private void UpdateStatus(int count)
+        {
+            if (scanning)
+            {
+                status.Text = I18n.T("games.scanning");
+                return;
+            }
+            string n = count.ToString();
+            if (lastScan != DateTime.MinValue)
+                status.Text = I18n.T("games.count", n, lastScan.ToString("HH:mm"));
+            else if (count == 0)
+                status.Text = I18n.T("games.never", n);
+            else
+                status.Text = "";
+        }
+
+        /// <summary>后台扫描,结果回 UI 线程合并;不阻塞界面、不重复扫。</summary>
+        private void Scan()
+        {
+            if (scanning) return;
+            scanning = true;
+            scanBtn.Enabled = false;
+            scanBtn.Text = I18n.T("games.scanning");
+            status.Text = I18n.T("games.scanning");
+
+            System.Threading.ThreadPool.QueueUserWorkItem(delegate(object state)
+            {
+                InstalledGame[] found = null;
+                try { found = GameScanner.Scan(); }
+                catch (Exception ex) { Log.Write("gamescan: " + ex.Message); }
+
+                try
+                {
+                    if (IsDisposed) return;
+                    if (IsHandleCreated) BeginInvoke(new Action(delegate { OnScanned(found); }));
+                    else
+                    {
+                        pendingScan = found;
+                        pendingReady = true;
+                    }
+                }
+                catch (Exception ex) { Log.Write("gamescan ui: " + ex.Message); }
+            });
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            if (!pendingReady) return;
+            pendingReady = false;
+            InstalledGame[] r = pendingScan;
+            pendingScan = null;
+            OnScanned(r);
+        }
+
+        private void OnScanned(InstalledGame[] found)
+        {
+            if (IsDisposed) return;
+            scanning = false;
+            scanBtn.Enabled = true;
+            scanBtn.Text = I18n.T("games.scan");
+            lastScan = DateTime.Now;
+            lastAutoScan = DateTime.UtcNow;
+
+            int added = 0;
+            if (found != null)
+            {
+                for (int i = 0; i < found.Length; i++)
+                {
+                    if (Host.St.UpsertMyGame(found[i].Name, found[i].ExePath, found[i].Source)) added++;
+                }
+            }
+            if (added > 0)
+            {
+                Host.SaveSettingsSoon();
+                Host.SyncGameLibrary();
+                Host.Toast(I18n.T("games.scanned", added));
+            }
+            Reload();
+        }
+
+        private void AddManual()
+        {
+            using (var dlg = new OpenFileDialog())
+            {
+                dlg.Title = I18n.T("games.add.title");
+                dlg.Filter = "*.exe|*.exe";
+                dlg.CheckFileExists = true;
+                dlg.Multiselect = false;
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+                string path = dlg.FileName;
+                string proc = "";
+                try { proc = System.IO.Path.GetFileNameWithoutExtension(path); }
+                catch { }
+                if (string.IsNullOrEmpty(proc)) return;
+
+                // 名字按游戏目录/内置库推断,不拿 exe 文件名当游戏名。
+                string name = GameDb.DisplayName("", path);
+                if (name.Length == 0) name = proc;
+
+                Host.St.UpsertMyGame(name, path, "manual");
+                // 用户亲手加进来的,以前误点的「不是游戏」标记作废。
+                Host.St.UnblockName(proc);
+                Host.SaveSettingsSoon();
+                Host.SyncGameLibrary();
+                Reload();
+                list.SelectProc(proc);
+                SyncActions();
+                Host.Toast(I18n.T("games.added", name));
+            }
+        }
+
+        private void Launch()
+        {
+            InstalledGame g = list.Selected;
+            if (g == null || string.IsNullOrEmpty(g.ExePath)) return;
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo();
+                psi.FileName = g.ExePath;
+                string dir = "";
+                try { dir = System.IO.Path.GetDirectoryName(g.ExePath); }
+                catch { }
+                if (!string.IsNullOrEmpty(dir)) psi.WorkingDirectory = dir;
+                psi.UseShellExecute = true;
+                System.Diagnostics.Process.Start(psi);
+                Host.Toast(I18n.T("games.launching", g.Name));
+            }
+            catch (Exception ex)
+            {
+                Log.Write("launch game: " + ex.Message);
+                Host.Toast(I18n.T("games.launch.fail"));
+            }
+        }
+
+        private void TogglePin()
+        {
+            InstalledGame g = list.Selected;
+            if (g == null || g.ProcName.Length == 0) return;
+            Host.PinGame(g.ProcName);
+            SyncActions();
+            list.Invalidate();
+        }
+
+        private void RemoveSel()
+        {
+            InstalledGame g = list.Selected;
+            if (g == null) return;
+            string proc = g.ProcName;
+
+            if (!Host.St.RemoveMyGame(g.ExePath)) return;
+            if (string.Equals(Host.St.BoostPin, proc, StringComparison.OrdinalIgnoreCase)) Host.St.BoostPin = "";
+            Host.SaveSettingsSoon();
+            Host.SyncGameLibrary();
+            Reload();
+            Host.Toast(I18n.T("games.removed", g.Name));
+        }
+    }
+
+    /// <summary>我的游戏列表:图标 + 名称 + exe 路径 + 来源/锁定标记,滚轮滚动。</summary>
+    internal sealed class GamesList : Ctl
+    {
+        private InstalledGame[] items = new InstalledGame[0];
+        private int sel = -1;
+        private int scroll;
+        private int hover = -1;
+        private string pinName = "";
+
+        public event Action SelectionChanged;
+        public event Action Activated;
+
+        public string PinName
+        {
+            get { return pinName; }
+            set { pinName = value ?? ""; Invalidate(); }
+        }
+
+        public InstalledGame Selected
+        {
+            get { return sel >= 0 && sel < items.Length ? items[sel] : null; }
+        }
+
+        public GamesList()
+        {
+            BackColor = Theme.Card;
+            Cursor = Cursors.Hand;
+        }
+
+        private int RowH() { return Ui.Px(56); }
+
+        /// <summary>换一批数据,尽量把选中项留在原来那一款上。</summary>
+        public void SetItems(InstalledGame[] arr, string keepProc)
+        {
+            items = arr ?? new InstalledGame[0];
+            int idx = -1;
+            if (!string.IsNullOrEmpty(keepProc))
+            {
+                for (int i = 0; i < items.Length; i++)
+                {
+                    if (string.Equals(items[i].ProcName, keepProc, StringComparison.OrdinalIgnoreCase))
+                    {
+                        idx = i;
+                        break;
+                    }
+                }
+            }
+            if (idx < 0 && items.Length > 0) idx = 0;
+            sel = idx;
+            if (items.Length == 0) scroll = 0;
+            EnsureVisible();
+            Invalidate();
+        }
+
+        public void SelectProc(string proc)
+        {
+            if (string.IsNullOrEmpty(proc)) return;
+            for (int i = 0; i < items.Length; i++)
+            {
+                if (!string.Equals(items[i].ProcName, proc, StringComparison.OrdinalIgnoreCase)) continue;
+                sel = i;
+                EnsureVisible();
+                Invalidate();
+                if (SelectionChanged != null) SelectionChanged();
+                return;
+            }
+        }
+
+        private void EnsureVisible()
+        {
+            if (sel < 0) return;
+            int top = sel * RowH();
+            if (top < scroll) scroll = top;
+            else if (top + RowH() > scroll + Height) scroll = top + RowH() - Height;
+            if (scroll < 0) scroll = 0;
+        }
+
+        private bool IsPinned(InstalledGame g)
+        {
+            return g != null && g.ProcName.Length > 0
+                && string.Equals(pinName, g.ProcName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string SourceLabel(string src)
+        {
+            switch ((src ?? "").ToLowerInvariant())
+            {
+                case "steam": return I18n.T("games.src.steam");
+                case "epic": return I18n.T("games.src.epic");
+                case "gog": return I18n.T("games.src.gog");
+                case "disk": return I18n.T("games.src.disk");
+                case "manual": return I18n.T("games.src.manual");
+                default: return I18n.T("games.src.reg");
+            }
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            Prep(g);
+            if (Width < 20 || Height < 20) return;
+
+            if (items.Length == 0)
+            {
+                TextRenderer.DrawText(g, I18n.T("games.empty.title"), Theme.Bold(11f),
+                    new Rectangle(0, 0, Width, Height / 2), Theme.Sub,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.Bottom | TextFormatFlags.NoPrefix);
+                TextRenderer.DrawText(g, I18n.T("games.empty.sub"), Theme.Regular(8.6f),
+                    new Rectangle(Ui.Px(24), Height / 2 + Ui.Px(2), Width - Ui.Px(48), Ui.Px(44)),
+                    Theme.Faint,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
+                return;
+            }
+
+            int rowH = RowH();
+            for (int i = 0; i < items.Length; i++)
+            {
+                int y = i * rowH - scroll;
+                if (y > Height) break;
+                if (y + rowH < 0) continue;
+
+                InstalledGame it = items[i];
+                bool on = i == sel;
+                bool pinned = IsPinned(it);
+                var rr = new RectangleF(0, y + Ui.Px(3), Width, rowH - Ui.Px(6));
+                Ui.Fill(g, rr, Ui.Fp(8), on ? Theme.Alpha(Theme.Accent, 34)
+                    : (i == hover ? Theme.Alpha(Theme.Sub, 16) : Theme.Bg));
+
+                int pad = Ui.Px(12);
+                int ico = Ui.Px(26);
+                AppIcons.DrawApp(g, it.ExePath, new Rectangle(pad, y + Ui.Px(10), ico, ico),
+                    on ? Theme.Accent : Theme.Sub, AppGlyph.Gamepad);
+
+                int textX = pad + ico + Ui.Px(10);
+                int textW = Width - textX - Ui.Px(84);
+                TextRenderer.DrawText(g, it.Name, Theme.Bold(10.4f),
+                    new Rectangle(textX, y + Ui.Px(7), textW, Ui.Px(20)),
+                    on ? Theme.Accent : Theme.Text,
+                    TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+                TextRenderer.DrawText(g, it.ExePath, Theme.Regular(8.2f),
+                    new Rectangle(textX, y + Ui.Px(28), textW, Ui.Px(16)), Theme.Faint,
+                    TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix
+                    | TextFormatFlags.PathEllipsis);
+
+                TextRenderer.DrawText(g, SourceLabel(it.Source), Theme.Regular(8f),
+                    new Rectangle(Width - Ui.Px(78), y + Ui.Px(7), Ui.Px(66), Ui.Px(18)),
+                    Theme.Faint,
+                    TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+                if (pinned)
+                {
+                    TextRenderer.DrawText(g, I18n.T("games.pinned"), Theme.Regular(8f),
+                        new Rectangle(Width - Ui.Px(78), y + Ui.Px(28), Ui.Px(66), Ui.Px(18)),
+                        Theme.Accent,
+                        TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+                }
+            }
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            base.OnMouseLeave(e);
+            if (hover < 0) return;
+            hover = -1;
+            Invalidate();
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            int idx = (e.Y + scroll) / RowH();
+            if (idx < 0 || idx >= items.Length) idx = -1;
+            if (idx == hover) return;
+            hover = idx;
+            Invalidate();
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button != MouseButtons.Left) return;
+            int idx = (e.Y + scroll) / RowH();
+            if (idx < 0 || idx >= items.Length || idx == sel) return;
+            sel = idx;
+            Invalidate();
+            if (SelectionChanged != null) SelectionChanged();
+        }
+
+        protected override void OnMouseDoubleClick(MouseEventArgs e)
+        {
+            base.OnMouseDoubleClick(e);
+            if (e.Button != MouseButtons.Left) return;
+            int idx = (e.Y + scroll) / RowH();
+            if (idx < 0 || idx >= items.Length) return;
+            if (Activated != null) Activated();
         }
 
         protected override void OnMouseWheel(MouseEventArgs e)
