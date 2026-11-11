@@ -60,6 +60,7 @@ namespace FrameForge.UI
 
         private bool ovShown;
         private bool lastFullscreen;
+        private int lastFilterPid = -1;
         private int exclusiveWarnPid = -1;
         private bool trimming;
         private bool downloading;
@@ -430,9 +431,12 @@ namespace FrameForge.UI
             SysSample s = Mon.Current;
             if (s == null) return;
 
-            if (s.Fullscreen != lastFullscreen)
+            // 换了游戏或全屏状态变了都要重算:独占全屏走 gamma LUT,窗口/无边框全屏走放大镜,
+            // 只跟着 Fullscreen 判断的话,换成一个窗口化游戏会一直停在 LUT 模式。
+            if (s.Fullscreen != lastFullscreen || s.GamePid != lastFilterPid)
             {
                 lastFullscreen = s.Fullscreen;
+                lastFilterPid = s.GamePid;
                 SyncOverlay();
                 ApplyFilter();
             }
@@ -463,6 +467,8 @@ namespace FrameForge.UI
 
             CheckBoostAlive();
             MaybeAutoBoost(s);
+            // PCBoost 第二层:加速期间每 2 分钟重新把游戏主线程软引导到最空闲的核心。
+            if (Boost != null && Boost.Active) { try { Boost.SteerIfDue(); } catch { } }
             AutoTrim(s);
 
             // 帧率每秒在变,加速页(已合并监测)跟着 200ms 刷新;其它页面没有实时数据,1 秒一次就够,

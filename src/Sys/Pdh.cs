@@ -76,6 +76,48 @@ namespace FrameForge.Sys
             finally { if (buf != IntPtr.Zero) Marshal.FreeHGlobal(buf); }
         }
 
+        /// <summary>
+        /// 连同实例名一起读。GPU Engine 的实例名里带 pid,可以算出每个进程占了多少 3D 引擎,
+        /// 这是识别「没见过的游戏」最可靠的一条证据。
+        /// </summary>
+        public void ReadNamed(out string[] names, out double[] values)
+        {
+            names = new string[0];
+            values = new double[0];
+            if (!valid || counter == IntPtr.Zero) return;
+            uint size = 0;
+            uint count = 0;
+            IntPtr buf = IntPtr.Zero;
+            try
+            {
+                uint ret = Native.PdhGetFormattedCounterArray(counter, Native.PDH_FMT_DOUBLE, ref size, out count, IntPtr.Zero);
+                if (ret != Native.PDH_MORE_DATA || size == 0) return;
+                buf = Marshal.AllocHGlobal((int)size);
+                ret = Native.PdhGetFormattedCounterArray(counter, Native.PDH_FMT_DOUBLE, ref size, out count, buf);
+                if (ret != 0) return;
+
+                int stride = Marshal.SizeOf(typeof(Native.PDH_FMT_COUNTERVALUE_ITEM));
+                var ns = new List<string>((int)count);
+                var vs = new List<double>((int)count);
+                for (uint i = 0; i < count; i++)
+                {
+                    IntPtr item = new IntPtr(buf.ToInt64() + i * stride);
+                    var v = (Native.PDH_FMT_COUNTERVALUE_ITEM)Marshal.PtrToStructure(item, typeof(Native.PDH_FMT_COUNTERVALUE_ITEM));
+                    if (v.FmtValue.CStatus != 0 || v.szName == IntPtr.Zero) continue;
+                    ns.Add(Marshal.PtrToStringUni(v.szName));
+                    vs.Add(v.FmtValue.doubleValue);
+                }
+                names = ns.ToArray();
+                values = vs.ToArray();
+            }
+            catch
+            {
+                names = new string[0];
+                values = new double[0];
+            }
+            finally { if (buf != IntPtr.Zero) Marshal.FreeHGlobal(buf); }
+        }
+
         public void Dispose()
         {
             try { if (query != IntPtr.Zero) Native.PdhCloseQuery(query); }

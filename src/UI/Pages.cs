@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Windows.Forms;
 using FrameForge.Sys;
 
@@ -2866,24 +2867,15 @@ namespace FrameForge.UI
         }
     }
 
-    /// <summary>滤镜实时预览:同一组色标经过当前颜色矩阵变换后画成渐变。</summary>
+    /// <summary>滤镜实时预览:把当前颜色矩阵套到一张缓存的游戏画面上,按住可对比原图。</summary>
     public class FilterPreview : Ctl
     {
         private float[] matrix = Filter.Identity();
         private bool hold;
 
-        private static readonly Color[] Swatches =
-        {
-            // 起点故意压到接近纯黑:暗部场景平衡、对比度这类调整在这里的差别最明显。
-            Color.FromArgb(10, 12, 18),
-            Color.FromArgb(22, 24, 30),
-            Color.FromArgb(58, 52, 84),
-            Color.FromArgb(140, 68, 72),
-            Color.FromArgb(212, 148, 78),
-            Color.FromArgb(104, 162, 102),
-            Color.FromArgb(64, 120, 182),
-            Color.FromArgb(238, 242, 246)
-        };
+        // 预览底图只画一次:用真实场景(天空/远山/地面/人物/HUD)代替抽象色带,
+        // 亮部、暗部、肤色、绿色植被的变化都能直接看出来,而不是凭渐变条猜。
+        private static Bitmap scene;
 
         public void SetMatrix(float[] m)
         {
@@ -2934,9 +2926,9 @@ namespace FrameForge.UI
                     // 对比态:左半原图、右半当前滤镜。两侧同色相邻,
                     // 预设只做了轻微调整时,接缝处的色差也比整块切换更容易看出来。
                     g.SetClip(new RectangleF(0, 0, Width / 2f, Height));
-                    DrawBand(g, p, Filter.Identity());
+                    DrawScene(g, p, Filter.Identity());
                     g.SetClip(new RectangleF(Width / 2f, 0, Width - Width / 2f, Height));
-                    DrawBand(g, p, matrix);
+                    DrawScene(g, p, matrix);
                     g.ResetClip();
 
                     using (var pen = new Pen(Color.FromArgb(215, 255, 255, 255), Math.Max(1f, Ui.Fp(1.5f))))
@@ -2944,7 +2936,7 @@ namespace FrameForge.UI
                 }
                 else
                 {
-                    DrawBand(g, p, matrix);
+                    DrawScene(g, p, matrix);
                 }
                 using (var pen = new Pen(Theme.Border, 1f)) g.DrawPath(pen, p);
             }
@@ -2964,35 +2956,141 @@ namespace FrameForge.UI
             DrawTag(g, f, tip, Width - sz.Width - Ui.Px(18), Height - sz.Height - Ui.Px(7));
         }
 
-        /// <summary>把一组色标按矩阵变换后画成渐变条。</summary>
-        private void DrawBand(Graphics g, GraphicsPath path, float[] m)
+        /// <summary>
+        /// 把缓存的游戏画面按 5×5 颜色矩阵画进预览框。
+        /// GDI+ 的 ColorMatrix 行 = 输出通道、列 = 输入通道,和 Filter 的矩阵排布一致,
+        /// 第 5 列的平移量按 0..1 归一化,正好等于矩阵里的偏移量。
+        /// </summary>
+        private void DrawScene(Graphics g, GraphicsPath path, float[] m)
         {
-            int n = Swatches.Length;
-            var colors = new Color[n];
-            var pos = new float[n];
-            for (int i = 0; i < n; i++)
-            {
-                colors[i] = Filter.Transform(Swatches[i], m);
-                pos[i] = (float)i / (n - 1);
-            }
-            var blend = new ColorBlend();
-            blend.Colors = colors;
-            blend.Positions = pos;
+            Bitmap src = Scene();
+            if (src == null) return;
+            if (m == null || m.Length < 25) m = Filter.Identity();
 
-            using (var br = new LinearGradientBrush(
-                new RectangleF(0, 0, Math.Max(2, Width), Math.Max(2, Height)),
-                colors[0], colors[n - 1], LinearGradientMode.Horizontal))
+            var cm = new ColorMatrix();
+            cm.Matrix00 = m[0]; cm.Matrix01 = m[1]; cm.Matrix02 = m[2]; cm.Matrix03 = m[3]; cm.Matrix04 = m[4];
+            cm.Matrix10 = m[5]; cm.Matrix11 = m[6]; cm.Matrix12 = m[7]; cm.Matrix13 = m[8]; cm.Matrix14 = m[9];
+            cm.Matrix20 = m[10]; cm.Matrix21 = m[11]; cm.Matrix22 = m[12]; cm.Matrix23 = m[13]; cm.Matrix24 = m[14];
+            cm.Matrix30 = m[15]; cm.Matrix31 = m[16]; cm.Matrix32 = m[17]; cm.Matrix33 = m[18]; cm.Matrix34 = m[19];
+            cm.Matrix40 = m[20]; cm.Matrix41 = m[21]; cm.Matrix42 = m[22]; cm.Matrix43 = m[23]; cm.Matrix44 = m[24];
+
+            GraphicsState state = g.Save();
+            try
             {
-                br.InterpolationColors = blend;
-                g.FillPath(br, path);
+                // 对比模式下外面已经按左右半屏裁过,这里只做交集,不能把那个裁剪覆盖掉。
+                g.SetClip(path, CombineMode.Intersect);
+                using (var ia = new ImageAttributes())
+                {
+                    ia.SetColorMatrix(cm, ColorMatrixFlag.Default, ColorAdjustType.Bitmap);
+                    g.DrawImage(src, new Rectangle(0, 0, Width, Height),
+                        0, 0, src.Width, src.Height, GraphicsUnit.Pixel, ia);
+                }
             }
-            // 底部压一点暗角,看起来像一帧画面而不是纯色卡
-            using (var shade = new LinearGradientBrush(
-                new RectangleF(0, Height * 0.55f, Math.Max(2, Width), Math.Max(2, Height * 0.45f)),
-                Color.Transparent, Color.FromArgb(70, 0, 0, 0), LinearGradientMode.Vertical))
+            finally { g.Restore(state); }
+        }
+
+        /// <summary>
+        /// 生成一张 480×270 的"一帧游戏画面":天空渐变、太阳、两层远山、地面、
+        /// 人物剪影、准星与血条。缓存复用,不随窗口重绘重新生成。
+        /// </summary>
+        private static Bitmap Scene()
+        {
+            if (scene != null) return scene;
+            const int W = 480, H = 270;
+            var bmp = new Bitmap(W, H, PixelFormat.Format32bppArgb);
+            try
             {
-                g.FillPath(shade, path);
+                using (Graphics g = Graphics.FromImage(bmp))
+                {
+                    g.SmoothingMode = SmoothingMode.AntiAlias;
+
+                    // 天空:上方冷蓝、贴近地平线转暖,色温和饱和度调整在这里最直观
+                    using (var sky = new LinearGradientBrush(
+                        new Rectangle(0, 0, W, H * 2 / 3 + 1),
+                        Color.FromArgb(30, 54, 98), Color.FromArgb(232, 152, 86), LinearGradientMode.Vertical))
+                        g.FillRectangle(sky, 0, 0, W, H * 2 / 3);
+
+                    // 太阳:对比度拉过头时最先在这里溢白,给高光一个参照
+                    using (var sun = new SolidBrush(Color.FromArgb(248, 232, 186)))
+                        g.FillEllipse(sun, W * 0.64f, H * 0.30f, 30, 30);
+
+                    // 远山:两层不同的深度,用来看暗部层次会不会被压成一团
+                    var far = new PointF[]
+                    {
+                        new PointF(0, H * 0.56f), new PointF(W * 0.16f, H * 0.40f),
+                        new PointF(W * 0.32f, H * 0.50f), new PointF(W * 0.48f, H * 0.34f),
+                        new PointF(W * 0.66f, H * 0.50f), new PointF(W * 0.82f, H * 0.38f),
+                        new PointF(W, H * 0.52f), new PointF(W, H), new PointF(0, H)
+                    };
+                    using (var br = new SolidBrush(Color.FromArgb(74, 92, 120))) g.FillPolygon(br, far);
+
+                    var near = new PointF[]
+                    {
+                        new PointF(0, H * 0.66f), new PointF(W * 0.14f, H * 0.56f),
+                        new PointF(W * 0.30f, H * 0.64f), new PointF(W * 0.46f, H * 0.54f),
+                        new PointF(W * 0.62f, H * 0.66f), new PointF(W * 0.80f, H * 0.58f),
+                        new PointF(W, H * 0.66f), new PointF(W, H), new PointF(0, H)
+                    };
+                    using (var br = new SolidBrush(Color.FromArgb(42, 58, 52))) g.FillPolygon(br, near);
+
+                    // 地面:暖绿到暗绿,人物脚下留一点亮面
+                    using (var ground = new LinearGradientBrush(
+                        new Rectangle(0, (int)(H * 0.68f), W, (int)(H * 0.32f) + 1),
+                        Color.FromArgb(96, 116, 70), Color.FromArgb(26, 34, 26), LinearGradientMode.Vertical))
+                        g.FillRectangle(ground, 0, (int)(H * 0.68f), W, H);
+
+                    // 人物剪影:深色主体 + 脸部落差,方便观察"暗部会不会糊死"
+                    using (var body = new SolidBrush(Color.FromArgb(28, 30, 36)))
+                    {
+                        g.FillEllipse(body, W * 0.665f, H * 0.50f, 26, 26);        // 头
+                        g.FillPolygon(body, new PointF[]
+                        {
+                            new PointF(W * 0.66f, H * 0.58f), new PointF(W * 0.73f, H * 0.58f),
+                            new PointF(W * 0.75f, H * 0.82f), new PointF(W * 0.64f, H * 0.82f)
+                        });
+                    }
+
+                    // HUD:血条、准星、小地图,顺便检验滤镜不会把 UI 染得认不出来
+                    using (var hud = new SolidBrush(Color.FromArgb(210, 232, 238, 242)))
+                    {
+                        g.FillRectangle(hud, 18, H - 34, 96, 8);
+                        g.FillRectangle(hud, 18, H - 22, 62, 4);
+                        g.FillRectangle(hud, W - 128, H - 34, 58, 6);
+                        g.FillRectangle(hud, W - 128, H - 24, 34, 4);
+                    }
+                    using (var bar = new SolidBrush(Color.FromArgb(220, 206, 66, 58)))
+                        g.FillRectangle(bar, 18, H - 34, 58, 8);
+
+                    using (var cross = new Pen(Color.FromArgb(180, 240, 244, 248), 1.4f))
+                    {
+                        g.DrawLine(cross, W / 2f - 10, H / 2f, W / 2f - 4, H / 2f);
+                        g.DrawLine(cross, W / 2f + 4, H / 2f, W / 2f + 10, H / 2f);
+                        g.DrawLine(cross, W / 2f, H / 2f - 10, W / 2f, H / 2f - 4);
+                        g.DrawLine(cross, W / 2f, H / 2f + 4, W / 2f, H / 2f + 10);
+                    }
+
+                    using (var mini = new SolidBrush(Color.FromArgb(120, 12, 16, 20)))
+                        g.FillEllipse(mini, W - 70, 14, 54, 54);
+                    using (var mp = new Pen(Color.FromArgb(150, 220, 226, 232), 1.2f))
+                        g.DrawEllipse(mp, W - 70, 14, 54, 54);
+
+                    // 暗角:让画面更像游戏实拍,同时压一压四角的高光
+                    using (var p = new GraphicsPath())
+                    {
+                        p.AddRectangle(new Rectangle(0, 0, W, H));
+                        using (var v = new PathGradientBrush(p))
+                        {
+                            v.CenterPoint = new PointF(W / 2f, H * 0.45f);
+                            v.CenterColor = Color.Transparent;
+                            v.SurroundColors = new Color[] { Color.FromArgb(130, 0, 0, 0) };
+                            g.FillRectangle(v, 0, 0, W, H);
+                        }
+                    }
+                }
+                scene = bmp;
             }
+            catch { scene = bmp; }
+            return scene;
         }
 
         /// <summary>黑底白字的小标签。</summary>

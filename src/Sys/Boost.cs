@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using Microsoft.Win32;
 
 namespace FrameForge.Sys
@@ -99,7 +100,18 @@ namespace FrameForge.Sys
         public int PriorityLevel = -1;
         /// <summary>理想处理器是否至少设置成功了一个线程。</summary>
         public bool IdealApplied;
+        /// <summary>当前软引导到的逻辑核,-1 表示还没引导过。</summary>
+        public int SteerCpu = -1;
         public DateTime StartedAt = DateTime.MinValue;
+
+        // PCBoost 的第二层:每 2 分钟重新挑一次「当前最空闲的核心」,
+        // 把游戏主线程的理想处理器指过去。这里只设调度提示(SetThreadIdealProcessor),
+        // 不改亲和性掩码——游戏需要多核爆发时依然可以调用包括 CPU 0 在内的全部核心。
+        private const int SteerSeconds = 120;
+        private const int SteerSampleMs = 220;
+        private DateTime lastSteer = DateTime.MinValue;
+        private int steerCores;
+        private int steerBusy;
 
         public int SuspendedCount { get { return suspended.Count; } }
 
@@ -683,6 +695,7 @@ namespace FrameForge.Sys
             GamePid = gamePid;
             GameName = gameName ?? "";
             StartedAt = DateTime.Now;
+            steerCores = plan.Cores;
 
             string priorityFail = "";
             if (plan.Priority)
@@ -692,6 +705,13 @@ namespace FrameForge.Sys
                     r.PriorityOk = 1;
                     PriorityLevel = plan.PriorityLevel;
                 }
+            }
+            // PCBoost 的两层一起落地:先把前台游戏提到高优先级,再立刻把主线程
+            // 软引导到当前最空闲的核心;之后由 SteerIfDue() 每 2 分钟重新评估。
+            if (plan.Priority)
+            {
+                try { TrySteer(plan.Cores); }
+                catch (Exception ex) { Log.Write("boost steer: " + ex.Message); }
             }
             if (plan.Affinity)
             {
@@ -927,6 +947,131 @@ namespace FrameForge.Sys
             return best.Index;
         }
 
+        /// <summary>
+        /// 动态负载平衡:由界面每秒调用一次,内部节流到每 2 分钟一次。
+        /// 重新挑当前最空闲的核心,把游戏主线程的理想处理器指过去。
+        /// </summary>
+        public void SteerIfDue()
+        {
+            if (!Active || GamePid <= 0) return;
+            if ((DateTime.UtcNow - lastSteer).TotalSeconds < SteerSeconds) return;
+            if (Interlocked.CompareExchange(ref steerBusy, 1, 0) != 0) return;
+            lastSteer = DateTime.UtcNow;
+            int pid = GamePid;
+            int cores = steerCores;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try { SteerOnce(pid, cores); }
+                catch (Exception ex) { Log.Write("boost steer: " + ex.Message); }
+                finally { Interlocked.Exchange(ref steerBusy, 0); }
+            });
+        }
+
+        /// <summary>同步执行一次软引导(加速时首帧用,调用方已在后台线程)。</summary>
+        private void TrySteer(int cores)
+        {
+            steerCores = cores;
+            lastSteer = DateTime.UtcNow;
+            SteerOnce(GamePid, cores);
+        }
+
+        /// <summary>
+        /// 采样两次每核时间算出单核占用,挑最空闲的一颗,把游戏主线程指过去。
+        /// CPU 0 承担网卡/鼠标等中断和大量系统杂务,几乎不会是最闲的那颗,
+        /// 所以「挑最闲」这条规则本身就实现了与系统核心错峰,而不需要硬性避开。
+        /// </summary>
+        private int SteerOnce(int pid, int cores)
+        {
+            int cpu = PickIdleCore(cores);
+            int tid = MainThreadId(pid);
+            if (tid <= 0) return -1;
+            if (!SetIdeal(tid, cpu)) return -1;
+
+            if (SteerCpu != cpu) Log.Write("boost steer pid=" + pid + " cpu=" + cpu);
+            SteerCpu = cpu;
+            IdealApplied = true;
+            return cpu;
+        }
+
+        /// <summary>
+        /// 两次采样之间各逻辑核的忙碌占比,取最低的那个。
+        /// 负载相同(差值在 0.05% 内)时优先编号非 0 的核心,把 CPU 0 让给系统中断。
+        /// </summary>
+        private static int PickIdleCore(int cores)
+        {
+            long[] idle1, busy1, idle2, busy2;
+            if (Native.CpuCoreTimes(out idle1, out busy1) <= 0) return 0;
+            try { Thread.Sleep(SteerSampleMs); } catch { }
+            if (Native.CpuCoreTimes(out idle2, out busy2) <= 0) return 0;
+
+            int n = Math.Min(Math.Min(idle1.Length, busy1.Length), Math.Min(idle2.Length, busy2.Length));
+            if (n <= 0) return 0;
+
+            // 启用核心独占时只在游戏自己的核里挑,不会把主线程送到被排除的核上。
+            long gameMask = 0;
+            CpuCore[] all = CpuTopology.Cores();
+            if (cores > 0)
+            {
+                int used;
+                gameMask = CpuTopology.GameMask(cores, out used);
+            }
+
+            int best = -1;
+            double bestLoad = 2;
+            for (int i = 0; i < all.Length; i++)
+            {
+                CpuCore c = all[i];
+                if (c.Parked) continue;
+                if (gameMask != 0 && (c.Mask & gameMask) == 0) continue;
+                int idx = c.Index;
+                if (idx < 0 || idx >= n) continue;
+
+                long di = idle2[idx] - idle1[idx];
+                long db = busy2[idx] - busy1[idx];
+                long total = di + db;
+                if (total <= 0) total = 1;
+                double load = (double)db / total;
+
+                if (best < 0 || load < bestLoad - 0.0005) { best = idx; bestLoad = load; }
+                else if (best == 0 && idx != 0 && Math.Abs(load - bestLoad) <= 0.0005) best = idx;
+            }
+            return best < 0 ? 0 : best;
+        }
+
+        /// <summary>进程里 TID 最小的线程就是主线程(游戏逻辑与渲染提交都压在它上面)。</summary>
+        private static int MainThreadId(int pid)
+        {
+            IntPtr snap = Native.CreateToolhelp32Snapshot(Native.TH32CS_SNAPTHREAD, 0);
+            if (snap == IntPtr.Zero || snap == new IntPtr(-1)) return -1;
+            int main = -1;
+            try
+            {
+                var e = new Native.THREADENTRY32();
+                e.dwSize = (uint)Marshal.SizeOf(typeof(Native.THREADENTRY32));
+                if (!Native.Thread32First(snap, ref e)) return -1;
+                do
+                {
+                    if (e.th32OwnerProcessID != (uint)pid) continue;
+                    int tid = (int)e.th32ThreadID;
+                    if (main < 0 || tid < main) main = tid;
+                }
+                while (Native.Thread32Next(snap, ref e));
+            }
+            catch { return -1; }
+            finally { Native.CloseHandle(snap); }
+            return main;
+        }
+
+        /// <summary>设置理想处理器;MAXIMUM_PROCESSORS 表示「交给调度器自己挑」。</summary>
+        private static bool SetIdeal(int tid, int cpu)
+        {
+            IntPtr th = Native.OpenThread(Native.THREAD_SET_INFORMATION, false, tid);
+            if (th == IntPtr.Zero) return false;
+            try { return Native.SetThreadIdealProcessor(th, (uint)cpu) != 0xFFFFFFFF; }
+            catch { return false; }
+            finally { Native.CloseHandle(th); }
+        }
+
         private bool ApplyPowerPlan()
         {
             try
@@ -1046,6 +1191,17 @@ namespace FrameForge.Sys
                 finally { if (h != IntPtr.Zero) Native.CloseHandle(h); }
                 prevPriority = 0;
             }
+
+            // 软引导只是调度提示,进程退出就没了;还原时主动把主线程指回「任意核心」,
+            // 避免游戏还在跑却一直被钉在之前挑的那颗核上。
+            if (GamePid > 0)
+            {
+                int tid = MainThreadId(GamePid);
+                if (tid > 0) SetIdeal(tid, (int)Native.MAXIMUM_PROCESSORS);
+            }
+            lastSteer = DateTime.MinValue;
+            SteerCpu = -1;
+            steerBusy = 0;
 
             Active = false;
             StartedAt = DateTime.MinValue;

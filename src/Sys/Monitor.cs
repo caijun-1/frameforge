@@ -35,6 +35,7 @@ namespace FrameForge.Sys
         // 最近检测到的游戏:切出游戏去看数据时仍算"有游戏",否则界面会立刻变回
         // "未检测到游戏",帧率跟踪也会被停掉,看起来就像没识别到。
         public int GamePid = -1;
+        public IntPtr GameHwnd = IntPtr.Zero; // 游戏主窗口:叠加层靠它定位到游戏上面
         public string GameName = "";       // 进程名,带 .exe 去掉扩展名
         public string GameTitle = "";      // 识别出来的游戏名(中文/英文)
         public bool GameRecent;
@@ -60,9 +61,19 @@ namespace FrameForge.Sys
 
         private int lastGamePid = -1;
         private string lastGameName = "";
+        private IntPtr lastGameHwnd = IntPtr.Zero;
         private int lastLoggedPid = -2;
         private int lastLoggedGamePid = -2;
+        private int lastForegroundPid = -1;
         private DateTime lastScan = DateTime.MinValue;
+
+        // 每个进程的 GPU 3D 引擎占用(来自 PDH 的 GPU Engine 计数器实例名),
+        // 是识别"没见过的窗口化游戏"最硬的一条证据。
+        private static Dictionary<int, double> gpuPidUsage = new Dictionary<int, double>();
+        // 识别成功过的游戏进程。加载/菜单/切窗口时 GPU 和窗口特征会短暂变弱,
+        // 记住它能避免状态来回跳。
+        private static readonly Dictionary<int, DateTime> confirmedGames = new Dictionary<int, DateTime>();
+        private const int GameScore = 50;
 
         public volatile SysSample Current = new SysSample();
         public event Action<SysSample> Updated;
@@ -151,10 +162,18 @@ namespace FrameForge.Sys
             else
             {
                 s.GpuName = "GPU";
-                if (gpuEngine.Valid)
+            }
+
+            // GPU Engine 计数器带 pid,即使 NVML 可用也要读:游戏识别用得到。
+            if (gpuEngine.Valid)
+            {
+                gpuEngine.Collect();
+                string[] names;
+                double[] vals;
+                gpuEngine.ReadNamed(out names, out vals);
+                UpdateGpuUsage(names, vals);
+                if (!nvml.Available)
                 {
-                    gpuEngine.Collect();
-                    double[] vals = gpuEngine.ReadArray();
                     double sum = 0;
                     for (int i = 0; i < vals.Length; i++) if (vals[i] > 0) sum += vals[i];
                     if (sum > 0) s.Gpu = Clamp(sum, 0, 100);
@@ -181,26 +200,42 @@ namespace FrameForge.Sys
             s.ForegroundPid = fgPid;
             s.ForegroundName = Native.ProcessName(fgPid);
 
-            bool fgFull = IsGameWindow(hwnd, fgPid);
-            int gamePid = fgFull ? fgPid : -1;
-
-            // 游戏加加那类工具只认前台全屏窗口,一按 Alt+Tab 就变成"未检测到游戏"。
-            // 这里再枚举一遍所有顶层窗口:游戏的无边框全屏窗口在后台仍然铺满屏幕,
-            // 只要它还在就继续算"有游戏",玩家切出来看帧率时状态不会跳。
-            if (gamePid <= 0)
+            // ---- 游戏识别 ----
+            // 不再只看前台窗口:每 1.5 秒全量扫一遍顶层窗口,前台一变也立刻单独评估。
+            // 游戏切分辨率、无边框/独占切换、启动器退场都会换窗口句柄,只盯前台必然漏。
+            DateTime now = DateTime.UtcNow;
+            int gamePid = -1;
+            IntPtr gameHwnd = IntPtr.Zero;
+            bool scanned = (now - lastScan).TotalMilliseconds >= 1500;
+            if (scanned)
             {
-                int found;
-                if (FindFullscreenWindow(out found)) gamePid = found;
+                lastScan = now;
+                PruneConfirmed();
+                FindBestGameWindow(out gamePid, out gameHwnd);
             }
-
-            // 最后一层兜底:窗口化、小窗口、以及窗口尺寸读不到的游戏。
-            // 直接扫有可见窗口的进程,命中内置库 / 游戏目录 / 引擎特征任意一条就算检测到游戏。
-            // 已经在跟踪的游戏还活着就不用扫,省开销。
-            if (gamePid <= 0 && lastGamePid <= 0 && (DateTime.UtcNow - lastScan).TotalMilliseconds > 1500)
+            else if (fgPid > 4 && fgPid != lastForegroundPid)
             {
-                lastScan = DateTime.UtcNow;
-                int known;
-                if (FindKnownGame(out known)) gamePid = known;
+                WindowInfo wi;
+                if (InspectWindow(hwnd, fgPid, out wi) && ScoreWindow(ref wi) >= GameScore)
+                {
+                    gamePid = fgPid;
+                    gameHwnd = hwnd;
+                }
+            }
+            lastForegroundPid = fgPid;
+
+            // 已经识别到的游戏只要进程还在、窗口还能找到就继续算有游戏。
+            // 加载画面/切菜单时 GPU 占用会掉,全扫也可能一时没有窗口达标,
+            // 这里让状态稳住,自动加速和帧率跟踪不会反复启停。
+            if (gamePid <= 0 && lastGamePid > 0 && ProcessAlive(lastGamePid))
+            {
+                IntPtr h2 = (lastGameHwnd != IntPtr.Zero && Native.IsWindow(lastGameHwnd))
+                    ? lastGameHwnd : FindWindowForPid(lastGamePid);
+                if (h2 != IntPtr.Zero || GpuPid3D(lastGamePid) >= 1.0)
+                {
+                    gamePid = lastGamePid;
+                    gameHwnd = h2;
+                }
             }
             s.Fullscreen = gamePid > 0;
 
@@ -230,29 +265,37 @@ namespace FrameForge.Sys
                 {
                     gamePid = lastGamePid;
                     name = lastGameName;
+                    gameHwnd = lastGameHwnd;
                 }
                 if (name.Length == 0 && gamePid == lastGamePid) name = lastGameName;
                 lastGamePid = gamePid;
                 lastGameName = name;
+                if (gameHwnd != IntPtr.Zero) lastGameHwnd = gameHwnd;
+                lock (confirmedGames) { confirmedGames[gamePid] = DateTime.UtcNow; }
             }
             else if (lastGamePid > 0 && !ProcessAlive(lastGamePid))
             {
                 // 游戏进程退出才清掉。以前是 20 秒宽限期,切出去看数据稍久一点
                 // 就会跳回"未检测到游戏",连帧率跟踪也一起停。
+                lock (confirmedGames) { confirmedGames.Remove(lastGamePid); }
                 lastGamePid = -1;
                 lastGameName = "";
+                lastGameHwnd = IntPtr.Zero;
             }
 
             if (lastGamePid != lastLoggedGamePid)
             {
                 lastLoggedGamePid = lastGamePid;
-                if (lastGamePid > 0) Log.Write("game pid=" + lastGamePid + " name=" + lastGameName);
+                if (lastGamePid > 0)
+                    Log.Write("game pid=" + lastGamePid + " name=" + lastGameName
+                        + " hwnd=0x" + lastGameHwnd.ToInt64().ToString("X"));
             }
 
             if (lastGamePid > 0)
             {
                 s.GameRecent = true;
                 s.GamePid = lastGamePid;
+                s.GameHwnd = lastGameHwnd;
                 s.GameName = lastGameName;
                 s.GameTitle = GameDb.Title(lastGamePid, lastGameName);
             }
@@ -268,6 +311,25 @@ namespace FrameForge.Sys
             }
             catch (ArgumentException) { return false; }  // 进程真的不在了
             catch { return true; }                        // 权限不足,不能判定已退出
+        }
+
+        /// <summary>清掉已经退出或确认超过 6 小时的记录,避免缓存无限增长。</summary>
+        private static void PruneConfirmed()
+        {
+            List<int> dead = null;
+            lock (confirmedGames)
+            {
+                foreach (KeyValuePair<int, DateTime> kv in confirmedGames)
+                {
+                    if ((DateTime.UtcNow - kv.Value).TotalHours > 6 || !ProcessAlive(kv.Key))
+                    {
+                        if (dead == null) dead = new List<int>();
+                        dead.Add(kv.Key);
+                    }
+                }
+                if (dead != null)
+                    for (int i = 0; i < dead.Count; i++) confirmedGames.Remove(dead[i]);
+            }
         }
 
         private double CpuByTimes()
@@ -329,13 +391,30 @@ namespace FrameForge.Sys
             catch { }
         }
 
-        /// <summary>
-        /// 枚举所有顶层窗口,找出铺满某个显示器的窗口(游戏在后台时也能认出来)。
-        /// 排除最小化、被 DWM 隐藏的 UWP 窗口,以及浏览器/播放器这类经常全屏但不是游戏的应用。
-        /// </summary>
-        public static bool FindFullscreenWindow(out int pid)
+        /// <summary>一个候选窗口的全部特征。评分制比"命中一个条件就返回 true"可靠得多。</summary>
+        private struct WindowInfo
         {
-            int found = -1;
+            public IntPtr Hwnd;
+            public int Pid;
+            public string Name;
+            public string Class;
+            public string Title;
+            public int Width;
+            public int Height;
+            public bool Covers;
+            public bool Foreground;
+        }
+
+        /// <summary>
+        /// 枚举所有顶层窗口,逐个打分取最高分,过线才算游戏。
+        /// 分层/穿透/工具/不激活/有属主/被 DWM 隐藏/最小化/过小的窗口直接淘汰:
+        /// 桌宠、虚拟键盘、加速器悬浮窗、截图取色层、叠加层本身都在这一步被挡掉。
+        /// </summary>
+        private static bool FindBestGameWindow(out int pid, out IntPtr hwnd)
+        {
+            int bestPid = -1;
+            IntPtr bestHwnd = IntPtr.Zero;
+            int bestScore = 0;
             try
             {
                 Native.EnumWindows(delegate(IntPtr h, IntPtr l)
@@ -343,20 +422,210 @@ namespace FrameForge.Sys
                     int p;
                     Native.GetWindowThreadProcessId(h, out p);
                     if (p <= 4) return true;
-                    if (!Native.IsWindowVisible(h)) return true;
-                    if (Native.IsIconic(h)) return true;
-
-                    int cloaked;
-                    if (Native.DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0) return true;
-
-                    if (!IsGameWindow(h, p)) return true;
-                    found = p;
-                    return false;   // 找到一个就够了
+                    WindowInfo wi;
+                    if (!InspectWindow(h, p, out wi)) return true;
+                    int score = ScoreWindow(ref wi);
+                    if (score >= GameScore && score > bestScore)
+                    {
+                        bestScore = score;
+                        bestPid = p;
+                        bestHwnd = h;
+                    }
+                    return true;
                 }, IntPtr.Zero);
             }
             catch { }
-            pid = found;
-            return found > 0;
+            pid = bestPid;
+            hwnd = bestHwnd;
+            return bestPid > 0;
+        }
+
+        /// <summary>保留旧接口:找到任意一个过线的游戏窗口即返回。</summary>
+        public static bool FindFullscreenWindow(out int pid)
+        {
+            IntPtr h;
+            if (FindBestGameWindow(out pid, out h)) return true;
+            pid = -1;
+            return false;
+        }
+
+        /// <summary>窗口特征筛选。返回 false 表示这个窗口连候选资格都没有。</summary>
+        private static bool InspectWindow(IntPtr h, int p, out WindowInfo wi)
+        {
+            wi = new WindowInfo();
+            wi.Hwnd = h;
+            wi.Pid = p;
+            if (!Native.IsWindowVisible(h)) return false;
+            if (Native.IsIconic(h)) return false;
+
+            // 被 DWM 隐藏的窗口(典型是 UWP 的隐藏宿主、切换虚拟桌面后的残留)不可见。
+            int cloaked;
+            if (Native.DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0) return false;
+
+            // 这一条是误检的主要开关:桌宠、虚拟键盘、加速器/叠加层、截图取色层
+            // 几乎都会用分层、穿透、工具窗口或不激活样式。
+            int ex = Native.GetWindowLong(h, Native.GWL_EXSTYLE);
+            const int bad = Native.WS_EX_TOOLWINDOW | Native.WS_EX_LAYERED
+                | Native.WS_EX_TRANSPARENT | Native.WS_EX_NOACTIVATE;
+            if ((ex & bad) != 0) return false;
+            // 有属主的是对话框/弹窗,不是游戏本体。
+            if (Native.GetWindow(h, (uint)Native.GW_OWNER) != IntPtr.Zero) return false;
+
+            Native.RECT r;
+            if (!WindowBounds(h, out r)) return false;
+            int w = r.Right - r.Left;
+            int ht = r.Bottom - r.Top;
+            if (w < 320 || ht < 240) return false;
+
+            Rectangle b = Screen.FromHandle(h).Bounds;
+            // 至少要占显示器的 8%:过小的悬浮窗、桌面小工具直接排除。
+            if ((long)w * ht < (long)b.Width * b.Height * 8 / 100) return false;
+
+            string name = Native.ProcessName(p);
+            if (IsNonGameName(name)) return false;
+            string cls = WindowClass(h);
+            if (IsNonGameClass(cls)) return false;
+            string title = WindowTitle(h);
+            if (IsUtilityTitle(title)) return false;
+            if (IsUtilityName(name)) return false;
+
+            wi.Name = name;
+            wi.Class = cls;
+            wi.Title = title;
+            wi.Width = w;
+            wi.Height = ht;
+            wi.Covers = w >= b.Width - 8 && ht >= b.Height - 8
+                && (long)w * ht >= (long)b.Width * b.Height * 92 / 100;
+            wi.Foreground = h == Native.GetForegroundWindow();
+            return true;
+        }
+
+        /// <summary>
+        /// 多信号打分:内置库/游戏目录/引擎特征 + 引擎窗口类 + 铺满屏幕 + 前台
+        /// + 该进程真实的 GPU 3D 占用。没有任何一条单独就能定罪,避免误检。
+        /// </summary>
+        private static int ScoreWindow(ref WindowInfo wi)
+        {
+            int score = 0;
+            int level = KnownGameLevel(wi.Pid, wi.Name);
+            if (level >= 3) score += 70;        // 内置游戏库明确认识
+            else if (level == 2) score += 55;   // 装在游戏平台目录里
+            else if (level == 1) score += 35;   // 只是加载了 Unity/Unreal 引擎
+
+            if (IsGameClass(wi.Class)) score += 30;
+            if (wi.Covers) score += 20;
+            if (wi.Foreground) score += 10;
+            if (wi.Width >= 640 && wi.Height >= 360) score += 5;
+
+            double gpu = GpuPid3D(wi.Pid);
+            if (gpu >= 10) score += 50;
+            else if (gpu >= 3) score += 40;
+            else if (gpu >= 1) score += 15;
+
+            // 已经确认过的游戏进程:切到桌面/加载中时特征会变弱,给一点保底分。
+            lock (confirmedGames)
+            {
+                DateTime seen;
+                if (confirmedGames.TryGetValue(wi.Pid, out seen)
+                    && (DateTime.UtcNow - seen).TotalHours < 6) score += 40;
+            }
+            return score;
+        }
+
+        private static double GpuPid3D(int pid)
+        {
+            lock (gpuPidUsage)
+            {
+                double v;
+                return gpuPidUsage.TryGetValue(pid, out v) ? v : 0;
+            }
+        }
+
+        /// <summary>
+        /// 解析 PDH GPU Engine 实例名里的 pid,按进程汇总 3D 引擎占用。
+        /// 实例名形如 pid_1234_luid_0x00000000_0x0000ABCD_phys_0_eng_0_engtype_3D。
+        /// </summary>
+        private static void UpdateGpuUsage(string[] names, double[] vals)
+        {
+            var map = new Dictionary<int, double>();
+            int n = names == null ? 0 : names.Length;
+            for (int i = 0; i < n && i < vals.Length; i++)
+            {
+                string s = names[i];
+                if (string.IsNullOrEmpty(s)) continue;
+                if (s.IndexOf("engtype_3D", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                if (!s.StartsWith("pid_", StringComparison.OrdinalIgnoreCase)) continue;
+                int end = s.IndexOf('_', 4);
+                if (end < 0) end = s.Length;
+                int pid;
+                if (!int.TryParse(s.Substring(4, end - 4), out pid)) continue;
+                double v = vals[i];
+                if (v <= 0) continue;
+                double old;
+                map.TryGetValue(pid, out old);
+                map[pid] = old + v;
+            }
+            lock (gpuPidUsage) { gpuPidUsage = map; }
+        }
+
+        /// <summary>找回某一个进程面积最大的可见窗口:改分辨率/重建窗口后跟踪不丢。</summary>
+        private static IntPtr FindWindowForPid(int pid)
+        {
+            IntPtr best = IntPtr.Zero;
+            long bestArea = 0;
+            try
+            {
+                Native.EnumWindows(delegate(IntPtr h, IntPtr l)
+                {
+                    int p;
+                    Native.GetWindowThreadProcessId(h, out p);
+                    if (p != pid) return true;
+                    if (!Native.IsWindowVisible(h) || Native.IsIconic(h)) return true;
+
+                    int cloaked;
+                    if (Native.DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0) return true;
+                    int ex = Native.GetWindowLong(h, Native.GWL_EXSTYLE);
+                    if ((ex & (Native.WS_EX_TOOLWINDOW | Native.WS_EX_LAYERED)) != 0) return true;
+
+                    Native.RECT r;
+                    if (!Native.GetWindowRect(h, out r)) return true;
+                    long area = (long)(r.Right - r.Left) * (r.Bottom - r.Top);
+                    if (area > bestArea)
+                    {
+                        bestArea = area;
+                        best = h;
+                    }
+                    return true;
+                }, IntPtr.Zero);
+            }
+            catch { }
+            return best;
+        }
+
+        /// <summary>窗口矩形:优先 DWM 扩展边界(去掉 Win10 的隐形缩放边框),失败再退回 GetWindowRect。</summary>
+        internal static bool WindowBounds(IntPtr h, out Native.RECT r)
+        {
+            r = new Native.RECT();
+            try
+            {
+                int size = System.Runtime.InteropServices.Marshal.SizeOf(typeof(Native.RECT));
+                if (Native.DwmGetWindowAttributeRect(h, Native.DWMWA_EXTENDED_FRAME_BOUNDS, out r, size) == 0
+                    && r.Right > r.Left && r.Bottom > r.Top)
+                    return true;
+            }
+            catch { }
+            return Native.GetWindowRect(h, out r);
+        }
+
+        private static string WindowTitle(IntPtr hwnd)
+        {
+            try
+            {
+                var sb = new StringBuilder(512);
+                if (Native.GetWindowText(hwnd, sb, sb.Capacity) > 0) return sb.ToString();
+            }
+            catch { }
+            return "";
         }
 
         private static int lastQuns = -1;
@@ -418,52 +687,13 @@ namespace FrameForge.Sys
         }
 
         /// <summary>
-        /// 最后一层兜底:直接扫进程。只要进程命中内置库、游戏平台目录或引擎特征,
-        /// 并且有可见、未最小化的窗口,就认为"有游戏在跑"。
-        /// 窗口化、小窗口、无边框但尺寸读不到的情况都能靠这一层认出来。
+        /// 扫一遍所有顶层窗口,返回得分最高的游戏进程。窗口化、小窗口、无边框、
+        /// 启动器退场后的本体窗口都能认出来;分层悬浮窗和启动器会被直接排除。
         /// </summary>
         public static bool FindKnownGame(out int pid)
         {
-            pid = -1;
-            Process[] list = null;
-            try { list = Process.GetProcesses(); }
-            catch { return false; }
-            if (list == null) return false;
-
-            // 用"有可见窗口的进程"代替 MainWindowHandle:很多游戏的本体窗口不是
-            // 进程的主窗口(MainWindowHandle 为 0),靠它会把已经在跑的游戏漏掉。
-            HashSet<int> visible = VisiblePids();
-            try
-            {
-                for (int i = 0; i < list.Length; i++)
-                {
-                    Process p = list[i];
-                    try
-                    {
-                        if (p.Id <= 4) continue;
-                        string name = p.ProcessName;
-                        if (name.Length == 0) continue;
-                        // 启动器不是游戏本体:我的世界启动器、各种 game launcher 都要跳过。
-                        if (name.IndexOf("launcher", StringComparison.OrdinalIgnoreCase) >= 0) continue;
-                        if (IsNonGameName(name)) continue;
-                        // 有界面才算"在玩",后台进程(更新、服务)不算。
-                        if (!visible.Contains(p.Id)) continue;
-                        if (!KnownGameProcess(p.Id, name)) continue;
-
-                        pid = p.Id;
-                        return true;
-                    }
-                    catch { }
-                }
-            }
-            finally
-            {
-                for (int i = 0; i < list.Length; i++)
-                {
-                    try { list[i].Dispose(); } catch { }
-                }
-            }
-            return false;
+            IntPtr h;
+            return FindBestGameWindow(out pid, out h);
         }
 
         /// <summary>当前有可见、未最小化顶层窗口的进程集合。</summary>
@@ -722,6 +952,62 @@ namespace FrameForge.Sys
                 case "systemsettings":
                 case "gamebar":
                 case "nvidia share":
+                // 桌宠 / Live2D:它们经常用全屏透明窗口或 Unity 渲染,是误检重灾区
+                case "shimeji":
+                case "desktoppet":
+                case "desktop_pet":
+                case "vpet":
+                case "desktopmate":
+                case "live2dviewer":
+                case "live2d":
+                // 虚拟键盘 / 屏幕键盘
+                case "touchkeyboard":
+                case "virtualkeyboard":
+                case "onboard":
+                case "swkb":
+                // 加速器 / 超频 / 监控工具:悬浮窗和主界面都不算游戏
+                case "uugame":
+                case "uu":
+                case "xunyou":
+                case "biubiu":
+                case "leigod":
+                case "qiyou":
+                case "boosterx":
+                case "gamebooster":
+                case "wisegamebooster":
+                case "cortex":
+                case "razercentral":
+                case "msiafterburner":
+                case "rtss":
+                case "nvsphelper64":
+                case "nvcontainer":
+                // 更多启动器
+                case "mihoyolauncher":
+                case "hoyoplay":
+                case "hypergryph":
+                case "nshlauncher":
+                case "playnite":
+                case "gamecenter":
+                case "gamelauncher":
+                // 3D 建模 / 视频剪辑:GPU 3D 占用很高,但显然不是游戏
+                case "blender":
+                case "photoshop":
+                case "illustrator":
+                case "premiere":
+                case "aftereffects":
+                case "davinci":
+                case "resolve":
+                case "3dsmax":
+                case "maya":
+                case "cinema4d":
+                case "c4d":
+                case "houdini":
+                case "zbrush":
+                case "unity":
+                case "unrealeditor":
+                case "wallpaper32":
+                case "wallpaper64":
+                case "wallpaperengine":
                     return true;
                 default:
                     return false;
@@ -750,66 +1036,75 @@ namespace FrameForge.Sys
             return false;
         }
 
+        /// <summary>启动器 / 更新器 / 加速器 / 桌宠 / 虚拟键盘的进程名关键词。</summary>
+        private static readonly string[] UtilityWords =
+        {
+            "launcher", "updater", "patcher", "installer", "unins", "crashreport",
+            "crashhandler", "accelerator", "speedup", "booster", "optimizer", "cleaner",
+            "desktoppet", "desktop_pet", "shimeji", "vpet", "live2d",
+            "virtualkeyboard", "touchkeyboard", "onboard", "tabtip", "textinput", "inputapp",
+            "overlay", "msiafterburner", "rtss", "wallpaper32", "wallpaper64",
+            "xunyou", "biubiu", "leigod", "qiyou", "uugame"
+        };
+
+        private static bool IsUtilityName(string name)
+        {
+            if (name.Length == 0) return false;
+            string n = name.ToLowerInvariant();
+            for (int i = 0; i < UtilityWords.Length; i++)
+                if (n.IndexOf(UtilityWords[i], StringComparison.Ordinal) >= 0) return true;
+            return false;
+        }
+
+        /// <summary>窗口标题就是启动器/更新器/加速器的,也不是游戏本体。</summary>
+        private static readonly string[] UtilityTitles =
+        {
+            "启动器", "登录器", "更新程序", "加速器", "游戏平台", "官方网站",
+            "launcher", "updater", "patcher", "installer"
+        };
+
+        private static bool IsUtilityTitle(string title)
+        {
+            if (string.IsNullOrEmpty(title)) return false;
+            string t = title.ToLowerInvariant();
+            for (int i = 0; i < UtilityTitles.Length; i++)
+                if (t.IndexOf(UtilityTitles[i], StringComparison.Ordinal) >= 0) return true;
+            return false;
+        }
+
         /// <summary>
-        /// 判定一个窗口是不是游戏。先看正向证据(内置库 / 游戏平台目录 / 引擎特征),
-        /// 有证据就与窗口大小无关,所以窗口化、小窗口、无边框、全屏都能认出来;
-        /// 没有证据的程序只有「铺满屏幕 + 名字读不到或窗口类是游戏引擎」才算,
-        /// 浏览器这类能读到名字的普通程序无论怎么全屏都不会被当成游戏。
+        /// 判定一个窗口是不是游戏:窗口样式先做硬性排除,再用多信号打分。
+        /// 分层/穿透/工具/不激活/有属主/最小化/过小的窗口一律不算,
+        /// 所以桌宠、虚拟键盘、加速器悬浮窗不会再被当成游戏。
         /// </summary>
         public static bool IsGameWindow(IntPtr hwnd, int pid)
         {
             if (hwnd == IntPtr.Zero || pid <= 4) return false;
             try
             {
-                // 名字取不到时不能直接判否:管理员运行、带反作弊的游戏往往打不开进程,
-                // 那样就会出现"明明开着全屏游戏却显示未检测到"。
-                string name = Native.ProcessName(pid);
-                if (IsNonGameName(name)) return false;
-                if (!Native.IsWindowVisible(hwnd)) return false;
-
-                // 先按正向证据判定:内置库 / 游戏平台目录 / Unreal·Unity·Godot 引擎特征。
-                // 这条路径与窗口大小无关,所以小窗口、大窗口、无边框、全屏都能认出来;
-                // 反过来,认不出的程序(比如浏览器)不会因为铺满屏幕就被当成游戏。
-                if (KnownGameProcess(pid, name)) return true;
-
-                Native.RECT r;
-                if (!Native.GetWindowRect(hwnd, out r)) return false;
-                int w = r.Right - r.Left;
-                int h = r.Bottom - r.Top;
-                if (w <= 0 || h <= 0) return false;
-
-                Rectangle b = Screen.FromHandle(hwnd).Bounds;
-                // 允许 8px 误差:不同 DPI 下窗口矩形和显示器边界会差一两个像素,
-                // 部分窗口还带一圈不可见的缩放边框。
-                long area = (long)w * h;
-                long screen = (long)b.Width * b.Height;
-                if (w < b.Width - 8 || h < b.Height - 8 || area < screen * 95 / 100) return false;
-
-                // 全屏但认不出进程:只有两种情况还可能是游戏——
-                // 1) 进程名读不到(反作弊保护 / 权限不足);
-                // 2) 窗口类属于游戏引擎(UnrealWindow、UnityWndClass 等)。
-                // 其余未知全屏程序(浏览器、播放器、UWP 应用)一律不算。
-                string cls = WindowClass(hwnd);
-                if (IsNonGameClass(cls)) return false;
-                if (name.Length == 0) return true;
-                return IsGameClass(cls);
+                WindowInfo wi;
+                if (!InspectWindow(hwnd, pid, out wi)) return false;
+                return ScoreWindow(ref wi) >= GameScore;
             }
             catch { return false; }
         }
 
-        /// <summary>明确认得出的游戏进程,与窗口尺寸无关。</summary>
-        private static bool KnownGameProcess(int pid, string name)
+        /// <summary>
+        /// 明确认得出的游戏进程等级:3=内置库,2=游戏平台目录,1=只是加载了引擎。
+        /// 引擎特征单独一条不足以定罪——桌宠、启动器、工具也可能用 Unity。
+        /// </summary>
+        private static int KnownGameLevel(int pid, string name)
         {
-            if (pid <= 0) return false;
+            if (pid <= 0) return 0;
             // 所有 Java 进程都叫 javaw,内置库里的 javaw 只代表我的世界,
             // 必须再读窗口标题确认,否则任何 Java 程序都会被当成游戏。
             if (string.Equals(name, "java", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(name, "javaw", StringComparison.OrdinalIgnoreCase))
-                return GameDb.JavaGame(pid);
+                return GameDb.JavaGame(pid) ? 3 : 0;
 
             // 枚举窗口时同一个进程会被反复问到,缓存 2 秒避免重复读路径。
             DateTime now = DateTime.UtcNow;
-            bool hit;
+            int hit;
             lock (gameProcCache)
             {
                 if ((now - gameProcCacheAt).TotalSeconds > 2)
@@ -820,20 +1115,25 @@ namespace FrameForge.Sys
                 if (gameProcCache.TryGetValue(pid, out hit)) return hit;
             }
 
-            bool r = false;
+            int r = 0;
             try
             {
-                if (name.Length > 0 && GameDb.Known(name)) r = true;
-                if (!r) r = GameDb.LibraryGame(pid);
-                if (!r) r = GameDb.EngineGame(pid);
+                if (name.Length > 0 && GameDb.Known(name)) r = 3;
+                if (r == 0 && GameDb.LibraryGame(pid)) r = 2;
+                if (r == 0 && GameDb.EngineGame(pid)) r = 1;
             }
-            catch { r = false; }
+            catch { r = 0; }
 
             lock (gameProcCache) { gameProcCache[pid] = r; }
             return r;
         }
 
-        private static readonly Dictionary<int, bool> gameProcCache = new Dictionary<int, bool>();
+        private static bool KnownGameProcess(int pid, string name)
+        {
+            return KnownGameLevel(pid, name) > 0;
+        }
+
+        private static readonly Dictionary<int, int> gameProcCache = new Dictionary<int, int>();
         private static DateTime gameProcCacheAt = DateTime.MinValue;
 
         private static string WindowClass(IntPtr hwnd)

@@ -108,6 +108,18 @@ namespace FrameForge
             public PDH_FMT_COUNTERVALUE FmtValue;
         }
 
+        /// <summary>NtQuerySystemInformation(SystemProcessorPerformanceInformation) 的单核采样。</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public struct SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION
+        {
+            public long IdleTime;
+            public long KernelTime;
+            public long UserTime;
+            public long DpcTime;
+            public long InterruptTime;
+            public uint InterruptCount;
+        }
+
         [StructLayout(LayoutKind.Sequential)]
         public struct RECT
         {
@@ -205,6 +217,11 @@ namespace FrameForge
         public const int WS_EX_TRANSPARENT = 0x00000020;
         public const int WS_EX_TOPMOST = 0x00000008;
         public const int WS_EX_NOACTIVATE = 0x08000000;
+
+        public const int GW_OWNER = 4;
+        public const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+        public const int SystemProcessorPerformanceInformation = 8;
+        public const uint MAXIMUM_PROCESSORS = 64;
 
         public const int SW_HIDE = 0;
         public const int SW_SHOWNOACTIVATE = 4;
@@ -385,6 +402,18 @@ namespace FrameForge
         public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
 
         [DllImport("user32.dll")]
+        public static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetWindow(IntPtr hWnd, uint cmd);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int max);
+
+        [DllImport("user32.dll")]
+        public static extern bool IsWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
         public static extern bool IsWindowVisible(IntPtr hWnd);
 
         public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
@@ -401,6 +430,10 @@ namespace FrameForge
         // DWMWA_CLOAKED(14):UWP 挂起的窗口仍然"可见"但被系统隐藏,要排除掉。
         [DllImport("dwmapi.dll")]
         public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out int value, int size);
+
+        // DWMWA_EXTENDED_FRAME_BOUNDS(9):不含 Win10 阴影的可见边界,叠加层对齐游戏窗口要用它。
+        [DllImport("dwmapi.dll", EntryPoint = "DwmGetWindowAttribute")]
+        public static extern int DwmGetWindowAttributeRect(IntPtr hwnd, int attr, out RECT value, int size);
 
         /// <summary>返回 0 表示成功,state 见 QUNS_* 常量。</summary>
         [DllImport("shell32.dll")]
@@ -478,6 +511,16 @@ namespace FrameForge
 
         [DllImport("gdi32.dll")]
         public static extern bool DeleteObject(IntPtr obj);
+
+        [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
+        public static extern IntPtr CreateDC(string driver, string device, IntPtr port, IntPtr initData);
+
+        // 显卡 gamma LUT:独占全屏时 DWM 不参与合成,只有它还能改画面颜色。
+        [DllImport("gdi32.dll")]
+        public static extern bool SetDeviceGammaRamp(IntPtr hdc, ushort[] ramp);
+
+        [DllImport("gdi32.dll")]
+        public static extern bool GetDeviceGammaRamp(IntPtr hdc, ushort[] ramp);
 
         [DllImport("gdi32.dll")]
         public static extern IntPtr CreateDIBSection(IntPtr dc, ref BITMAPINFOHEADER header, uint usage,
@@ -608,6 +651,39 @@ namespace FrameForge
             }
             catch { return ""; }
             finally { CloseHandle(snap); }
+        }
+
+        /// <summary>
+        /// 每个逻辑核的累计空闲/忙碌时间。两次采样相减即可得到单核占用率,
+        /// 用来挑「当前最空闲的核心」——CPU 0 要处理中断,通常不会是最空闲的那个。
+        /// </summary>
+        public static int CpuCoreTimes(out long[] idle, out long[] busy)
+        {
+            idle = null;
+            busy = null;
+            int size = Marshal.SizeOf(typeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION));
+            int capacity = size * 64 + 64;
+            IntPtr buf = Marshal.AllocHGlobal(capacity);
+            try
+            {
+                int len;
+                int status = NtQuerySystemInformation(SystemProcessorPerformanceInformation, buf, capacity, out len);
+                if (status != 0 || len <= 0) return 0;
+                int count = len / size;
+                if (count <= 0) return 0;
+                idle = new long[count];
+                busy = new long[count];
+                for (int i = 0; i < count; i++)
+                {
+                    var info = (SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION)Marshal.PtrToStructure(
+                        new IntPtr(buf.ToInt64() + (long)i * size), typeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION));
+                    idle[i] = info.IdleTime;
+                    busy[i] = info.KernelTime + info.UserTime;
+                }
+                return count;
+            }
+            catch { return 0; }
+            finally { Marshal.FreeHGlobal(buf); }
         }
     }
 }

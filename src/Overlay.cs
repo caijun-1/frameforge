@@ -178,15 +178,41 @@ namespace FrameForge
         }
 
         /// <summary>
-        /// 叠加层跟着前台窗口所在的显示器走:双屏时游戏在副屏,数据就摆在副屏,
-        /// 不会被固定摆到主屏上。配置界面在前台时,自然摆到主窗口那一块屏。
+        /// 叠加层跟着游戏窗口走:只要识别到了游戏,就直接用游戏窗口的边界(DWM 扩展边界),
+        /// 不管它是不是前台、在哪块屏、窗口化还是全屏,都贴在游戏上面。
+        /// 没有游戏时才退回前台窗口所在显示器,配置界面里也能正常预览。
         /// </summary>
-        private static Rectangle TargetBounds()
+        private Rectangle TargetBounds()
         {
-            IntPtr fg = Native.GetForegroundWindow();
-            if (fg != IntPtr.Zero)
+            IntPtr target = IntPtr.Zero;
+            if (last != null && last.GamePid > 0 && last.GameHwnd != IntPtr.Zero
+                && Native.IsWindow(last.GameHwnd) && !Native.IsIconic(last.GameHwnd))
+                target = last.GameHwnd;
+
+            bool game = target != IntPtr.Zero;
+            if (!game) target = Native.GetForegroundWindow();
+
+            if (target != IntPtr.Zero)
             {
-                try { return Screen.FromHandle(fg).WorkingArea; }
+                Rectangle screen;
+                try { screen = Screen.FromHandle(target).Bounds; }
+                catch { screen = Screen.PrimaryScreen.Bounds; }
+
+                if (game)
+                {
+                    Native.RECT r;
+                    if (Monitor.WindowBounds(target, out r))
+                    {
+                        Rectangle win = Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom);
+                        // 铺满整块显示器(独占/无边框全屏):直接用显示器边界,
+                        // 避免 DWM 边界差几像素导致叠加层贴不到边。
+                        if (win.Width >= screen.Width - 8 && win.Height >= screen.Height - 8)
+                            return screen;
+                        // 窗口化游戏:叠加层限制在游戏窗口内,不会飘到游戏外面。
+                        if (win.Width >= 120 && win.Height >= 90) return win;
+                    }
+                }
+                try { return Screen.FromHandle(target).WorkingArea; }
                 catch { }
             }
             return Screen.PrimaryScreen.WorkingArea;

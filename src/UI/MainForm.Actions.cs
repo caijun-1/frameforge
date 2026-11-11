@@ -384,7 +384,8 @@ namespace FrameForge.UI
 
             GameProfile prof = Profiles != null ? Profiles.Find(gameName) : null;
             BoostPlan plan = prof != null ? prof.Plan() : St.Plan();
-            // 有游戏策略时也沿用全局的优先级档位;理想处理器是实验项,不进自动加速。
+            // 有游戏策略时也沿用全局的优先级档位。主线程的理想处理器软引导跟着
+            // 高优先级一起生效(PCBoost 的第二层),这里的 IdealCpu 只是"全部线程"实验项。
             if (prof != null) plan.PriorityLevel = St.BoostPriorityLevel;
             plan.Background = false;
             plan.Irq = false;
@@ -519,13 +520,14 @@ namespace FrameForge.UI
         public void ApplyFilter()
         {
             bool isGame = Mon != null && Mon.Current != null && Mon.Current.Fullscreen;
+            int gamePid = Mon != null && Mon.Current != null ? Mon.Current.GamePid : -1;
             try
             {
                 // 截图工具在抓屏:只推恒等矩阵不够,放大镜的整条效果链还挂在 DWM 上,
                 // Win+Shift+S 的取色层会和它抢同一帧,整屏就卡住。这里直接把放大镜卸掉,
                 // 工具栏收起后由守卫重新装回来。
                 if (captureGuard) Sys.Filter.Suspend();
-                else Sys.Filter.ApplySettings(St, isGame);
+                else Sys.Filter.ApplySettings(St, isGame, gamePid);
             }
             catch (Exception ex) { Log.Write("filter: " + ex.Message); }
         }

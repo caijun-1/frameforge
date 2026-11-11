@@ -116,6 +116,7 @@
 | 项目 | 具体动作 | 如何还原 |
 | --- | --- | --- |
 | 进程优先级 | 游戏进程设为 `HIGH_PRIORITY_CLASS`；写入后回读确认，被反作弊拒绝时明确提示，不谎报成功 | 恢复原优先级 |
+| 理想处理器软引导 | 加速开始时、以及之后每 2 分钟，采样各逻辑核占用，把游戏**主线程**的 `SetThreadIdealProcessor` 指向当前最空闲的核心；只给调度提示，不锁亲和性 | 指回「任意核心」（`MAXIMUM_PROCESSORS`） |
 | 高性能电源计划 | 切换到系统「高性能」方案 | 切回原方案 GUID |
 | 系统计时器 1 ms | `timeBeginPeriod(1)` | `timeEndPeriod(1)` |
 | 关闭 Game DVR | 写入 `GameDVR_Enabled=0`、关闭全屏优化 | 恢复原注册表值 |
@@ -128,6 +129,36 @@
 
 > 进阶项「暂停后台进程」会先列出候选进程并要求二次确认，只挂起、不结束。
 > 自动套用只应用安全项（暂停后台进程与中断避让不自动执行）。
+
+## PCBoost 的两层加速原理
+
+FrameForge 的加速逻辑按 PCBoost 的思路拆成两层，一层管「马上抢到算力」，一层管「持续待在对的核心上」。
+
+### 1. 瞬时响应：高优先级与前台特权
+
+后台监控每秒采样一次前台窗口与窗口句柄。识别到游戏后，立刻把游戏进程的 CPU 优先级提到 `HIGH_PRIORITY_CLASS`，打破 Windows 默认的平衡调度，让鼠标输入、键盘响应和游戏主线程优先拿到时间片。写入后会回读确认；被反作弊拒绝时会在界面明确提示，不会假装成功。
+
+### 2. 动态负载平衡：每 2 分钟的理想处理器软引导
+
+加速开始时做第一次引导，之后每 120 秒重新评估一次：用 `NtQuerySystemInformation` 取每个逻辑核的累计 idle / busy 时间，采样两次算出单核占用率，挑出当前最空闲的核心，再对游戏**主线程**（进程内 TID 最小的线程）调用 `SetThreadIdealProcessor`。
+
+- **软引导，不是硬隔离**：`SetThreadIdealProcessor` 只是给调度器的「首选核心」提示，不修改亲和性掩码。游戏需要多核爆发时，依然可以自由调用包括 CPU 0 在内的所有核心，不会浪费算力。
+- **为什么能变相避开 CPU 0**：CPU 0 默认承担网卡、鼠标、显卡等硬件中断和大量系统底层服务，绝大多数时间里占用率都不是最低的。按「选最闲」的规则挑选时，它大概率不会被选中，于是主线程自然与系统杂务核心错峰运行——这是一种动态、无副作用的方式，而不是写死「禁用 CPU 0」。
+- **负载相同怎么办**：两次采样差值在 0.05% 以内时优先编号非 0 的核心，把 CPU 0 留给中断。
+- **与其他项的配合**：启用了「独占物理核心」时，只在分配给游戏的核里挑；界面里的「理想处理器」开关是「全部线程」实验项，与这里的自动软引导互不影响。
+- **还原**：还原加速时把主线程指回 `MAXIMUM_PROCESSORS`（交给调度器自己挑），不做任何持久化修改。
+
+## 游戏识别
+
+识别不靠单一关键词，而是「硬性排除 + 多信号评分 + 进程级证据 + 记忆」四层组合，目标是既不漏掉窗口化 / 改了窗口标题 / 换了分辨率的游戏，也不把桌宠、虚拟键盘、加速器、启动器当成游戏。
+
+- **硬性排除窗口**：不可见、最小化、DWM cloaked、带 `WS_EX_TOOLWINDOW / LAYERED / TRANSPARENT / NOACTIVATE`、有 Owner 的窗口直接不看——桌宠、虚拟键盘（触摸键盘 / Onboard）、加速器与监控软件的悬浮窗、截图层都属于这类；
+- **窗口尺寸下限**：小于 320×240、或面积不足屏幕 8% 的窗口不参与评分；
+- **多信号评分**（满分超过 100，达到 50 即判定为游戏）：游戏库命中 +70、平台目录（Steam / Epic / Xbox 等）+55、仅引擎特征 +35；游戏窗口类 +30、铺满屏幕 +20、位于前台 +10、分辨率达到 640×360 +5；**该进程 GPU 3D 引擎占用 ≥10% +50 / ≥3% +40 / ≥1% +15**；已经确认过的进程 +40；
+- **进程级 GPU 证据**：从 PDH 的 `\GPU Engine(*)\Utilization Percentage` 实例名里解析出 pid 和 `engtype_3D`，按 pid 聚合。这是识别「从没见过的窗口化游戏」最硬的一条证据，也是游戏加加、微星小飞机那类工具判断「谁在真正渲染」的办法；
+- **持续跟踪**：每 1.5 秒全量重扫一次窗口；前台进程一变立刻单独评估；识别成功后记住句柄和进程，切窗口、读条、回主菜单时状态不会来回跳；
+- **排除名单**：进程名与安装目录双重过滤反作弊组件、启动器、桌宠、虚拟键盘、加速器 / 监控工具、3D 与剪辑软件（Blender、Photoshop、Unity 编辑器等）；
+- **叠加层跟随游戏**：记住游戏主窗口句柄（DWM 扩展边界优先），窗口化时叠加层限制在游戏窗口内，铺满屏幕时用显示器边界——不管游戏是不是前台、在哪块屏，都贴在游戏上面。
 
 ## 系统优化
 
@@ -150,6 +181,8 @@ PresentMon 是在运行时按需下载的独立 exe（MIT 协议），不随本�
 滤镜走 Windows 放大镜 API 的全屏颜色矩阵（`Magnification.dll`），作用于整个桌面输出：
 
 - 不注入游戏、不安装驱动、不修改游戏文件；
+- **独占全屏也能生效**：独占全屏时 DWM 被绕过，放大镜的矩阵看不到画面。此时自动改用显示器 gamma LUT（`SetDeviceGammaRamp`），把颜色矩阵换算成逐通道曲线，亮度、对比度、色温、暗部提升仍然有效；离开独占全屏后先还原原始 LUT，再切回放大镜，避免两层效果叠加。饱和度依赖跨通道运算，LUT 模式下只能近似，界面会说明当前所处的模式；
+- **预览是真实画面**：预览框里是一帧合成的游戏场景（天空、远山、地面、人物剪影、准星与血条），直接套用当前颜色矩阵，不再用抽象色带，色温、暗部、肤色和 UI 是否会变色都能一眼看出来；
 - 「仅游戏」模式下只在检测到全屏游戏时生效；
 - 远程桌面等不支持的环境会给出提示并保持原色；
 - 15 组通用预设：原图、鲜艳、柔和、高亮、电影、防雪盲、白天、夜间护眼、灰度、明基亮丽、雾天增强、竞技、二次元、冷色、暖色；
@@ -260,6 +293,21 @@ frameforge/
 - 仅支持 Windows；Linux / macOS 不在计划内。
 
 ## 更新日志
+
+### v1.4.3.6
+
+**新增**
+
+- 按 PCBoost 原理实装「理想处理器软引导」：加速开始时、以及之后每 2 分钟，采样各逻辑核占用，把游戏主线程引导到当前最空闲的核心；只调 `SetThreadIdealProcessor`，不锁亲和性，需要多核时仍可用全部核心。CPU 0 承担系统中断与杂务，按「选最闲」的规则通常会被自然避开。
+- 新增「游戏识别」说明：硬性窗口样式排除、多信号评分、进程级 GPU 3D 证据、1.5 秒重扫与已确认进程记忆。
+
+**修复**
+
+- 游戏漏检与误检：重写识别逻辑，不再「进程名命中就当游戏」。桌宠（Shimeji / Live2D 等）、虚拟键盘（触摸键盘 / Onboard）、加速器与监控悬浮窗（UU / 迅游 / BoosterX / 小飞机等）、启动器、编辑器与剪辑软件都会被排除；窗口化、改标题、换分辨率的游戏改由 GPU 3D 占用与窗口特征共同识别。
+- 窗口变化后检测失效：每 1.5 秒全量重扫窗口，前台进程一变立刻评估，并记住游戏窗口句柄，切窗口 / 读条 / 回主菜单不再丢失状态。
+- 独占全屏滤镜无效：独占全屏时 DWM 被绕过，放大镜矩阵不生效；现在自动切到显示器 gamma LUT，退出独占全屏后还原原始 LUT 再切回放大镜，避免叠加。
+- 滤镜预览「颜色太抽象」：抽象色带换成合成的真实游戏场景，按当前颜色矩阵渲染，调色差在哪一眼可见。
+- 叠加层定位：改为跟随游戏主窗口（DWM 扩展边界），窗口化时限制在游戏窗口内，铺满屏幕时贴显示器边界，不再只看前台窗口所在屏幕。
 
 ### v1.4.3.5
 
@@ -384,6 +432,21 @@ frameforge/
 - Bilingual UI (Chinese / English), dark and light themes, tray mode, autostart, optional update check.
 
 ### Changelog
+
+#### v1.4.3.6
+
+**New**
+
+- Ideal-processor soft steering following the PCBoost model: on boost and every 2 minutes thereafter, per-logical-core load is sampled and the game's main thread is pointed at the least busy core via `SetThreadIdealProcessor`. Affinity is never locked, so the game can still burst across every core; because CPU 0 carries most interrupts and system housekeeping, "pick the idlest" usually steers away from it on its own.
+- A new "Game detection" section documents the hard window-style exclusions, multi-signal scoring, per-process GPU 3D evidence, 1.5 s rescan and confirmed-process memory.
+
+**Fixed**
+
+- Missed and false game detections: detection no longer treats a process-name hit as a game. Desktop pets, virtual keyboards, accelerator/monitor overlays, launchers, editors and NLEs are excluded; windowed games, renamed windows and resolution changes are recognised by GPU 3D usage plus window traits.
+- Detection dropping after a window change: a full window rescan runs every 1.5 s, foreground changes are evaluated immediately, and the game window handle is remembered so loading screens and alt-tabs keep the state.
+- Filters not working in exclusive fullscreen: DWM is bypassed there, so the magnifier matrix never reached the screen. It now falls back to the display gamma LUT and restores the original LUT before switching back, avoiding double-grading.
+- Abstract filter preview: the swatch strip is replaced by a synthetic game frame rendered through the active colour matrix.
+- Overlay placement now follows the game's main window (DWM extended bounds) instead of the monitor of the foreground window.
 
 #### v1.4.3.5
 

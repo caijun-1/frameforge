@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
+using System.Windows.Forms;
 
 namespace FrameForge.Sys
 {
@@ -43,6 +45,12 @@ namespace FrameForge.Sys
         // 那比常驻还容易把整个桌面卡住,所以卸下后先静一会儿再装回去。
         private static DateTime offAt = DateTime.MinValue;
         private const int CoolMs = 2000;
+
+        // 独占全屏时 DWM 不参与合成,放大镜矩阵完全失效,只剩显卡的 gamma LUT 还能改画面。
+        // LUT 只能做逐通道的亮度/对比度/色温,做不了跨通道饱和度,但至少不会"开了没反应"。
+        private static readonly List<IntPtr> gammaDcs = new List<IntPtr>();
+        private static readonly List<ushort[]> gammaSaved = new List<ushort[]>();
+        private static bool gammaDirty;
 
         /// <summary>放大镜是否可用(远程桌面等场景不可用)。只探测,不长期占用。</summary>
         public static bool Supported
@@ -95,12 +103,19 @@ namespace FrameForge.Sys
         public static void Shutdown()
         {
             Suspend();
+            RestoreGamma();
+            ReleaseGammaDcs();
             probed = false;
             available = false;
         }
 
-        /// <summary>按设置决定当前是否应该生效,并把矩阵推给系统(矩阵未变化时跳过)。</summary>
-        public static void ApplySettings(Settings st, bool isGame)
+        /// <summary>
+        /// 按设置决定当前是否应该生效。
+        /// 普通窗口/无边框全屏走放大镜(完整颜色矩阵);
+        /// 独占全屏时 DWM 被绕过,放大镜看不见任何东西,改用显卡 gamma LUT,
+        /// 保证"开了滤镜游戏里一定有变化",同时把放大镜卸掉避免退出全屏后效果叠加。
+        /// </summary>
+        public static void ApplySettings(Settings st, bool isGame, int gamePid)
         {
             if (st == null) return;
             bool on = st.FilterMode == 2 || (st.FilterMode == 1 && isGame);
@@ -108,11 +123,120 @@ namespace FrameForge.Sys
             {
                 // 不需要滤镜时连放大镜一起卸掉,避免平时就占着系统的合成链。
                 Suspend();
+                RestoreGamma();
                 return;
             }
+
+            float[] m = Current(st);
+
+            bool exclusive = isGame && gamePid > 0 && Monitor.IsExclusiveFullscreen(gamePid);
+            if (exclusive)
+            {
+                Suspend();
+                ApplyGamma(m);
+                return;
+            }
+
+            // 回到普通窗口:先撤销 gamma,否则放大镜和 LUT 会叠在一起,画面被调两次。
+            RestoreGamma();
             Init();
             if (!active) return;
-            Apply(Current(st));
+            Apply(m);
+        }
+
+        /// <summary>独占全屏下用显示器 gamma LUT 近似整套调色。</summary>
+        private static void ApplyGamma(float[] m)
+        {
+            EnsureGammaDcs();
+            if (gammaDcs.Count == 0) return;
+
+            ushort[] ramp = BuildRamp(m);
+            bool ok = false;
+            for (int i = 0; i < gammaDcs.Count; i++)
+            {
+                try { if (Native.SetDeviceGammaRamp(gammaDcs[i], ramp)) ok = true; }
+                catch { }
+            }
+            if (ok)
+            {
+                gammaDirty = true;
+                Log.Write("filter gamma lut (exclusive fullscreen)");
+            }
+            else Log.Write("SetDeviceGammaRamp failed");
+        }
+
+        /// <summary>把显示器 LUT 还原成启动时保存的原样。</summary>
+        private static void RestoreGamma()
+        {
+            if (!gammaDirty) return;
+            gammaDirty = false;
+            for (int i = 0; i < gammaDcs.Count && i < gammaSaved.Count; i++)
+            {
+                try { if (gammaSaved[i] != null) Native.SetDeviceGammaRamp(gammaDcs[i], gammaSaved[i]); }
+                catch { }
+            }
+        }
+
+        /// <summary>
+        /// 按颜色矩阵生成逐通道 LUT:输入灰度 v 同时送进 R/G/B,
+        /// 输出就是矩阵第 c 行的「前三个系数之和 × v + 平移量」。
+        /// 饱和度的行和恒为 1(灰度不变),所以 LUT 下它不起作用,
+        /// 真正生效的是亮度、对比度、色温和暗部提升。
+        /// </summary>
+        private static ushort[] BuildRamp(float[] m)
+        {
+            var ramp = new ushort[3 * 256];
+            if (m == null || m.Length < 25) m = Identity();
+            for (int c = 0; c < 3; c++)
+            {
+                int row = c * 5;
+                double gain = m[row] + m[row + 1] + m[row + 2];
+                double offset = m[row + 4];
+                for (int i = 0; i < 256; i++)
+                {
+                    double v = Clamp01(gain * (i / 255.0) + offset);
+                    ramp[c * 256 + i] = (ushort)Math.Round(v * 65535.0);
+                }
+            }
+            return ramp;
+        }
+
+        private static void EnsureGammaDcs()
+        {
+            if (gammaDcs.Count > 0) return;
+            Screen[] screens;
+            try { screens = Screen.AllScreens; }
+            catch { return; }
+
+            for (int i = 0; i < screens.Length; i++)
+            {
+                IntPtr dc = IntPtr.Zero;
+                try { dc = Native.CreateDC("DISPLAY", screens[i].DeviceName, IntPtr.Zero, IntPtr.Zero); }
+                catch { }
+                if (dc == IntPtr.Zero) continue;
+                var saved = new ushort[3 * 256];
+                bool got = false;
+                try { got = Native.GetDeviceGammaRamp(dc, saved); }
+                catch { }
+                if (!got)
+                {
+                    try { Native.DeleteDC(dc); } catch { }
+                    continue;
+                }
+                gammaDcs.Add(dc);
+                gammaSaved.Add(saved);
+            }
+            if (gammaDcs.Count > 0) Log.Write("filter gamma dc=" + gammaDcs.Count);
+        }
+
+        private static void ReleaseGammaDcs()
+        {
+            for (int i = 0; i < gammaDcs.Count; i++)
+            {
+                try { Native.DeleteDC(gammaDcs[i]); } catch { }
+            }
+            gammaDcs.Clear();
+            gammaSaved.Clear();
         }
 
         /// <summary>按设置算出的当前矩阵,供界面预览使用。</summary>
