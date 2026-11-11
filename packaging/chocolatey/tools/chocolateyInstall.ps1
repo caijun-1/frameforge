@@ -8,8 +8,8 @@ $toolsDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $packageArgs = @{
   packageName   = $env:ChocolateyPackageName
   fileFullPath  = Join-Path $toolsDir 'FrameForge.exe'
-  url           = 'https://github.com/caijun-1/frameforge/releases/download/v1.4.4/FrameForge.exe'
-  checksum      = '6D8555A4835351995AC8D0C9105406D26A8EA89FA9377FB3942DBF7B359B107E'
+  url           = 'https://github.com/caijun-1/frameforge/releases/download/v1.4.4.1/FrameForge.exe'
+  checksum      = '241795DD140E06292AFF318B966C5534D61AF1D0F8916218C478230FC1AF8C66'
   checksumType  = 'sha256'
 }
 

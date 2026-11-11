@@ -5,13 +5,13 @@
 <p align="center"><b>轻量级 FPS 游戏增效工具 · A lightweight FPS toolkit for Windows</b><br>
 一键加速 + 实时帧率监测 + 游戏内叠加层 + 画面滤镜 + 赛后性能报告 + 系统优化</p>
 
-<p align="center">单文件 · 免安装 · 462 KB · 不注入游戏 · 不装驱动</p>
+<p align="center">单文件 · 免安装 · 532 KB · 不注入游戏 · 不装驱动</p>
 
 <p align="center">
   <img src="https://github.com/caijun-1/frameforge/actions/workflows/build.yml/badge.svg" alt="build">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue" alt="platform">
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
-  <img src="https://img.shields.io/badge/size-498%20KB-brightgreen" alt="size 498 KB">
+  <img src="https://img.shields.io/badge/size-532%20KB-brightgreen" alt="size 532 KB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
   <img src="https://img.shields.io/badge/version-1.4.4.1-orange" alt="1.4.4.1">
 </p>
@@ -102,7 +102,7 @@
 - Windows 10 1809 及以上 / Windows 11（x64）
 - .NET Framework 4.8（Windows 10 1809 起为系统自带）
 - 帧率功能需要管理员权限并首次在「设置 → 帧率引擎」下载 Intel PresentMon（约 1 MB）
-- 显卡传感器依赖 NVIDIA NVML；其余厂商的传感器读不到时显示 `—`
+- 显卡传感器：NVIDIA 走 NVML，AMD 走驱动自带的 ADL；两者都不可用时改用系统计数器，只测不到温度 / 频率 / 功耗的部分显示 `—`
 
 ## 快速开始
 
@@ -290,6 +290,7 @@ frameforge/
 - 部分带反作弊的游戏会拒绝修改自身进程优先级，此时该项会明确标为「被游戏拒绝」，其余加速项照常生效；
 - 帧率 / 电源计划 / 系统内存整理需要管理员权限，普通权限下只优化本进程；
 - 滤镜为桌面级后处理，HDR 与广色域显示器上的观感会与 SDR 略有差异；
+- 显卡温度 / 频率 / 功耗依赖厂商传感器：NVIDIA 需要较新的驱动（`nvml.dll`），AMD 需要驱动自带的 `atiadlxx.dll` 且显卡支持 Overdrive；APU 核显等不提供这些接口的机型只显示占用与显存，其余项显示 `—`；
 - 仅支持 Windows；Linux / macOS 不在计划内。
 
 ## 更新日志
