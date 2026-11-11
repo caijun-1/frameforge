@@ -21,6 +21,7 @@ namespace FrameForge
 
             if (selftest) return SelfTest();
             if (HasArg(args, "--restore")) return RestoreCli();
+            if (HasArg(args, "--gpudiag")) return GpuDiagCli();
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
@@ -78,6 +79,35 @@ namespace FrameForge
             int n = BoostJournal.RestoreAll();
             Log.Write("restore cli: " + n + " item(s)");
             return n > 0 ? 0 : 2;
+        }
+
+        /// <summary>
+        /// 命令行显卡诊断:FrameForge.exe --gpudiag。
+        /// 把 atiadlxx.dll 的加载情况、导出的函数、每次 ADL 调用的返回码和原始数值
+        /// 写进 gpudiag.log 并弹窗显示,读不到温度时拿这个就能定位。
+        /// </summary>
+        private static int GpuDiagCli()
+        {
+            string text;
+            try { text = AmdGpu.Diagnose(); }
+            catch (Exception ex) { text = "diagnostics failed: " + ex; }
+
+            string path = Path.Combine(Settings.Dir, "gpudiag.log");
+            try
+            {
+                if (!Directory.Exists(Settings.Dir)) Directory.CreateDirectory(Settings.Dir);
+                File.WriteAllText(path, text, new UTF8Encoding(false));
+            }
+            catch { }
+            Log.Write("gpudiag: " + text.Replace("\r", "").Replace("\n", " | "));
+
+            try
+            {
+                MessageBox.Show(text + Environment.NewLine + "已保存到: " + path,
+                    "FrameForge 显卡诊断", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch { }
+            return 0;
         }
 
         /// <summary>单实例:把已运行的窗口叫回前台。</summary>

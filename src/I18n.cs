@@ -401,6 +401,7 @@ namespace FrameForge
             {"health.gpu.none", "没读到显卡信息，更新驱动或重启后再试。"},
             {"health.gpu.ready", "显卡信息正常，温度和占用可显示在叠加层。"},
             {"health.gpu.pdh", "能读到型号，但功耗和温度可能缺失。"},
+            {"health.gpu.amd", "读不到 AMD 传感器：请安装 AMD 官方 Adrenalin 驱动（需 atiadlxx.dll），装完重启本程序。"},
             {"health.toast.power", "已切换到高性能电源计划"},
             {"health.toast.powerfail", "切换电源计划失败，请以管理员身份重试"},
 
@@ -451,7 +452,7 @@ namespace FrameForge
             {"set.hotkey.overlay", "显示 / 隐藏叠加层"},
             {"set.hotkey.boost", "一键加速"},
             {"set.about", "关于"},
-            {"set.version", "FrameForge 1.4.4.1"},
+            {"set.version", "FrameForge 1.4.4.2"},
             {"set.notice", "不注入、不装驱动、不读游戏内存；请遵守各游戏用户协议。"},
             {"set.about.env", "Windows 10 / 11 · 单文件免安装 · 常驻内存约 20 MB"},
             {"set.log", "打开日志目录"},
@@ -971,6 +972,7 @@ namespace FrameForge
             {"health.gpu.none", "No GPU info — update the driver or restart and try again."},
             {"health.gpu.ready", "GPU info is normal; temperature and usage can show in the overlay."},
             {"health.gpu.pdh", "Model is readable, but power and temperature may be missing."},
+            {"health.gpu.amd", "No AMD sensor: install the official AMD Adrenalin driver (atiadlxx.dll) and restart FrameForge."},
             {"health.toast.power", "Switched to the high performance plan"},
             {"health.toast.powerfail", "Could not switch power plan — try running as administrator"},
 
@@ -1021,7 +1023,7 @@ namespace FrameForge
             {"set.hotkey.overlay", "Show / hide overlay"},
             {"set.hotkey.boost", "One-click boost"},
             {"set.about", "About"},
-            {"set.version", "FrameForge 1.4.4.1"},
+            {"set.version", "FrameForge 1.4.4.2"},
             {"set.notice", "No injection, no drivers, no reading game memory. Follow each game's terms of service."},
             {"set.about.env", "Windows 10 / 11 · portable single file · about 20 MB resident"},
             {"set.log", "Open log folder"},

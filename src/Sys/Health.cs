@@ -296,8 +296,16 @@ namespace FrameForge.Sys
             it.Level = sensed ? HealthLevel.Ok : HealthLevel.Info;
             // NVML 的名字去掉了厂商前缀,这里补回来,显示完整的显卡型号。
             it.Value = s.GpuFromNvml ? "NVIDIA " + s.GpuName : s.GpuName;
-            it.Note = I18n.T(sensed ? "health.gpu.ready" : "health.gpu.pdh");
+            if (sensed) it.Note = I18n.T("health.gpu.ready");
+            else it.Note = I18n.T(IsAmdName(s.GpuName) ? "health.gpu.amd" : "health.gpu.pdh");
             return it;
+        }
+
+        /// <summary>AMD 卡读不到温度基本都是驱动没带 atiadlxx.dll,提示换成官方 Adrenalin。</summary>
+        private static bool IsAmdName(string name)
+        {
+            return name.IndexOf("AMD", StringComparison.OrdinalIgnoreCase) >= 0
+                || name.IndexOf("Radeon", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static object Read(string path, string name)

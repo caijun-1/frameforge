@@ -255,8 +255,9 @@ namespace FrameForge.Sys
             {
                 // AMD 卡:NVML 完全不认,温度/频率/功耗走 ADL。
                 GpuSample a = amd.Read();
-                s.GpuFromAmd = true;
-                s.GpuName = a.Name;
+                // 只有真读到过数值才算「有传感器」,否则健康检查会谎报可用。
+                s.GpuFromAmd = amd.Produced;
+                s.GpuName = a.Name.Length > 0 ? a.Name : GpuName;
                 s.GpuTemp = a.Temp;
                 s.GpuClock = a.ClockCore;
                 s.GpuPower = a.Power;

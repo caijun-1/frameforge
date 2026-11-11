@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
   <img src="https://img.shields.io/badge/size-532%20KB-brightgreen" alt="size 532 KB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.4.4.1-orange" alt="1.4.4.1">
+  <img src="https://img.shields.io/badge/version-1.4.4.2-orange" alt="1.4.4.2">
 </p>
 
 <p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
@@ -290,10 +290,22 @@ frameforge/
 - 部分带反作弊的游戏会拒绝修改自身进程优先级，此时该项会明确标为「被游戏拒绝」，其余加速项照常生效；
 - 帧率 / 电源计划 / 系统内存整理需要管理员权限，普通权限下只优化本进程；
 - 滤镜为桌面级后处理，HDR 与广色域显示器上的观感会与 SDR 略有差异；
-- 显卡温度 / 频率 / 功耗依赖厂商传感器：NVIDIA 需要较新的驱动（`nvml.dll`），AMD 需要驱动自带的 `atiadlxx.dll` 且显卡支持 Overdrive；APU 核显等不提供这些接口的机型只显示占用与显存，其余项显示 `—`；
+- 显卡温度 / 频率 / 功耗依赖厂商传感器：NVIDIA 需要较新的驱动（`nvml.dll`），AMD 需要驱动自带的 `atiadlxx.dll` 且显卡支持 Overdrive；APU 核显等不提供这些接口的机型只显示占用与显存，其余项显示 `—`。AMD 卡读不到时先运行 `FrameForge.exe --gpudiag`，日志会写明 `atiadlxx.dll` 是否加载、各接口的返回码。
 - 仅支持 Windows；Linux / macOS 不在计划内。
 
 ## 更新日志
+
+### v1.4.4.2
+
+**修复**
+
+- **AMD 显卡上温度 / 频率 / 功耗仍然是 —**：AMD 驱动不同版本提供的接口不一样，1.4.4.1 只试了带 context 的 `ADL2_Overdrive6_*`，失败就整段放弃。现在按 `ADL2_*` → 老式 `ADL_*` 两套接口、每条数据再按 Overdrive6 → Overdrive5 → OverdriveN 逐条回退，任何一条能读出数值就会显示。
+- **开机自启时驱动还没就绪**：读不到数不再永久放弃，每 30 秒重新探测一次，驱动起来后自动恢复。
+- **健康检查不再谎报**：只有真正读到过数值才标为正常；AMD 卡读不到时提示安装官方 Adrenalin 驱动。
+
+**新增**
+
+- 命令行显卡诊断：`FrameForge.exe --gpudiag` 会把 `atiadlxx.dll` 的加载路径、导出函数是否齐全、每次 ADL 调用的返回码与原始数值写进 `gpudiag.log` 并弹窗显示，读不到数据时可直接定位。
 
 ### v1.4.4.1
 
@@ -460,6 +472,18 @@ frameforge/
 - Bilingual UI (Chinese / English), dark and light themes, tray mode, autostart, optional update check.
 
 ### Changelog
+
+#### v1.4.4.2
+
+**Fixed**
+
+- **Temperature / clock / power still showing dashes on AMD cards**: AMD drivers expose different APIs depending on version, and 1.4.4.1 only tried the context-based `ADL2_Overdrive6_*` calls and gave up on any failure. It now tries both `ADL2_*` and legacy `ADL_*` entry points, and falls back Overdrive6 → Overdrive5 → OverdriveN per value, so whatever one call can read is displayed.
+- **Driver not ready at autostart**: a failed read is no longer permanent — it retries every 30 seconds and recovers once the driver is up.
+- **Health check no longer lies**: the GPU row is only marked OK after a real value was read, and AMD cards that expose no sensor are pointed at the official Adrenalin driver.
+
+**New**
+
+- Command-line GPU diagnostics: `FrameForge.exe --gpudiag` writes the `atiadlxx.dll` path, which exports exist, and the return code plus raw value of every ADL call to `gpudiag.log`, and shows it in a dialog.
 
 #### v1.4.4.1
 
