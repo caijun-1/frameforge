@@ -239,6 +239,11 @@ namespace FrameForge.Sys
             { "delta force game", "三角洲行动|Delta Force" },
             { "infinity nikki", "无限暖暖|Infinity Nikki" },
             { "无限暖暖", "无限暖暖|Infinity Nikki" },
+            { "genshin impact", "原神|Genshin Impact" },
+            { "genshin impact game", "原神|Genshin Impact" },
+            { "genshinimpact", "原神|Genshin Impact" },
+            { "yuanshen", "原神|Genshin Impact" },
+            { "原神", "原神|Genshin Impact" },
             { "arena breakout", "暗区突围|Arena Breakout: Infinite" },
             { "thefinals", "总决赛|THE FINALS" },
             { "deadbydaylight", "黎明杀机|Dead by Daylight" },
@@ -324,7 +329,18 @@ namespace FrameForge.Sys
         {
             string key = Norm(exePath);
             string n = Clean(StripAppId(name));
-            if (n.Length > 0 && !MachineName(n, key)) return n;
+            if (n.Length > 0 && !MachineName(n, key))
+            {
+                // 目录名正好在内置库里(如 Genshin Impact Game)就换成库里的中英文名,
+                // 不然「我的游戏」里会显示成一串英文目录名。
+                string hit;
+                if (FolderMap.TryGetValue(n, out hit))
+                {
+                    string mapped = Clean(LangPair(hit));
+                    if (mapped.Length > 0) return mapped;
+                }
+                return n;
+            }
 
             string t = Clean(LangPair(FolderHint(exePath)));
             if (t.Length > 0 && !MachineName(t, key)) return t;

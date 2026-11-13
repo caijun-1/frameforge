@@ -63,6 +63,8 @@ namespace FrameForge.UI
         private bool lastFullscreen;
         private int lastFilterPid = -1;
         private int exclusiveWarnPid = -1;
+        // 上次补写显示器 LUT 的时间。游戏会周期性把 LUT 顶回默认值,需要定时重写。
+        private DateTime gammaAt = DateTime.MinValue;
         // 最近一个"外部前台程序"。用户在自家窗口里点「锁定/不是游戏」时,
         // 真正想操作的是切回来之前那个程序。
         private string lastOtherFg = "";
@@ -454,9 +456,27 @@ namespace FrameForge.UI
 
             // 自动装滤镜可能被放大镜的冷却期挡下(刚卸下 2 秒内不重建 DWM 效果链),
             // 那样界面状态已经切好、画面却还是原样,而且之后再没有任何事件触发重装。
-            // 这里每秒补一次:冷却一过去就自己装回去。
             bool wantFilter = St.FilterMode == 2 || (St.FilterMode == 1 && s.Fullscreen);
-            if (wantFilter && !captureGuard && !Sys.Filter.On && Sys.Filter.Supported) ApplyFilter();
+            if (wantFilter && !captureGuard && !Sys.Filter.On) ApplyFilter();
+
+            // 只有 LUT / 数字振动在起作用(放大镜不可用或被冷却挡着)时继续尝试补回完整矩阵;
+            // 独占全屏和切分辨率都会把 LUT、驱动显示设置冲回默认值,顺手每 2 秒补写。
+            if (Sys.Filter.GammaActive || Sys.Filter.NvActive)
+            {
+                DateTime gt = DateTime.UtcNow;
+                if ((gt - gammaAt).TotalSeconds >= 2)
+                {
+                    gammaAt = gt;
+                    if (wantFilter && !captureGuard && !Sys.Filter.MagActive && Sys.Filter.Supported)
+                    {
+                        ApplyFilter();
+                    }
+                    else
+                    {
+                        try { Sys.Filter.RefreshGamma(); } catch { }
+                    }
+                }
+            }
 
             // 独占全屏的交换链绕过 DWM,再置顶的叠加层也会被游戏盖住。
             // 检测到就提示一次(每局一次),把"看不到数据"变成可操作的提示,

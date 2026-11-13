@@ -53,6 +53,9 @@ $cscArgs = @(
     ("/win32icon:" + (Join-Path $root "app.ico")),
     ("/resource:" + (Join-Path $root "app.ico") + ",app.ico"),
     ("/r:System.Management.dll"),
+    # RTSS 安装流程要解压 zip:csc 默认不引用这两个程序集。
+    ("/r:System.IO.Compression.dll"),
+    ("/r:System.IO.Compression.FileSystem.dll"),
     ("/out:" + $out)
 ) + $src
 

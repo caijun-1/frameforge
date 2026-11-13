@@ -856,24 +856,42 @@ namespace FrameForge.UI
     // =====================================================================
     public class OverlayPage : Page
     {
-        private readonly Card ovCard, itemCard, hintCard, prevCard;
+        private readonly Card ovCard, rtssCard, itemCard, hintCard, prevCard;
         private readonly TextLabel ovTitle, onTitle, onSub, lockTitle, lockSub, hotkey;
         private readonly TextLabel styleTitle, cornerTitle, itemTitle, itemNote, hintTitle, prevTitle, statusLbl;
-        private readonly Toggle onToggle, lockToggle;
+        private readonly TextLabel rtssTitle, rtssSub;
+        // RTSS 接管叠加层时换成这张卡:只放 RTSS OSD 的样式,自绘那套设置全部收起。
+        private readonly TextLabel rtssCardTitle, rtssCardSub, rtssColorTitle, rtssLayoutTitle, rtssNote;
+        private readonly TextLabel rtssOnTitle, rtssOnSub;
+        private readonly Toggle rtssOnToggle;
+        private readonly Slider rtssScale;
+        private readonly Segmented rtssColor, rtssLayout;
+        private bool rtssMode;
+        private readonly Toggle onToggle, lockToggle, rtssToggle;
+        // RTSS 没装/没开时,这一行右边多一个「安装 / 启动」按钮,设置页里就能装好。
+        private readonly FlatButton rtssBtn;
+        private bool rtssBusy;
+        // 与设置页一致:进度只记字段,整行文案统一渲染,避免停在“97% + 已安装”。
+        private int rtssPercent;
+        private string rtssStage = "";
         private readonly Segmented style, corner;
         private readonly Slider scale;
         private readonly OverlayPreview preview;
         private readonly Chip[] chips = new Chip[9];
+        private readonly ToolTip rtssTip;
 
         private static readonly string[] ItemKeys =
         {
             "fps", "low", "cpu", "gpu", "gputemp", "ram", "rampct", "clock", "session"
         };
         private static readonly string[] CornerKeys = { "auto", "tl", "tr", "bl", "br" };
+        // 与 Rtss.ColorHex 一一对应,设置页只暴露这几种颜色。
+        private static readonly string[] RtssColors = { "white", "pink", "green", "yellow", "cyan" };
 
         public OverlayPage(MainForm host) : base(host)
         {
             ovCard = NewCard();
+            rtssCard = NewCard();
             itemCard = NewCard();
             hintCard = NewCard();
             prevCard = NewCard();
@@ -887,6 +905,7 @@ namespace FrameForge.UI
             onToggle.CheckedChanged += delegate
             {
                 if (Host.St.OverlayOn == onToggle.Checked) return;
+                if (rtssOnToggle != null) rtssOnToggle.SetSilent(onToggle.Checked);
                 Host.ToggleOverlay();
             };
 
@@ -960,6 +979,37 @@ namespace FrameForge.UI
             hotkey.Align = ContentAlignment.TopLeft;
             hotkey.Text = I18n.T("ov.hotkey");
 
+            // RTSS 在跑的时候叠加层整个交给它的 OSD,没装/没开也能正常用自绘。
+            rtssTitle = RowTitle(I18n.T("ov.rtss"));
+            rtssSub = RowSub(I18n.T("ov.rtss.sub"));
+            rtssSub.Ellipsis = true;
+            rtssToggle = new Toggle();
+            rtssToggle.SetSilent(host.St.RtssOsd);
+            rtssToggle.CheckedChanged += delegate
+            {
+                if (Host.St.RtssOsd == rtssToggle.Checked) return;
+                Host.St.RtssOsd = rtssToggle.Checked;
+                Host.St.Save();
+                if (Host.St.RtssOsd)
+                {
+                    if (Host.Ov != null) Host.Ov.ApplySettings();
+                }
+                else
+                {
+                    // 关掉就立刻把 RTSS 上的字撤掉,不必等下一帧。
+                    Rtss.Clear();
+                }
+                UpdateRtssSub();
+                UpdateRtssMode();
+            };
+            rtssTip = new ToolTip();
+            rtssTip.SetToolTip(rtssTitle, I18n.T("ov.rtss.tip"));
+            rtssTip.SetToolTip(rtssSub, I18n.T("ov.rtss.tip"));
+
+            rtssBtn = new FlatButton();
+            rtssBtn.FontPt = 9f;
+            rtssBtn.Click += delegate { OnRtssButton(); };
+
             ovCard.Controls.Add(ovTitle);
             ovCard.Controls.Add(onTitle);
             ovCard.Controls.Add(onSub);
@@ -972,6 +1022,103 @@ namespace FrameForge.UI
             ovCard.Controls.Add(lockTitle);
             ovCard.Controls.Add(lockSub);
             ovCard.Controls.Add(lockToggle);
+            ovCard.Controls.Add(rtssTitle);
+            ovCard.Controls.Add(rtssSub);
+            ovCard.Controls.Add(rtssToggle);
+            ovCard.Controls.Add(rtssBtn);
+
+            // RTSS 接管叠加层时显示这张卡:字号/颜色/排版都以内嵌标签写进 OSD,
+            // 用户不用再打开 RTSS 单独调。位置仍由 RTSS 的全局设置决定。
+            rtssCardTitle = Header(I18n.T("ov.rtss.card"));
+            rtssCardSub = RowSub(I18n.T("ov.rtss.card.sub"));
+            rtssCardSub.Ellipsis = true;
+            rtssCardSub.Wrap = false;
+
+            // 换成 RTSS 卡也要能开关叠加层,不然进 RTSS 模式后这一页只剩样式可调。
+            rtssOnTitle = RowTitle(I18n.T("ov.on"));
+            rtssOnSub = RowSub(I18n.T("ov.rtss.on.sub"));
+            rtssOnToggle = new Toggle();
+            rtssOnToggle.SetSilent(host.St.OverlayOn);
+            rtssOnToggle.CheckedChanged += delegate
+            {
+                if (Host.St.OverlayOn == rtssOnToggle.Checked) return;
+                onToggle.SetSilent(rtssOnToggle.Checked);
+                Host.ToggleOverlay();
+            };
+
+            rtssScale = new Slider();
+            rtssScale.Min = 50;
+            rtssScale.Max = 200;
+            rtssScale.Unit = "%";
+            rtssScale.Label = I18n.T("ov.rtss.scale");
+            rtssScale.SetSilent(RtssScaleOf(host.St));
+            rtssScale.Changed += delegate
+            {
+                // 50/100/200 在 RTSS 里有专用精灵,吸附到 25 的档位最清晰。
+                int v = (int)Math.Round(rtssScale.Value / 25.0) * 25;
+                if (v < 50) v = 50;
+                if (v > 200) v = 200;
+                rtssScale.Value = v;
+                Host.St.RtssScale = v;
+                Host.SaveSettingsSoon();
+                if (Host.Ov != null) Host.Ov.ApplySettings();
+                preview.Invalidate();
+            };
+
+            rtssColorTitle = RowTitle(I18n.T("ov.rtss.color"));
+            rtssColor = new Segmented();
+            rtssColor.Items = new string[]
+            {
+                I18n.T("ov.rtss.color.white"), I18n.T("ov.rtss.color.pink"),
+                I18n.T("ov.rtss.color.green"), I18n.T("ov.rtss.color.yellow"),
+                I18n.T("ov.rtss.color.cyan")
+            };
+            rtssColor.SetSilent(RtssColorIndex(host.St.RtssColor));
+            rtssColor.Changed += delegate
+            {
+                string key = RtssColors[rtssColor.Selected];
+                if (Host.St.RtssColor == key) return;
+                Host.St.RtssColor = key;
+                Host.St.Save();
+                if (Host.Ov != null) Host.Ov.ApplySettings();
+                preview.Invalidate();
+            };
+
+            rtssLayoutTitle = RowTitle(I18n.T("ov.rtss.layout"));
+            rtssLayout = new Segmented();
+            rtssLayout.Items = new string[]
+            {
+                I18n.T("ov.rtss.layout.stack"), I18n.T("ov.rtss.layout.row")
+            };
+            rtssLayout.SetSilent(host.St.RtssStacked ? 0 : 1);
+            rtssLayout.Changed += delegate
+            {
+                bool stacked = rtssLayout.Selected == 0;
+                if (Host.St.RtssStacked == stacked) return;
+                Host.St.RtssStacked = stacked;
+                Host.St.Save();
+                if (Host.Ov != null) Host.Ov.ApplySettings();
+                preview.Invalidate();
+            };
+
+            rtssNote = new TextLabel();
+            rtssNote.Size = 8.5f;
+            rtssNote.ForeColor = Theme.Faint;
+            rtssNote.Wrap = true;
+            rtssNote.Align = ContentAlignment.TopLeft;
+            rtssNote.Text = I18n.T("ov.rtss.note");
+
+            rtssCard.Controls.Add(rtssCardTitle);
+            rtssCard.Controls.Add(rtssCardSub);
+            rtssCard.Controls.Add(rtssOnTitle);
+            rtssCard.Controls.Add(rtssOnSub);
+            rtssCard.Controls.Add(rtssOnToggle);
+            rtssCard.Controls.Add(rtssScale);
+            rtssCard.Controls.Add(rtssColorTitle);
+            rtssCard.Controls.Add(rtssColor);
+            rtssCard.Controls.Add(rtssLayoutTitle);
+            rtssCard.Controls.Add(rtssLayout);
+            rtssCard.Controls.Add(rtssNote);
 
             hintTitle = Header(I18n.T("ov.notes"));
 
@@ -1025,11 +1172,14 @@ namespace FrameForge.UI
             prevCard.Controls.Add(preview);
 
             Controls.Add(ovCard);
+            Controls.Add(rtssCard);
             Controls.Add(itemCard);
             Controls.Add(hintCard);
             Controls.Add(prevCard);
 
             LayoutCards();
+            UpdateRtssSub();
+            UpdateRtssMode();
         }
 
         private static Card NewCard()
@@ -1090,6 +1240,20 @@ namespace FrameForge.UI
             return 0;
         }
 
+        private static int RtssScaleOf(Settings st)
+        {
+            int v = st.RtssScale;
+            if (v < 50) v = 50;
+            if (v > 200) v = 200;
+            return v;
+        }
+
+        private static int RtssColorIndex(string key)
+        {
+            for (int i = 0; i < RtssColors.Length; i++) if (RtssColors[i] == key) return i;
+            return 0;
+        }
+
         private static bool ItemValue(Settings st, int i)
         {
             switch (i)
@@ -1146,6 +1310,8 @@ namespace FrameForge.UI
         /// </summary>
         public override void Refresh(SysSample s)
         {
+            bool rtss = UpdateRtssMode();
+            if (!rtss) UpdateRtssSub();
             if (statusLbl == null) return;
             bool on = Host.St.OverlayOn;
             bool game = s != null && s.GamePid > 0;
@@ -1161,14 +1327,24 @@ namespace FrameForge.UI
             }
             else if (blocked)
             {
-                // 关掉「全屏优化」会让游戏的全屏变成真独占全屏。这时光改游戏显示模式
-                // 不够,还要把优化开关恢复,所以分成两条提示,别让用户白改。
-                text = I18n.T(FullscreenOptOff(s.GamePid) ? "ov.status.exclusive.fse" : "ov.status.exclusive");
-                color = Theme.Warn;
+                // 开着 RTSS 就不算"被挡住":同一份读数由 RTSS 注入游戏的
+                // present 链去画,独占全屏照样看得到,不必再劝用户改显示模式。
+                if (rtss)
+                {
+                    text = I18n.T("ov.status.exclusive.rtss", name.Length > 0 ? name : I18n.T("mon.game.generic"));
+                    color = Theme.Accent;
+                }
+                else
+                {
+                    // 关掉「全屏优化」会让游戏的全屏变成真独占全屏。这时光改游戏显示模式
+                    // 不够,还要把优化开关恢复,所以分成两条提示,别让用户白改。
+                    text = I18n.T(FullscreenOptOff(s.GamePid) ? "ov.status.exclusive.fse" : "ov.status.exclusive");
+                    color = Theme.Warn;
+                }
             }
             else if (game)
             {
-                text = I18n.T("ov.status.on", name.Length > 0 ? name : I18n.T("mon.game.generic"));
+                text = I18n.T(rtss ? "ov.status.on.rtss" : "ov.status.on", name.Length > 0 ? name : I18n.T("mon.game.generic"));
                 color = Theme.Accent;
             }
             else
@@ -1182,6 +1358,159 @@ namespace FrameForge.UI
             lastStatusColor = color;
             statusLbl.Text = text;
             statusLbl.ForeColor = color;
+        }
+
+        /// <summary>
+        /// 叠加层现在由谁画:RTSS 在跑(且没被关掉)就整个交给它,设置卡也跟着换成
+        /// RTSS 样式;否则还是 FrameForge 自己画。状态一变立刻换卡、换预览。
+        /// </summary>
+        private bool UpdateRtssMode()
+        {
+            if (ovCard == null || rtssCard == null) return false;
+            bool on = Host.St.RtssOsd && Rtss.Running;
+            ovCard.Visible = !on;
+            rtssCard.Visible = on;
+            // 两张卡各有一个开关,切卡时把状态对齐(SetSilent 不触发事件)。
+            if (rtssOnToggle != null) rtssOnToggle.SetSilent(Host.St.OverlayOn);
+            if (preview != null && preview.RtssMode != on)
+            {
+                preview.RtssMode = on;
+                preview.Invalidate();
+            }
+            if (on != rtssMode)
+            {
+                rtssMode = on;
+                LayoutCards();
+            }
+            return on;
+        }
+
+        /// <summary>RTSS 那一行的副标题:已连接 / 装了没开 / 没装,一眼看出有没有后备通道。</summary>
+        private void UpdateRtssSub()
+        {
+            if (rtssSub == null) return;
+            // 安装过程中只渲染进度,不去查共享内存(后台线程正在装)。
+            if (rtssBusy)
+            {
+                UpdateRtssBusyRow();
+                return;
+            }
+            UpdateRtssButton();
+            if (!Host.St.RtssOsd)
+            {
+                rtssSub.Text = I18n.T("ov.rtss.sub");
+                rtssSub.ForeColor = Theme.Sub;
+                return;
+            }
+            if (Rtss.Running)
+            {
+                rtssSub.Text = I18n.T("ov.rtss.running");
+                rtssSub.ForeColor = Theme.Accent;
+            }
+            else if (Rtss.Installed)
+            {
+                rtssSub.Text = I18n.T("ov.rtss.installed");
+                rtssSub.ForeColor = Theme.Warn;
+            }
+            else
+            {
+                // 没装不算错误:窗口化/无边框时自己的叠加层照常显示,这里只说明没有全屏后备。
+                rtssSub.Text = I18n.T("ov.rtss.missing");
+                rtssSub.ForeColor = Theme.Faint;
+            }
+        }
+
+        /// <summary>安装中的这一行:按钮转圈,副标题走进度。</summary>
+        private void UpdateRtssBusyRow()
+        {
+            if (rtssBtn != null)
+            {
+                bool show = Host.St.RtssOsd;
+                if (show != rtssBtnShown)
+                {
+                    rtssBtnShown = show;
+                    rtssBtn.Visible = show;
+                    LayoutCards();
+                }
+                if (show)
+                {
+                    rtssBtn.Text = I18n.T("ov.rtss.installing");
+                    rtssBtn.Primary = true;
+                    rtssBtn.Enabled = false;
+                    rtssBtn.Busy = true;
+                }
+            }
+            rtssSub.Text = Rtss.StageText(rtssPercent, rtssStage);
+            rtssSub.ForeColor = Theme.Sub;
+        }
+
+        // ---------------- RTSS 安装 / 启动 ----------------
+
+        private bool rtssBtnShown;
+
+        /// <summary>没连上 RTSS 时,这一行右边多一个按钮:没装就装,装了没开就启动。</summary>
+        private void UpdateRtssButton()
+        {
+            if (rtssBtn == null) return;
+            bool show = Host.St.RtssOsd && !Rtss.Running;
+            if (show != rtssBtnShown)
+            {
+                rtssBtnShown = show;
+                rtssBtn.Visible = show;
+                LayoutCards();
+            }
+            if (!show) return;
+            bool installed = Rtss.Installed;
+            rtssBtn.Busy = false;
+            rtssBtn.Text = I18n.T(installed ? "ov.rtss.start" : "ov.rtss.install");
+            rtssBtn.Primary = !installed;
+            rtssBtn.Enabled = true;
+        }
+
+        /// <summary>按钮只做两件事:装(自动下载+静默安装+启动)或启动已装好的 RTSS。</summary>
+        private void OnRtssButton()
+        {
+            if (rtssBusy) return;
+            if (Rtss.Installed)
+            {
+                if (!Rtss.Launch() && !Rtss.OpenDownloadPage()) Log.Write("rtss: launch failed");
+                return;
+            }
+
+            rtssBusy = true;
+            rtssStage = "download";
+            rtssPercent = 0;
+            UpdateRtssBusyRow();
+            Rtss.InstallAsync(RtssProgress);
+        }
+
+        /// <summary>安装回调来自后台线程,切回 UI 线程再动控件。</summary>
+        private void RtssProgress(int percent, string stage)
+        {
+            if (!IsHandleCreated) return;
+            try
+            {
+                BeginInvoke((MethodInvoker)delegate { ApplyRtssProgress(percent, stage); });
+            }
+            catch (InvalidOperationException) { }
+        }
+
+        private void ApplyRtssProgress(int percent, string stage)
+        {
+            if (!rtssBusy) return;
+            if (stage == "done" || stage == "fail")
+            {
+                rtssBusy = false;
+                rtssStage = "";
+                Rtss.RefreshDetection();
+                // 失败才退回官方下载页;成功时 RTSS 已由安装流程拉起,不再额外操作。
+                if (stage == "fail" && !Rtss.OpenDownloadPage()) Log.Write("rtss: open page failed");
+                UpdateRtssSub();
+                return;
+            }
+            rtssStage = stage;
+            rtssPercent = percent < 0 ? 0 : (percent > 100 ? 100 : percent);
+            UpdateRtssBusyRow();
         }
 
         protected override void OnResize(EventArgs e)
@@ -1198,9 +1527,9 @@ namespace FrameForge.UI
             // 说明卡多了一行常驻状态,高度从 146 抬到 166;多出来的高度让给上面的设置卡和预览。
             int hintH = Ui.Px(166);
             int cardH = Height - itemH - hintH - gap * 2;
-            if (cardH < Ui.Px(272))
+            if (cardH < Ui.Px(306))
             {
-                cardH = Ui.Px(272);
+                cardH = Ui.Px(306);
                 hintH = Math.Max(Ui.Px(140), Height - itemH - cardH - gap * 2);
             }
 
@@ -1231,13 +1560,13 @@ namespace FrameForge.UI
 
             ovTitle.SetBounds(pad, Ui.Px(12), ovCard.Width - pad * 2, Ui.Px(20));
 
-            // 卡片多出来的高度均摊进四段行距:行与行自然拉开,
+            // 卡片多出来的高度均摊进行距:行与行自然拉开,
             // 而不是在标题下方留一块空、底部再留一块空。
-            int extra = Math.Max(0, cardH - Ui.Px(272));
-            int top = extra / 6;
-            int step = (extra - top) / 5;
+            int extra = Math.Max(0, cardH - Ui.Px(306));
+            int top = extra / 7;
+            int step = (extra - top) / 6;
             int off1 = top, off2 = top + step, off3 = top + step * 2;
-            int off4 = top + step * 3, off5 = top + step * 4;
+            int off4 = top + step * 3, off5 = top + step * 4, off6 = top + step * 5;
 
             int leftText = ovCard.Width - pad * 2 - toggleW - Ui.Px(12);
             onTitle.SetBounds(pad, Ui.Px(50) + off1, leftText, Ui.Px(20));
@@ -1257,6 +1586,33 @@ namespace FrameForge.UI
             lockTitle.SetBounds(pad, Ui.Px(220) + off5, leftText, Ui.Px(20));
             lockSub.SetBounds(pad, Ui.Px(240) + off5, leftText, Ui.Px(18));
             lockToggle.SetBounds(right - toggleW, Ui.Px(222) + off5, toggleW, Ui.Px(24));
+
+            // 按钮(安装/启动)夹在文字和开关之间,出现时把文字让窄一点。
+            int rtBtnW = Ui.Px(88);
+            int rtBtnX = right - toggleW - Ui.Px(10) - rtBtnW;
+            int rtText = rtssBtnShown ? Math.Max(Ui.Px(80), rtBtnX - Ui.Px(10) - pad) : leftText;
+            rtssTitle.SetBounds(pad, Ui.Px(264) + off6, rtText, Ui.Px(20));
+            rtssSub.SetBounds(pad, Ui.Px(284) + off6, rtText, Ui.Px(18));
+            rtssToggle.SetBounds(right - toggleW, Ui.Px(266) + off6, toggleW, Ui.Px(24));
+            rtssBtn.SetBounds(rtBtnX, Ui.Px(261) + off6, rtBtnW, Ui.Px(26));
+
+            // RTSS 样式卡与自绘卡同一位置,两者按当前由谁画叠加层互斥显示。
+            rtssCard.SetBounds(0, 0, leftW, cardH);
+            rtssCard.Visible = rtssMode;
+            ovCard.Visible = !rtssMode;
+            rtssCardTitle.SetBounds(pad, Ui.Px(12), leftW - pad * 2, Ui.Px(20));
+            rtssOnTitle.SetBounds(pad, Ui.Px(44), leftText, Ui.Px(20));
+            rtssOnSub.SetBounds(pad, Ui.Px(62), leftText, Ui.Px(18));
+            rtssOnToggle.SetBounds(right - toggleW, Ui.Px(46), toggleW, Ui.Px(24));
+            rtssCardSub.SetBounds(pad, Ui.Px(88), leftW - pad * 2, Ui.Px(18));
+            int rSegW = Math.Min(Ui.Px(300), leftW - pad * 2 - Ui.Px(90));
+            if (rSegW < Ui.Px(160)) rSegW = Ui.Px(160);
+            rtssScale.SetBounds(pad, Ui.Px(112), leftW - pad * 2, Ui.Px(44));
+            rtssColorTitle.SetBounds(pad, Ui.Px(160), Ui.Px(80), Ui.Px(28));
+            rtssColor.SetBounds(leftW - pad - rSegW, Ui.Px(156), rSegW, Ui.Px(32));
+            rtssLayoutTitle.SetBounds(pad, Ui.Px(204), Ui.Px(80), Ui.Px(28));
+            rtssLayout.SetBounds(leftW - pad - rSegW, Ui.Px(200), rSegW, Ui.Px(32));
+            rtssNote.SetBounds(pad, Ui.Px(240), leftW - pad * 2, Math.Max(Ui.Px(28), cardH - Ui.Px(252)));
 
             hintTitle.SetBounds(pad, Ui.Px(12), Width - pad * 2, Ui.Px(20));
             // 状态行在最上面,下面依次是快捷键与限制说明;窗口极矮时说明整行收起,避免文字互压。
@@ -1294,6 +1650,9 @@ namespace FrameForge.UI
         private sealed class OverlayPreview : Ctl
         {
             private readonly Settings st;
+
+            /// <summary>RTSS 接管时预览按它的样子画:只有描边文字,没有 FrameForge 的底板。</summary>
+            public bool RtssMode;
 
             // 假数据:数值长度覆盖 2~8 个字符(含带秒的时间),用来检验换行/挤位问题。
             private static readonly string[] Samples =
@@ -1374,6 +1733,12 @@ namespace FrameForge.UI
                 using (GraphicsPath p = Ui.Round(r, rad))
                 using (var pen = new Pen(Theme.Border, 1f))
                     g.DrawPath(pen, p);
+
+                if (RtssMode)
+                {
+                    DrawRtss(g);
+                    return;
+                }
 
                 Font lf = Theme.F(9.5f * Scaled(), FontStyle.Regular);
                 Font vf = Theme.Bold(12.5f * Scaled());
@@ -1544,6 +1909,45 @@ namespace FrameForge.UI
                 public bool FpsCell;
             }
 
+            /// <summary>
+            /// RTSS 的 OSD 只画文字(描边由 RTSS 自己加),没有 FrameForge 的底板。
+            /// 这里按同一套字号/颜色/排版画一遍,挑颜色和字号时有个直观参照。
+            /// </summary>
+            private void DrawRtss(Graphics g)
+            {
+                List<PvRow> rows = PreviewRows();
+                if (rows.Count == 0)
+                {
+                    ShadowText(g, I18n.T("ov.preview.none"), Theme.F(9.5f, FontStyle.Regular),
+                        Color.FromArgb(225, 208, 216, 228), Ui.Fp(16), Height / 2f - Ui.Fp(9));
+                    return;
+                }
+
+                int scale = st.RtssScale;
+                if (scale < 50) scale = 50;
+                if (scale > 200) scale = 200;
+                // 预览卡比真实屏幕小得多,字号同比缩一点,200% 时不至于撑破卡片。
+                Font f = Theme.Bold(Math.Max(8f, 12f * Scaled() * scale / 100f));
+                Color c = ColorTranslator.FromHtml("#" + Rtss.ColorHex(st.RtssColor));
+
+                float x = Ui.Fp(14), y = Ui.Fp(14);
+                float lineH = f.Height + Ui.Fp(1);
+                for (int i = 0; i < rows.Count; i++)
+                {
+                    // RTSS 那边写的是英文标签(OSD 字体不一定有中文字形),预览也一样。
+                    string label = rows[i].Label;
+                    if (label == "内存") label = "RAM";
+                    else if (label == "时间") label = "TIME";
+                    else if (label == "时长") label = "UPTIME";
+                    string line = label;
+                    for (int k = 0; k < rows[i].Cells.Count; k++) line += " " + rows[i].Cells[k];
+                    ShadowText(g, line, f, c, x, y);
+                    if (st.RtssStacked) y += lineH;
+                    else x += TextRenderer.MeasureText(g, line, f, Size.Empty, TextFormatFlags.NoPadding).Width
+                              + Ui.Fp(14);
+                }
+            }
+
             /// <summary>按设备分组生成预览行:CPU 只写一次,占用和温度并排放在后面。</summary>
             private List<PvRow> PreviewRows()
             {
@@ -1623,7 +2027,7 @@ namespace FrameForge.UI
     // =====================================================================
     public class SettingsPage : Page
     {
-        private readonly Card genCard, memCard, fpsCard, adminCard, aboutCard, hotCard;
+        private readonly Card genCard, memCard, fpsCard, rtssCard, adminCard, aboutCard, hotCard;
         private readonly Segmented segLang, segTheme;
         private readonly Toggle tgAuto, tgTray, tgMemAuto, tgBoostProfile, tgUpdates;
         private readonly Segmented segMemMode;
@@ -1632,18 +2036,26 @@ namespace FrameForge.UI
         private readonly TextLabel[] adminItems = new TextLabel[3];
         private readonly TextLabel[] adminMarks = new TextLabel[3];
         private readonly Hairline adminLine;
-        private readonly FlatButton btnFps, btnAdmin, btnLog, btnWhitelist, btnRestore;
+        private readonly FlatButton btnFps, btnRtss, btnRtssUninstall, btnAdmin, btnLog, btnWhitelist, btnRestore;
         private readonly TextLabel langTitle, themeTitle, autoTitle, autoSub, trayTitle, traySub;
         private readonly TextLabel boostProfileTitle, boostProfileSub;
         private readonly TextLabel updateTitle, updateSub;
         private readonly TextLabel memAutoTitle;
+        private readonly TextLabel rtssTitle, rtssSub;
         private readonly TextLabel hotOvTitle, hotOvKey, hotBoostTitle, hotBoostKey, hotFlTitle, hotFlKey;
+        // RTSS 的下载与静默安装要跑几十秒,期间状态行显示进度,不能被每秒一次的刷新覆盖。
+        private bool rtssBusy;
+        // 进度只记在这里,整行文案统一由 UpdateRtssStatus 渲染:
+        // 以前进度行和状态行各写各的,安装成功后画面会停在“97% + 已安装”。
+        private int rtssPercent;
+        private string rtssStage = "";
 
         public SettingsPage(MainForm host) : base(host)
         {
             genCard = NewCard();
             memCard = NewCard();
             fpsCard = NewCard();
+            rtssCard = NewCard();
             adminCard = NewCard();
             aboutCard = NewCard();
             hotCard = NewCard();
@@ -1651,6 +2063,7 @@ namespace FrameForge.UI
             CardHeader(genCard, I18n.T("set.general"));
             CardHeader(memCard, I18n.T("set.mem"));
             CardHeader(fpsCard, I18n.T("set.fps"));
+            CardHeader(rtssCard, I18n.T("set.rtss"));
             CardHeader(adminCard, I18n.T("set.admin"));
             CardHeader(aboutCard, I18n.T("set.about"));
             CardHeader(hotCard, I18n.T("set.hotkeys"));
@@ -1807,6 +2220,33 @@ namespace FrameForge.UI
             fpsCard.Controls.Add(fpsNote);
             fpsCard.Controls.Add(btnFps);
 
+            // RTSS 叠加层:独占全屏时自己的分层窗口画不上去,只能借 RTSS 的 OSD。
+            // 没装可以在这里直接装(下载 + 校验 + 静默安装),装了没开就一键启动。
+            rtssTitle = new TextLabel();
+            rtssTitle.Size = 9.5f;
+            rtssTitle.Ellipsis = true;
+            rtssSub = new TextLabel();
+            rtssSub.Size = 8.5f;
+            rtssSub.ForeColor = Theme.Sub;
+            rtssSub.Ellipsis = true;
+            rtssSub.Text = I18n.T("set.rtss.note");
+            // 启停共用一个按钮:没装是“安装”,装了没开是“启动”,开着就是“禁用”。
+            btnRtss = new FlatButton();
+            btnRtss.FontPt = 9f;
+            btnRtss.Text = I18n.T("ov.rtss.install");
+            btnRtss.Click += delegate { OnRtssClick(); };
+
+            btnRtssUninstall = new FlatButton();
+            btnRtssUninstall.FontPt = 9f;
+            btnRtssUninstall.Primary = false;
+            btnRtssUninstall.Text = I18n.T("set.rtss.uninstall");
+            btnRtssUninstall.Click += delegate { OnRtssUninstall(); };
+
+            rtssCard.Controls.Add(rtssTitle);
+            rtssCard.Controls.Add(rtssSub);
+            rtssCard.Controls.Add(btnRtss);
+            rtssCard.Controls.Add(btnRtssUninstall);
+
             // 管理员
             adminStatus = new TextLabel();
             adminStatus.Size = 9f;
@@ -1917,6 +2357,7 @@ namespace FrameForge.UI
             Controls.Add(hotCard);
             Controls.Add(memCard);
             Controls.Add(fpsCard);
+            Controls.Add(rtssCard);
             Controls.Add(adminCard);
             Controls.Add(aboutCard);
 
@@ -1972,6 +2413,275 @@ namespace FrameForge.UI
                 adminMarks[i].Text = admin ? I18n.T("set.admin.cap.ok") : I18n.T("set.admin.cap.no");
                 adminMarks[i].ForeColor = admin ? Theme.Accent : Theme.Faint;
             }
+
+            UpdateRtssStatus();
+        }
+
+        /// <summary>
+        /// RTSS 一行:安装中 / 运行中 / 装了没开 / 没装。
+        /// 整行文案只在这里写,进度回调只改字段,所以不会再出现两行互相矛盾的状态。
+        /// </summary>
+        private void UpdateRtssStatus()
+        {
+            if (rtssTitle == null) return;
+
+            bool installed = Rtss.Installed;
+            bool uninstalling = rtssBusy && rtssStage == "uninstall";
+            btnRtss.Enabled = !rtssBusy;
+            btnRtss.Busy = rtssBusy;
+            // 卸载中只留状态行,按钮收起来,免得用户以为还能再点一次。
+            btnRtss.Visible = !uninstalling;
+            btnRtssUninstall.Visible = installed && !rtssBusy;
+            rtssSub.ForeColor = Theme.Sub;
+
+            if (rtssBusy)
+            {
+                string title = "set.rtss.installing";
+                if (rtssStage == "start") title = "ov.rtss.starting";
+                if (rtssStage == "stop") title = "set.rtss.stopping";
+                if (uninstalling) title = "set.rtss.uninstalling";
+                // 装完到 RTSS 起来这几秒,标题也跟着说“正在启动”,不然会和下面那行打架。
+                rtssTitle.Text = I18n.T(title);
+                rtssTitle.ForeColor = Theme.Warn;
+                btnRtss.Text = I18n.T(rtssStage == "stop" ? "set.rtss.stopping" : "ov.rtss.installing");
+                btnRtss.Primary = true;
+                // 启动/停止这几秒按钮收起来:这时候连点,会把还没起来的实例又杀一遍。
+                btnRtss.Visible = !uninstalling && rtssStage != "start" && rtssStage != "stop";
+                rtssSub.Text = Rtss.StageText(rtssPercent, rtssStage);
+                LayoutRtssButtons();
+                InvalidateRtss();
+                return;
+            }
+
+            if (Rtss.Running)
+            {
+                rtssTitle.Text = I18n.T("set.rtss.running");
+                rtssTitle.ForeColor = Theme.Accent;
+                // 同一个按钮:运行中它就是“禁用”。
+                btnRtss.Text = I18n.T("set.rtss.disable");
+                btnRtss.Primary = false;
+                rtssSub.Text = I18n.T("set.rtss.note");
+            }
+            else if (installed)
+            {
+                rtssTitle.Text = I18n.T("set.rtss.installed");
+                rtssTitle.ForeColor = Theme.Warn;
+                btnRtss.Text = I18n.T("ov.rtss.start");
+                btnRtss.Primary = true;
+                rtssSub.Text = I18n.T("set.rtss.note");
+            }
+            else
+            {
+                rtssTitle.Text = I18n.T("set.rtss.missing");
+                rtssTitle.ForeColor = Theme.Text;
+                btnRtss.Text = I18n.T("ov.rtss.install");
+                btnRtss.Primary = true;
+                rtssSub.Text = I18n.T("set.rtss.note");
+            }
+            LayoutRtssButtons();
+            InvalidateRtss();
+        }
+
+        /// <summary>
+        /// 自绘控件改了文字不会自己重画(每秒的整页刷新最多晚一秒才轮到),
+        /// 启停切换这种一眼就能看出来的地方当场刷一次。
+        /// </summary>
+        private void InvalidateRtss()
+        {
+            rtssTitle.Invalidate();
+            rtssSub.Invalidate();
+            btnRtss.Invalidate();
+            btnRtssUninstall.Invalidate();
+        }
+
+        /// <summary>启停按钮紧贴卸载按钮左侧;卸载按钮不显示时自己靠右。</summary>
+        private void LayoutRtssButtons()
+        {
+            if (btnRtss == null) return;
+            int pad = Ui.Px(20);
+            int right = rtssCard.ClientSize.Width - pad;
+            int bw1 = Ui.Px(110), bh1 = Ui.Px(30);
+            int bw2 = Ui.Px(72), bh2 = Ui.Px(26), gapB = Ui.Px(8);
+            int unX = right - bw2;
+            btnRtssUninstall.SetBounds(unX, Ui.Px(70), bw2, bh2);
+            int mainX = btnRtssUninstall.Visible ? unX - gapB - bw1 : right - bw1;
+            btnRtss.SetBounds(mainX, Ui.Px(68), bw1, bh1);
+            // 启停按钮收起来的时候(启动/停止/卸载中),说明文字铺满整行。
+            int textRight = btnRtss.Visible ? mainX : right;
+            int subW = textRight - pad - Ui.Px(10);
+            if (subW > 0) rtssSub.SetBounds(pad, Ui.Px(70), subW, Ui.Px(26));
+        }
+
+        /// <summary>一个按钮管三件事:没装就装,装了没开就启动,开着就禁用。</summary>
+        private void OnRtssClick()
+        {
+            if (rtssBusy) return;
+
+            if (!Rtss.Installed)
+            {
+                rtssBusy = true;
+                rtssStage = "download";
+                rtssPercent = 0;
+                UpdateRtssStatus();
+                Rtss.InstallAsync(RtssProgress);
+                return;
+            }
+
+            RunRtssJob(!Rtss.Running);
+        }
+
+        /// <summary>
+        /// 启停整段都放在后台做成串行任务:前一次没结束前按钮不可点。
+        /// 以前是点一下就发一次启动/结束请求,连点几次就会撞上还没退干净的旧实例,
+        /// RTSS 起来又秒退,最后怎么点都起不来。
+        /// </summary>
+        private void RunRtssJob(bool start)
+        {
+            if (rtssBusy) return;
+            rtssBusy = true;
+            rtssStage = start ? "start" : "stop";
+            rtssPercent = 100;
+            UpdateRtssStatus();
+
+            var t = new System.Threading.Thread(delegate()
+            {
+                bool ok = false;
+                try
+                {
+                    if (start)
+                    {
+                        ok = Rtss.Launch() && WaitRtss(true, 12000);
+                        // 起不来就把残留的钩子加载器一并清掉,下一次点才有机会成功。
+                        if (!ok) Rtss.Stop();
+                    }
+                    else
+                    {
+                        Rtss.Stop();
+                        ok = WaitRtss(false, 8000);
+                    }
+                }
+                catch (Exception ex) { Log.Write("rtss job: " + ex.Message); }
+
+                if (!IsHandleCreated) return;
+                try
+                {
+                    BeginInvoke((MethodInvoker)delegate
+                    {
+                        if (rtssStage == "start" || rtssStage == "stop")
+                        {
+                            rtssBusy = false;
+                            rtssStage = "";
+                        }
+                        UpdateRtssStatus();
+                        if (start && !ok) Host.Toast(I18n.T("set.rtss.startfail"));
+                    });
+                }
+                catch (InvalidOperationException) { }
+            });
+            t.IsBackground = true;
+            t.Name = "rtss-job";
+            t.Start();
+        }
+
+        /// <summary>等 RTSS 到达预期的开/关状态,超时就如实返回 false。</summary>
+        private static bool WaitRtss(bool want, int ms)
+        {
+            for (int waited = 0; ; waited += 250)
+            {
+                if (Rtss.Running == want) return true;
+                if (waited >= ms) return Rtss.Running == want;
+                System.Threading.Thread.Sleep(250);
+            }
+        }
+
+        /// <summary>
+        /// 卸载:先弹第二道确认(要重启电脑),确认后才调 RTSS 自己的卸载器。
+        /// 卸载器可能要重启才能把注入的钩子彻底清掉,所以结束前会再问一次要不要现在重启。
+        /// </summary>
+        private void OnRtssUninstall()
+        {
+            if (rtssBusy) return;
+            DialogResult r = MessageBox.Show(this,
+                I18n.T("set.rtss.uninstall.ask"),
+                I18n.T("set.rtss.uninstall.title"),
+                MessageBoxButtons.OKCancel, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+            if (r != DialogResult.OK) return;
+
+            rtssBusy = true;
+            rtssStage = "uninstall";
+            rtssPercent = 100;
+            UpdateRtssStatus();
+            Rtss.UninstallAsync(OnRtssUninstalled);
+        }
+
+        /// <summary>卸载回调来自后台线程,切回 UI 线程再动控件。</summary>
+        private void OnRtssUninstalled(bool ok)
+        {
+            if (!IsHandleCreated) return;
+            try
+            {
+                BeginInvoke((MethodInvoker)delegate { ApplyRtssUninstalled(ok); });
+            }
+            catch (InvalidOperationException) { }
+        }
+
+        private void ApplyRtssUninstalled(bool ok)
+        {
+            rtssBusy = false;
+            rtssStage = "";
+            Rtss.RefreshDetection();
+            UpdateRtssStatus();
+
+            if (!ok)
+            {
+                MessageBox.Show(this, I18n.T("set.rtss.uninstall.fail"),
+                    I18n.T("set.rtss.uninstall.title"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            // 卸载完不是马上生效:RTSS 注入的钩子要重启才彻底消失。
+            if (MessageBox.Show(this, I18n.T("set.rtss.reboot.ask"),
+                    I18n.T("set.rtss.reboot.title"),
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            try
+            {
+                System.Diagnostics.Process.Start("shutdown", "/r /t 10 /c \"FrameForge: restarting after RTSS uninstall\"");
+            }
+            catch (Exception ex)
+            {
+                Log.Write("rtss reboot: " + ex.Message);
+                MessageBox.Show(this, I18n.T("set.rtss.reboot.manual"),
+                    I18n.T("set.rtss.reboot.title"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        /// <summary>安装回调来自后台线程,切回 UI 线程再动控件。</summary>
+        private void RtssProgress(int percent, string stage)
+        {
+            if (!IsHandleCreated) return;
+            try
+            {
+                BeginInvoke((MethodInvoker)delegate { ApplyRtssProgress(percent, stage); });
+            }
+            catch (InvalidOperationException) { }
+        }
+
+        private void ApplyRtssProgress(int percent, string stage)
+        {
+            if (!rtssBusy) return;
+            if (stage == "done" || stage == "fail")
+            {
+                // 结束态只清标志,文案统一交给 UpdateRtssStatus 决定。
+                rtssBusy = false;
+                rtssStage = "";
+                Rtss.RefreshDetection();
+                if (stage == "fail" && !Rtss.OpenDownloadPage()) Log.Write("rtss: open page failed");
+                UpdateRtssStatus();
+                return;
+            }
+            rtssStage = stage;
+            rtssPercent = percent < 0 ? 0 : (percent > 100 ? 100 : percent);
+            UpdateRtssStatus();
         }
 
         /// <summary>切换触发方式:按阈值看占用,按时间看间隔。</summary>
@@ -1998,6 +2708,8 @@ namespace FrameForge.UI
         {
             if (s == null) return;
             memInfo.Text = Fmt.Pair(s.RamUsed, s.RamTotal) + (s.RamPct >= 0 ? "   ·   " + s.RamPct.ToString("0") + "%" : "");
+            // RTSS 也可能在托盘里被手动开关,每秒对一次,按钮文案不会和实际状态脱节。
+            UpdateRtssStatus();
         }
 
         // ---------------- 布局 ----------------
@@ -2059,6 +2771,13 @@ namespace FrameForge.UI
             LayoutCards();
         }
 
+        /// <summary>切到设置页时重查一次 RTSS:用户可能刚在别处装了或启动了它。</summary>
+        protected override void OnVisibleChanged(EventArgs e)
+        {
+            base.OnVisibleChanged(e);
+            if (Visible) UpdateStatus();
+        }
+
         private void LayoutCards()
         {
             if (Width <= 0 || Height <= 0) return;
@@ -2081,11 +2800,12 @@ namespace FrameForge.UI
 
             int memH = Ui.Px(160);
             int fpsH = Ui.Px(150);
-            int adminH = Height - memH - fpsH - gap * 2;
+            int rtssH = Ui.Px(112);
+            int adminH = Height - memH - fpsH - rtssH - gap * 3;
             if (adminH < Ui.Px(184))
             {
                 adminH = Ui.Px(184);
-                memH = Math.Max(Ui.Px(160), Height - fpsH - adminH - gap * 2);
+                memH = Math.Max(Ui.Px(160), Height - fpsH - rtssH - adminH - gap * 3);
             }
 
             genCard.SetBounds(0, 0, colW, genH);
@@ -2093,7 +2813,8 @@ namespace FrameForge.UI
             aboutCard.SetBounds(0, genH + hotH + gap * 2, colW, aboutH);
             memCard.SetBounds(rightX, 0, rightW, memH);
             fpsCard.SetBounds(rightX, memH + gap, rightW, fpsH);
-            adminCard.SetBounds(rightX, memH + fpsH + gap * 2, rightW, adminH);
+            rtssCard.SetBounds(rightX, memH + fpsH + gap * 2, rightW, rtssH);
+            adminCard.SetBounds(rightX, memH + fpsH + rtssH + gap * 3, rightW, adminH);
 
             int pad = Ui.Px(20);
             int toggleW = Ui.Px(48);
@@ -2135,6 +2856,11 @@ namespace FrameForge.UI
             fpsNote.SetBounds(pad, Ui.Px(66), rightW - pad * 2, Ui.Px(40));
             int bw = Ui.Px(132), bh = Ui.Px(30);
             btnFps.SetBounds(rightW - pad - bw, fpsH - bh - Ui.Px(14), bw, bh);
+
+            PlaceHeader(rtssCard, pad);
+            // 状态行独占第一行,启停按钮放到卸载按钮左边,两者并排靠右。
+            rtssTitle.SetBounds(pad, Ui.Px(42), rightW - pad * 2, Ui.Px(22));
+            LayoutRtssButtons();
 
             // 管理员卡与关于卡会吃掉窗口剩余的整块高度:把多出来的空白
             // 均摊进各行之间的间距,内容铺满卡片,标题下方不会空一大截。
@@ -3610,8 +4336,6 @@ namespace FrameForge.UI
     // =====================================================================
     public class GamesPage : Page
     {
-        private static DateTime lastAutoScan = DateTime.MinValue;
-
         private readonly Card topCard, listCard;
         private readonly TextLabel title, sub, status, hintLbl;
         private readonly FlatButton scanBtn, addBtn, playBtn, pinBtn, delBtn;
@@ -3703,10 +4427,13 @@ namespace FrameForge.UI
             Controls.Add(topCard);
             Controls.Add(listCard);
 
+            // 扫描结果和扫描时间都存进设置:页面打开时直接显示上次的结果,
+            // 只有从来没扫过(或用户点「重新扫描」)才真的去读硬盘。
+            lastScan = Host.St.GamesScannedAt;
+
             Reload();
 
-            // 第一次进页面自动扫一次;十分钟内再进来不重复扫,免得每次切页都读硬盘。
-            if ((DateTime.UtcNow - lastAutoScan).TotalMinutes >= 10) Scan();
+            if (lastScan == DateTime.MinValue) Scan();
         }
 
         protected override void OnResize(EventArgs e)
@@ -3798,7 +4525,13 @@ namespace FrameForge.UI
             }
             string n = count.ToString();
             if (lastScan != DateTime.MinValue)
-                status.Text = I18n.T("games.count", n, lastScan.ToString("HH:mm"));
+            {
+                // 上次扫描不是今天,就把日期一起写出来,免得只显示时间让人以为是刚扫的。
+                string when = lastScan.Date == DateTime.Today
+                    ? lastScan.ToString("HH:mm")
+                    : lastScan.ToString("MM-dd HH:mm");
+                status.Text = I18n.T("games.count", n, when);
+            }
             else if (count == 0)
                 status.Text = I18n.T("games.never", n);
             else
@@ -3851,7 +4584,7 @@ namespace FrameForge.UI
             scanBtn.Enabled = true;
             scanBtn.Text = I18n.T("games.scan");
             lastScan = DateTime.Now;
-            lastAutoScan = DateTime.UtcNow;
+            Host.St.GamesScannedAt = lastScan;
 
             int added = 0;
             if (found != null)
@@ -3861,9 +4594,10 @@ namespace FrameForge.UI
                     if (Host.St.UpsertMyGame(found[i].Name, found[i].ExePath, found[i].Source)) added++;
                 }
             }
+            // 扫描时间本身也要落盘,否则下次启动又会重扫一遍。
+            Host.SaveSettingsSoon();
             if (added > 0)
             {
-                Host.SaveSettingsSoon();
                 Host.SyncGameLibrary();
                 Host.Toast(I18n.T("games.scanned", added));
             }

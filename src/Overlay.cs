@@ -6,6 +6,7 @@ using System.Drawing.Imaging;
 using System.Globalization;
 using System.Drawing.Text;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows.Forms;
 using FrameForge.Sys;
 
@@ -100,6 +101,8 @@ namespace FrameForge
         {
             wanted = false;
             timer.Stop();
+            // 自己关了叠加层,RTSS 那边的文字也要撤掉,别在游戏里留一行孤儿数据。
+            Rtss.Clear();
             if (Visible) Hide();
         }
 
@@ -277,6 +280,18 @@ namespace FrameForge
                 // 这里不 Show,否则会和下面的 Hide 每 200ms 来回切,画面一直闪。
                 bool miniData = st.ShowFps || st.ShowLow || st.ShowGpuTemp;
                 bool hasData = style == "mini" ? miniData : rows.Count > 0;
+
+                // RTSS 在运行时,叠加层整个交给它画:独占全屏也能显示,窗口化时也不会
+                // 和自己的分层窗口叠成两套读数。自己这块窗口一律收起来。
+                // 没运行还是走原来的自绘路径,不碰 RTSS 那边的槽位。
+                if (st.RtssOsd && Rtss.Running)
+                {
+                    Rtss.Push(rows.Count > 0 ? RtssText(rows) : "");
+                    lastKey = "";
+                    if (Visible) Hide();
+                    return;
+                }
+
                 if (!hasData) { lastKey = ""; if (Visible) Hide(); return; }
 
                 // 开关还开着却看不见窗口(内容清空过、或被游戏切全屏时系统收走了),
@@ -584,6 +599,33 @@ namespace FrameForge
             string text = (fps > 0 ? fps.ToString("0") : "--") + " FPS";
             if (st.ShowGpuTemp && last.GpuTemp >= 0) text += "   " + last.GpuTemp.ToString("0") + "°";
             return text;
+        }
+
+        /// <summary>
+        /// 交给 RTSS 的文字。标签统一用英文——RTSS 的 OSD 字体不一定带中文字形,
+        /// 写中文可能是一排方块;数值本身和界面上显示的完全一致。
+        /// 字号/颜色/排版用 RTSS 的内嵌标签下发,用户不用再打开 RTSS 单独调。
+        /// </summary>
+        private string RtssText(List<Row> rows)
+        {
+            var sb = new StringBuilder();
+            for (int i = 0; i < rows.Count; i++)
+            {
+                if (i > 0) sb.Append(st.RtssStacked ? "\n" : "    ");
+                string label = rows[i].Label;
+                if (label == "内存") label = "RAM";
+                else if (label == "时间") label = "TIME";
+                else if (label == "时长") label = "UPTIME";
+                sb.Append(label);
+                for (int c = 0; c < rows[i].Cells.Count; c++) sb.Append(' ').Append(rows[i].Cells[c]);
+            }
+
+            int scale = st.RtssScale;
+            if (scale < 50) scale = 50;
+            if (scale > 200) scale = 200;
+            return "<S=" + scale.ToString(CultureInfo.InvariantCulture)
+                 + "><C=FF" + Rtss.ColorHex(st.RtssColor) + ">"
+                 + sb.ToString() + "<C>";
         }
 
         /// <summary>内容签名:只有文字或排布变了才重新量尺寸、重画。</summary>

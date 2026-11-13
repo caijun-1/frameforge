@@ -5,15 +5,15 @@
 <p align="center"><b>轻量级 FPS 游戏增效工具 · A lightweight FPS toolkit for Windows</b><br>
 一键加速 + 实时帧率监测 + 游戏内叠加层 + 画面滤镜 + 赛后性能报告 + 系统优化</p>
 
-<p align="center">单文件 · 免安装 · 541 KB · 不注入游戏 · 不装驱动</p>
+<p align="center">单文件 · 免安装 · 579 KB · 默认不注入游戏 · RTSS 叠加可选</p>
 
 <p align="center">
   <img src="https://github.com/caijun-1/frameforge/actions/workflows/build.yml/badge.svg" alt="build">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue" alt="platform">
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
-  <img src="https://img.shields.io/badge/size-541%20KB-brightgreen" alt="size 541 KB">
+  <img src="https://img.shields.io/badge/size-579%20KB-brightgreen" alt="size 579 KB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.4.4.2-orange" alt="1.4.4.2">
+  <img src="https://img.shields.io/badge/version-1.4.5-orange" alt="1.4.5">
 </p>
 
 <p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
@@ -49,8 +49,9 @@
 | 实时监测 | 汇聚在加速页的监控仪表：CPU / GPU 占用环形表、五维雷达图（CPU / GPU / 内存 / FPS / 温度）、内存弧表，以及 GPU 温度 / 频率 / 功耗 / 显存四联指标 |
 | 游戏识别 | 进程名 → 真实游戏名三层识别（用户 `games.ini` → 内置 200+ 游戏库 → 安装目录 / 文件版本信息），Unreal 的 `*-Win64-Shipping` 这类通用进程名不会再把进程名当成游戏名（旧版本已归档的记录保持原样） |
 | 游戏检测 | 四层兜底不漏检：前台游戏窗口 → 后台铺满屏幕的游戏窗口 → 已知游戏进程扫描（窗口化 / 小窗口也算）→ 游戏平台安装目录（Steam / Epic / GOG / Xbox / WeGame 等）辅助识别；我的世界基岩版按进程、Java 版按窗口标题识别 |
-| 画面滤镜 | 15 组通用预设（含冷色、暖色、雾天增强、竞技、二次元等）+ 8 款游戏专用预设（三角洲行动、无畏契约、原神、Apex、CS2、PUBG、永劫无间、英雄联盟）+ 强度 / 对比度 / 暗部平衡 / 饱和度 / 数字振动 / 色温 六维微调，按住可随时对比原图；亮度滑块直接调显示器硬件背光 |
-| 游戏内叠加层 | 置顶半透明小窗，横向 / 纵向 / 简洁三种样式，9 种指标（FPS / 1% Low / CPU / GPU / GPU 温度 / 内存 / 内存% / 时钟 / 时长）可自选；位置可选屏幕四角或自由拖动，可缩放、可锁定；跟随游戏所在显示器，并周期重申请置顶以对抗抢占置顶的游戏；检测到独占全屏时提示改用无边框窗口 |
+| 我的游戏 | 自动扫描 Steam / Epic / GOG、卸载注册表与本机常见安装目录（含 WeGame、米哈游启动器），把装过的游戏列在一起：双击启动、锁定为加速目标、移除条目、手动添加 `.exe`；扫描结果本地缓存，不用每次开机重扫 |
+| 画面滤镜 | 15 组通用预设（含冷色、暖色、雾天增强、竞技、二次元等）+ 8 款游戏专用预设（三角洲行动、无畏契约、原神、Apex、CS2、PUBG、永劫无间、英雄联盟）+ 强度 / 对比度 / 暗部平衡 / 饱和度 / 数字振动 / 色温 六维微调（独占全屏下自动改用 gamma LUT，饱和度由 NVIDIA 数字振动补上），按住可随时对比原图；亮度滑块直接调显示器硬件背光 |
+| 游戏内叠加层 | 置顶半透明小窗，横向 / 纵向 / 简洁三种样式，9 种指标（FPS / 1% Low / CPU / GPU / GPU 温度 / 内存 / 内存% / 时钟 / 时长）可自选；位置可选屏幕四角或自由拖动，可缩放、可锁定；跟随游戏所在显示器，并周期重申请置顶以对抗抢占置顶的游戏；检测到独占全屏时提示改用无边框窗口，也可以直接交给 RTSS 绘制（独占全屏同样可见），RTSS 没运行时仍由自带分层窗口绘制 |
 | 赛后报告 | 退出游戏自动弹出性能报告：平均 / 最高 / 最低帧率、1% Low、CPU / GPU / 温度 / 内存 / 显存 / 功耗，以及耗时电量与碳排估算 |
 | 战绩历史 | 每局自动归档（最多 300 条），可回看任意一局详情（含帧率折线图）、删除单局、清空或导出 CSV，名字与图标取自游戏本体 |
 | 系统优化 | 「优化」页逐项列出会影响帧率的设置（管理员权限、VBS、硬件加速 GPU 计划、窗口叠加 MPO、Game DVR、全屏优化、窗口化游戏优化、电源计划、MSI 中断、显卡与驱动），每项标明游戏时的推荐状态，开关 / 分段选择直接改；顶部「游戏优先」「日常均衡」一键套用，「游戏体检」可查看每一项的实际取值与改动记录 |
@@ -60,27 +61,27 @@
 
 ## 截图
 
-以下为浅色主题界面，全部取自 v1.4.1。加速页的模式条为铺满整卡的三等分色块，「编辑选项」只在自定义模式下出现；战绩详情里可直接查看本局帧率折线；滤镜预设分「通用 / 热门游戏 / ICC」三页。
+以下为浅色主题界面，全部取自 v1.4.5。加速页的模式条为铺满整卡的三等分色块，「编辑选项」只在自定义模式下出现；「我的游戏」按平台列出已安装游戏；滤镜预设分「通用 / 热门游戏 / ICC」三页；叠加层页能直接看到 RTSS 状态，没启动时一键启动，由 RTSS 接管后独占全屏也能显示读数。
 
-| 加速（均衡模式） | 加速（自定义模式） |
+| 加速 | 我的游戏 |
 | --- | --- |
-| ![加速](docs/screenshots/v1.4.1/boost.png) | ![自定义模式](docs/screenshots/v1.4.1/boost-custom.png) |
+| ![加速](docs/screenshots/v1.4.5/boost.png) | ![我的游戏](docs/screenshots/v1.4.5/games.png) |
 
-| 滤镜 | 叠加层 |
+| 滤镜 | 叠加层（RTSS 接管） |
 | --- | --- |
-| ![滤镜](docs/screenshots/v1.4.1/filter.png) | ![叠加层](docs/screenshots/v1.4.1/overlay.png) |
+| ![滤镜](docs/screenshots/v1.4.5/filter.png) | ![叠加层](docs/screenshots/v1.4.5/overlay.png) |
 
 | 滤镜（ICC 配置文件） |
 | --- |
-| ![ICC](docs/screenshots/v1.4.1/icc.png) |
+| ![ICC](docs/screenshots/v1.4.5/icc.png) |
 
 | 战绩 | 优化（系统体检） |
 | --- | --- |
-| ![战绩](docs/screenshots/v1.4.1/report.png) | ![优化](docs/screenshots/v1.4.1/health.png) |
+| ![战绩](docs/screenshots/v1.4.5/report.png) | ![优化](docs/screenshots/v1.4.5/health.png) |
 
 | 设置 |
 | --- |
-| ![设置](docs/screenshots/v1.4.1/settings.png) |
+| ![设置](docs/screenshots/v1.4.5/settings.png) |
 
 <details>
 <summary>旧版界面（v1.1.1，对比用）</summary>
@@ -180,8 +181,8 @@ PresentMon 是在运行时按需下载的独立 exe（MIT 协议），不随本�
 
 滤镜走 Windows 放大镜 API 的全屏颜色矩阵（`Magnification.dll`），作用于整个桌面输出：
 
-- 不注入游戏、不安装驱动、不修改游戏文件；
-- **独占全屏也能生效**：独占全屏时 DWM 被绕过，放大镜的矩阵看不到画面。此时自动改用显示器 gamma LUT（`SetDeviceGammaRamp`），把颜色矩阵换算成逐通道曲线，亮度、对比度、色温、暗部提升仍然有效；离开独占全屏后先还原原始 LUT，再切回放大镜，避免两层效果叠加。饱和度依赖跨通道运算，LUT 模式下只能近似，界面会说明当前所处的模式；
+- 不注入游戏、不安装驱动、不修改游戏文件（只有可选「交给 RTSS 显示叠加层」时，由 RTSS 注入它自己的 OSD 文字）；
+- **独占全屏也能生效**：独占全屏时 DWM 被绕过，放大镜的矩阵看不到画面。此时把矩阵拆成两半——显示器 gamma LUT（`SetDeviceGammaRamp`）负责亮度、对比度、色温、暗部这些逐通道增益，跨通道的饱和度交给 NVIDIA 驱动自身的数字振动（NVAPI 的 DVC 接口，零注入），S 曲线近似只作为非 NVIDIA 显卡的兜底。两者同时生效时正好还原整张矩阵，只有 LUT 生效时也不会丢掉亮度类效果。离开独占全屏先还原原始 LUT 与驱动数值，再切回放大镜，避免重复调色。游戏切分辨率、重新进入独占全屏、驱动重置都会把 LUT 冲回默认值，程序每 2 秒按上次的矩阵补写一次，滤镜不会「过一会儿自己没了」；
 - **预览是真实画面**：预览框里是一帧合成的游戏场景（天空、远山、地面、人物剪影、准星与血条），直接套用当前颜色矩阵，不再用抽象色带，色温、暗部、肤色和 UI 是否会变色都能一眼看出来；
 - 「仅游戏」模式下只在检测到全屏游戏时生效；
 - 远程桌面等不支持的环境会给出提示并保持原色；
@@ -266,11 +267,13 @@ frameforge/
 │   │   ├── Profiles.cs    # 按游戏保存的加速策略
 │   │   ├── MemEngine.cs   # 内存整理与提权
 │   │   ├── Filter.cs      # 全屏颜色矩阵滤镜
+│   │   ├── NvApi.cs       # NVAPI 数字振动（独占全屏下补饱和度）
+│   │   ├── Rtss.cs        # RTSS 共享内存 OSD 写入
 │   │   └── Icc.cs         # ICC 配置文件解析与矩阵拟合
 │   └── UI/
 │       ├── MainForm.cs        # 外壳：标题栏、导航、托盘
 │       ├── MainForm.Actions.cs# 业务动作：加速、叠加层、热键
-│       ├── Pages.cs           # 六个页面（加速 / 滤镜 / 叠加层 / 战绩 / 优化 / 设置）
+│       ├── Pages.cs           # 七个页面（加速 / 我的游戏 / 滤镜 / 叠加层 / 战绩 / 优化 / 设置）
 │       ├── HealthPage.cs      # 优化页：逐项调节、推荐状态与预设
 │       ├── AuditDialog.cs     # 优化页的「配置审计」弹窗（实际取值与改动记录）
 │       ├── TrayMenu.cs        # 自绘托盘菜单（显示主界面 / 退出）
@@ -286,7 +289,8 @@ frameforge/
 
 ## 已知限制
 
-- 独占全屏（Exclusive Fullscreen）游戏会遮挡叠加层，程序检测到后会提示改用无边框窗口；这是系统限制，不注入游戏就无法绕过；
+- 独占全屏（Exclusive Fullscreen）游戏会遮挡叠加层：自己画的分层窗口在独占全屏下必然看不见，程序检测到后会提示改用无边框窗口；装了 RTSS 并让它接管叠加层时独占全屏也能显示，代价是 RTSS 会向游戏注入文字，被反作弊拦截的游戏仍然不显示；
+- 独占全屏下的数字振动依赖 NVIDIA 驱动（NVAPI）；AMD / Intel 显卡在独占全屏下只能用 gamma LUT 的 S 曲线近似饱和度，效果弱于窗口化模式；
 - 部分带反作弊的游戏会拒绝修改自身进程优先级，此时该项会明确标为「被游戏拒绝」，其余加速项照常生效；
 - 帧率 / 电源计划 / 系统内存整理需要管理员权限，普通权限下只优化本进程；
 - 滤镜为桌面级后处理，HDR 与广色域显示器上的观感会与 SDR 略有差异；
@@ -294,6 +298,29 @@ frameforge/
 - 仅支持 Windows；Linux / macOS 不在计划内。
 
 ## 更新日志
+
+### v1.4.5
+
+**新增**
+
+- **RTSS 叠加层（可选）**：装了 RTSS（RivaTuner Statistics Server）的机器，叠加层可以整个交给 RTSS 的 OSD 绘制——它把文字送进游戏的呈现链，**独占全屏下也能显示**。叠加层页与设置页都能看到状态（运行中 / 装了没开 / 未安装）：没装可以直接在程序里下载安装，装了没开一键启动；字号、颜色（白 / 粉 / 绿 / 黄 / 青）、排版（逐行 / 单行）在界面里调，实时写进 OSD 文字，不用再打开 RTSS 设置。RTSS 没在运行时仍然用自带的分层窗口绘制，完全不注入游戏。
+- **独占全屏下的数字振动**：接入 NVIDIA 驱动的 NVAPI，按当前预设的饱和度直接抬升驱动的数字振动（DVC），**零注入**拿到跨通道饱和度，独占全屏的滤镜不再只能靠 S 曲线近似。量程按本机实际值换算（0–63 与 0–100 都支持），只升不降，退出游戏后还原成原值。
+- **「我的游戏」扫描结果缓存**：扫描一次后记下时间，下次启动直接读本地列表，不再每次开机全盘重扫；需要时仍可手动重扫。
+- **原神**：内置库补充 `Genshin Impact Game` / `yuanshen` 等目录名，并扫描 `<盘符>\miHoYo Launcher\games`，通过米哈游启动器安装的原神也能进「我的游戏」并显示中文名。
+- 滤镜预设新增 **冷色 / 暖色** 两组通用预设（追加在列表末尾，已保存的预设不会错位）。
+
+**改进**
+
+- 独占全屏的滤镜拆成两层协作：gamma LUT 承担亮度 / 对比度 / 色温 / 暗部（逐通道增益），跨通道的饱和度交给数字振动；只有 LUT 生效时也不会丢亮度类效果，两者同时生效时正好还原整张矩阵，不会重复调色。
+- 滤镜不再「过一会儿自己没了」：切分辨率、重新进入独占全屏、驱动重置都会把 LUT 顶回默认值，现在每 2 秒按上次的矩阵补写一次；NVIDIA App 重放显示设置时也会补写数字振动。
+- 叠加层页在 RTSS 运行时自动切到 RTSS 卡片（只留 OSD 样式），并新增状态行说明读数由谁绘制。
+- 设置页新增「RTSS 叠加层」卡片：安装进度、启动 / 停止、卸载（卸载后提示重启才能彻底清掉显示钩子）。
+- 隐私说明改为准确表述：默认不注入、不装驱动、不读游戏内存；RTSS 叠加是可选第三方组件，非注入路径始终可用。
+
+**修复**
+
+- **误判独占全屏导致饱和度整块丢失**：原来只要系统报告「有全屏程序」就把放大镜卸掉，全屏优化、独立翻转误报都会踩中，表现出来就是「开了滤镜没反应」。现在按矩阵拆分处理，误报时画面依旧正确。
+- 滤镜在切分辨率 / 切全屏后一段时间失效。
 
 ### v1.4.4.2
 
@@ -457,21 +484,45 @@ frameforge/
 
 ## English
 
-**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay, desktop-wide screen filters, and an automatic post-game performance report. It ships as a single 498 KB executable with about 20 MB of resident memory, and it never injects into games or installs a driver.
+**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay, desktop-wide screen filters, and an automatic post-game performance report. It ships as a single 579 KB executable with about 20 MB of resident memory. Nothing is injected into games and no driver is installed by default; the optional RTSS overlay is the only path that injects text, and you can leave it off.
 
 ### Highlights
 
 - **One-click boost** — process priority, high-performance power plan, 1 ms timer resolution, Game DVR / fullscreen optimization off, working-set trim, plus opt-in advanced steps: suspend background hogs (with confirmation), reserve physical cores for the game, move NIC/GPU interrupts off those cores, and remember options per game. Every change is reversible.
 - **Live monitoring** — a dashboard built into the Boost page: CPU/GPU rings, a five-axis radar (CPU / GPU / RAM / FPS / temperature), a RAM arc, and a GPU temperature / clock / power / VRAM strip.
 - **Real game names** — a three-layer lookup (user `games.ini` → built-in library of 200+ titles → install folder / file version info) turns `client-win64-shipping.exe` into the actual game title instead of showing a raw process name.
-- **Screen filters** — fifteen general presets plus eight tuned per-game looks (Delta Force, VALORANT, Genshin, Apex, CS2, PUBG, Naraka, League of Legends), with intensity, brightness, contrast, shadow lift, saturation, digital vibrance and warmth sliders, applied through the Windows Magnification color matrix (game-only or always). Hold the A/B button to compare against the original image. The brightness slider drives the monitor's hardware backlight (DDC/CI, or WMI on laptop panels), so it stays out of the color matrix and out of screenshots. You can also import an ICC profile (`.icc` / `.icm`) from its own **ICC** tab in the presets card — click **+** to import, name it while importing, click the entry to apply (click again to clear), and rename it any time via right-click or *Rename*. Both matrix profiles (`rXYZ`/`gXYZ`/`bXYZ` + TRC) and LUT profiles (`mAB `/`mBA ` — curves, 3×3 matrix and CLUT) are parsed; screen correction uses the B2A direction and is fitted to a 3×3 + offset on a 9×9×9 sRGB grid. ICC and preset filters are mutually exclusive: while an ICC profile is active it is the only filter applied, and presets plus the six manual sliders are left out of the math, so two color transforms never stack. Click any preset to switch back.
-- **In-game overlay** — top-most layered window with three layouts, nine selectable stats (FPS, 1% low, CPU, GPU, GPU temp, RAM, RAM %, clock, session), screen-corner presets or free dragging, scaling and position lock. It follows the monitor the game is on and re-asserts top-most every frame, so games that grab the top spot cannot bury it; if the game runs in exclusive fullscreen, the app tells you to switch to borderless instead of silently showing nothing.
+- **My Games** — scans Steam, Epic and GOG plus the uninstall registry and common install folders (including WeGame and the miHoYo launcher), lists what is installed, and lets you launch a title, pin it as the boost target, remove it, or add an `.exe` by hand. The scan result is cached, so the disk is not swept on every start.
+- **Screen filters** — fifteen general presets plus eight tuned per-game looks (Delta Force, VALORANT, Genshin, Apex, CS2, PUBG, Naraka, League of Legends), with intensity, brightness, contrast, shadow lift, saturation, digital vibrance and warmth sliders, applied through the Windows Magnification color matrix (game-only or always). In exclusive fullscreen the matrix is split in two: the display gamma LUT keeps brightness, contrast, warmth and shadow lift, while NVIDIA's own digital vibrance (NVAPI DVC, zero injection) supplies the cross-channel saturation a gamma ramp cannot express. Hold the A/B button to compare against the original image. The brightness slider drives the monitor's hardware backlight (DDC/CI, or WMI on laptop panels), so it stays out of the color matrix and out of screenshots. You can also import an ICC profile (`.icc` / `.icm`) from its own **ICC** tab in the presets card — click **+** to import, name it while importing, click the entry to apply (click again to clear), and rename it any time via right-click or *Rename*. Both matrix profiles (`rXYZ`/`gXYZ`/`bXYZ` + TRC) and LUT profiles (`mAB `/`mBA ` — curves, 3×3 matrix and CLUT) are parsed; screen correction uses the B2A direction and is fitted to a 3×3 + offset on a 9×9×9 sRGB grid. ICC and preset filters are mutually exclusive: while an ICC profile is active it is the only filter applied, and presets plus the six manual sliders are left out of the math, so two color transforms never stack. Click any preset to switch back.
+- **In-game overlay** — top-most layered window with three layouts, nine selectable stats (FPS, 1% low, CPU, GPU, GPU temp, RAM, RAM %, clock, session), screen-corner presets or free dragging, scaling and position lock. It follows the monitor the game is on and re-asserts top-most every frame, so games that grab the top spot cannot bury it; if the game runs in exclusive fullscreen, the app tells you to switch to borderless — or hands the overlay to RTSS, whose OSD is injected into the present chain and therefore keeps working in exclusive fullscreen too. Installing RTSS, starting / stopping it, and its size, color and layout are all handled inside FrameForge; when RTSS is not running, the built-in layered window draws exactly as before.
 - **Post-game report & records** — a report card pops up when a game exits with average/max/min FPS, 1% low, CPU/GPU/temperature/memory/VRAM/power, plus energy and CO₂ estimates. The Records page keeps the last 300 sessions with per-session detail (including an FPS chart), delete, clear, and CSV export.
 - **System check-up** — the Optimize page lists the settings that quietly cost frames (admin rights, VBS, hardware-accelerated GPU scheduling, MPO overlay, Game DVR, fullscreen optimization, windowed-game optimization, power plan, MSI interrupt affinity, GPU driver) with the recommended state for gaming, inline toggles, two one-click presets, and a “PC check-up” view that shows the actual value and change journal for every row.
 - **Compatibility first** — anti-cheat components (ACE, EAC, BattlEye, Vanguard…) are never suspended or memory-trimmed, and if a game rejects the priority change the app says so instead of claiming success. Anything on the protected list (OBS, Discord, recording tools…) is left alone too.
 - Bilingual UI (Chinese / English), dark and light themes, tray mode, autostart, optional update check.
 
 ### Changelog
+
+#### v1.4.5
+
+**New**
+
+- **Optional RTSS overlay**: on machines with RTSS (RivaTuner Statistics Server) installed, the overlay can be drawn entirely by RTSS's OSD — it writes into the game's present chain, so **it keeps working in exclusive fullscreen**. Both the Overlay page and the Settings page show the state (running / installed but stopped / not installed): install it from inside the app, start it with one click, and set size, color (white, pink, green, yellow, cyan) and layout (stacked or single line) in the UI — the values are written into the OSD text itself, so RTSS never needs to be configured by hand. When RTSS is not running, the built-in layered window draws as before, with no injection at all.
+- **Digital vibrance in exclusive fullscreen**: the app now talks to NVIDIA's NVAPI and raises the driver's digital vibrance (DVC) level according to the active preset — **zero injection** for the cross-channel saturation that a gamma ramp cannot express. The range is read from the machine (0–63 and 0–100 are both handled), values only go up, and the user's original level is restored when the filter is turned off.
+- **Cached My Games scan**: the scan time is recorded, so the next start reads the local list instead of sweeping the disk again; a manual rescan is still one click away.
+- **Genshin Impact**: added `Genshin Impact Game` / `yuanshen` folder names and a scan of `<drive>\miHoYo Launcher\games`, so installs made through the miHoYo launcher are listed with their Chinese title.
+- Two new general filter presets, **Cool** and **Warm**, appended to the end of the list so saved preset indices do not shift.
+
+**Improved**
+
+- The exclusive-fullscreen filter is now split in two cooperating layers: the gamma LUT handles brightness / contrast / warmth / shadow lift (per-channel gains) while digital vibrance handles saturation. A LUT-only path no longer loses the brightness effects, and when both are active the original matrix is reproduced without double-grading.
+- The filter no longer "fades away after a while": resolution changes, re-entering exclusive fullscreen and driver resets push the LUT back to default, so the matrix is rewritten every 2 seconds; digital vibrance is re-applied when NVIDIA App replays display settings.
+- The Overlay page switches to the RTSS card automatically while RTSS is running (leaving only the OSD style) and adds a status line saying which renderer draws the numbers.
+- The Settings page gained an **RTSS overlay** card: install progress, start / stop, and uninstall (with a reboot hint so the display hook is fully removed).
+- The privacy note now says it accurately: no injection, no driver install and no game-memory reads by default; the RTSS overlay is an optional third-party component and the non-injection path always works.
+
+**Fixed**
+
+- **Saturation vanishing because of a fullscreen misdetection**: the Magnifier used to be dropped whenever Windows reported a fullscreen app, which fullscreen optimizations and independent-flip false positives trigger — the symptom was "I turned the filter on and nothing happened". The matrix split keeps the picture correct even when the report is wrong.
+- The filter stopping after a resolution change or a fullscreen switch.
 
 #### v1.4.4.2
 

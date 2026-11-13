@@ -394,7 +394,9 @@ namespace FrameForge.Sys
         {
             "wuthering waves", "wuthering waves game", "wutheringwaves", "wuwa", "鸣潮",
             "delta force", "deltaforce", "三角洲行动", "kuro games", "库洛游戏",
-            "infinity nikki", "无限暖暖"
+            "infinity nikki", "无限暖暖",
+            // 原神:老版直接装在 Genshin Impact 目录,新版在米哈游启动器的 games 下。
+            "genshin impact", "genshin impact game", "genshinimpact", "yuanshen", "原神"
         };
 
         /// <summary>
@@ -422,7 +424,12 @@ namespace FrameForge.Sys
                         // 腾讯系独立客户端常见的两层安装路径。
                         root + "Tencent", root + "Program Files\\Tencent",
                         root + "Program Files (x86)\\Tencent", root + "Program Files\\Level Infinite",
-                        root + "SteamLibrary\\steamapps\\common"
+                        root + "SteamLibrary\\steamapps\\common",
+                        // 米哈游启动器把游戏放在 <启动器>\games\<游戏名> 下,
+                        // 原神的路径是 D:\miHoYo Launcher\games\Genshin Impact Game。
+                        root + "miHoYo Launcher\\games",
+                        root + "Program Files\\miHoYo Launcher\\games",
+                        root + "Program Files (x86)\\miHoYo Launcher\\games"
                     };
                     for (int b = 0; b < bases.Length; b++)
                     {

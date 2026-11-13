@@ -28,6 +28,14 @@ namespace FrameForge
         public int OverlayY = -1;
         public double OverlayScale = 1.0;
         public bool OverlayLocked = true;
+        // RTSS 在运行时,叠加层整个交给它的 OSD 画(独占全屏也能显示);
+        // 没运行还是由 FrameForge 自己的分层窗口画。关掉这一项就始终自己画。
+        public bool RtssOsd = true;
+        // RTSS 在跑的时候叠加层整个交给它画,下面是它的 OSD 样式。
+        // 这些值会作为内嵌标签写进 OSD 文字,用户不用再打开 RTSS 单独设置。
+        public int RtssScale = 100;           // 字号百分比 50..200
+        public string RtssColor = "white";    // white | pink | green | yellow | cyan
+        public bool RtssStacked = true;       // true = 一项一行;false = 单行横排
         public bool ShowFps = true;
         public bool ShowCpu = false;
         public bool ShowGpu = true;
@@ -61,6 +69,8 @@ namespace FrameForge
         public string GameBlock = "";
         // 「我的游戏」:自动扫描结果 + 手动添加的 exe。每行一个,存成 myGame=名称|exe路径|来源。
         public readonly List<InstalledGame> MyGames = new List<InstalledGame>();
+        // 上次完整扫描的时间。有记录就不再每次开程序都重扫,列表直接用本地存的结果。
+        public DateTime GamesScannedAt = DateTime.MinValue;
         // 优先级档位:0 低 / 1 低于正常 / 2 正常 / 3 高于正常 / 4 高。
         public int BoostPriorityLevel = 4;
         // 实验项:只调整游戏线程的理想处理器,不改亲和性掩码。默认关闭。
@@ -167,6 +177,13 @@ namespace FrameForge
                 case "overlayy": OverlayY = Int(v, -1); break;
                 case "overlayscale": OverlayScale = Dbl(v, 1.0); break;
                 case "overlaylocked": OverlayLocked = Bool(v, true); break;
+                case "rtssosd": RtssOsd = Bool(v, true); break;
+                case "rtssscale": RtssScale = Math.Max(50, Math.Min(200, Int(v, 100))); break;
+                case "rtsscolor":
+                    // 只认设置页给出的几种颜色,手改 ini 写了别的就回到白色。
+                    RtssColor = (v == "pink" || v == "green" || v == "yellow" || v == "cyan") ? v : "white";
+                    break;
+                case "rtssstacked": RtssStacked = Bool(v, true); break;
                 case "showfps": ShowFps = Bool(v, true); break;
                 case "showcpu": ShowCpu = Bool(v, false); break;
                 case "showgpu": ShowGpu = Bool(v, true); break;
@@ -197,6 +214,7 @@ namespace FrameForge
                 case "boostexclude": BoostExclude = v ?? ""; break;
                 case "gameblock": GameBlock = v ?? ""; break;
                 case "mygame": AddMyGame(v); break;
+                case "gamesscannedat": GamesScannedAt = Time(v); break;
                 case "boostprioritylevel": BoostPriorityLevel = Math.Max(0, Math.Min(4, Int(v, 4))); break;
                 case "boostidealcpu": BoostIdealCpu = Bool(v, false); break;
                 case "filtermode": FilterMode = Int(v, 0); break;
@@ -241,6 +259,10 @@ namespace FrameForge
                 sb.AppendLine("overlayY=" + OverlayY.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("overlayScale=" + OverlayScale.ToString("0.##", CultureInfo.InvariantCulture));
                 sb.AppendLine("overlayLocked=" + B(OverlayLocked));
+                sb.AppendLine("rtssOsd=" + B(RtssOsd));
+                sb.AppendLine("rtssScale=" + RtssScale.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("rtssColor=" + RtssColor);
+                sb.AppendLine("rtssStacked=" + B(RtssStacked));
                 sb.AppendLine("showFps=" + B(ShowFps));
                 sb.AppendLine("showCpu=" + B(ShowCpu));
                 sb.AppendLine("showGpu=" + B(ShowGpu));
@@ -271,6 +293,8 @@ namespace FrameForge
                     if (g == null || string.IsNullOrEmpty(g.ExePath)) continue;
                     sb.AppendLine("myGame=" + CleanGameName(g.Name) + "|" + g.ExePath + "|" + g.Source);
                 }
+                if (GamesScannedAt != DateTime.MinValue)
+                    sb.AppendLine("gamesScannedAt=" + GamesScannedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
                 sb.AppendLine("boostPriorityLevel=" + BoostPriorityLevel.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("boostIdealCpu=" + B(BoostIdealCpu));
                 sb.AppendLine("affinityCores=" + AffinityCores.ToString(CultureInfo.InvariantCulture));
@@ -535,6 +559,14 @@ namespace FrameForge
         {
             int r;
             return int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out r) ? r : fallback;
+        }
+
+        private static DateTime Time(string v)
+        {
+            DateTime t;
+            if (DateTime.TryParseExact(v, "yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out t)) return t;
+            return DateTime.MinValue;
         }
 
         private static double Dbl(string v, double fallback)

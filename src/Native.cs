@@ -350,6 +350,16 @@ namespace FrameForge
         public static extern bool GetProcessDefaultCpuSets(IntPtr hProcess, uint[] cpuSetIds, uint idCount,
             out uint requiredIdCount);
 
+        // NVAPI 只导出一个 nvapi_QueryInterface,别的函数要拿编号去换,所以得手动加载。
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern IntPtr LoadLibrary(string fileName);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern IntPtr GetProcAddress(IntPtr module, string procName);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool FreeLibrary(IntPtr module);
+
         [DllImport("ntdll.dll")]
         public static extern int NtSuspendProcess(IntPtr hProcess);
 

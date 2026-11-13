@@ -51,6 +51,12 @@ namespace FrameForge.Sys
         private static readonly List<IntPtr> gammaDcs = new List<IntPtr>();
         private static readonly List<ushort[]> gammaSaved = new List<ushort[]>();
         private static bool gammaDirty;
+        // 最近一次写进 LUT 的矩阵:游戏切分辨率、驱动自我修复都会把 LUT 冲掉,
+        // 需要定期按这份矩阵补写回去(见 RefreshGamma)。
+        private static float[] gammaM;
+        // LUT 单独承担全部调色时(放大镜不可用),额外用 S 曲线近似饱和度。
+        // 0 = 不加,1 = 全量。独占全屏下放大镜多半也看不见,取半量兜底。
+        private static double gammaApprox;
         // 每秒都会重试一次 gamma(见 MainForm.OnTick 的补装逻辑),
         // 驱动不支持时不能每次都写日志,否则日志会被刷爆。
         private static DateTime gammaLogAt = DateTime.MinValue;
@@ -107,6 +113,7 @@ namespace FrameForge.Sys
         {
             Suspend();
             RestoreGamma();
+            NvApi.Release();
             ReleaseGammaDcs();
             probed = false;
             available = false;
@@ -136,6 +143,7 @@ namespace FrameForge.Sys
                 // 不需要滤镜时连放大镜一起卸掉,避免平时就占着系统的合成链。
                 Suspend();
                 RestoreGamma();
+                NvApi.Restore();
                 return;
             }
 
@@ -144,38 +152,65 @@ namespace FrameForge.Sys
             bool exclusive = isGame && gamePid > 0 && Monitor.IsExclusiveFullscreen(gamePid);
             if (exclusive)
             {
-                Suspend();
-                ApplyGamma(m);
+                // 原来这里直接 Suspend(),理由是"独占全屏放大镜看不见"。
+                // 但 QUNS 的判定并不等于 DWM 真的没合成(全屏优化、独立翻转误报都会踩中),
+                // 一旦误报,饱和度就整块丢了,用户看到的就是"开了没用"。
+                // 现在改成矩阵拆分:LUT 只负责每一行的行和(逐通道增益+平移),
+                // 放大镜只负责行归一化之后的跨通道部分,两个都生效时正好还原整张矩阵,
+                // 只有 LUT 生效时至少亮度/对比度/色温还在,也不会出现双重调色。
+                // 另外,饱和度这种跨通道效果 gamma LUT 根本表达不了,
+                // 所以只要 NVIDIA 驱动允许,就交给数字振动,独占全屏下也是真生效的。
+                Init(force);
+                double vib = VibranceFrac(m);
+                bool nv = vib > 0.001 && NvApi.Boost(vib);
+                if (nv)
+                {
+                    // 饱和度已由驱动负责,放大镜只推恒等矩阵,
+                    // 避免 DWM 仍在合成时同一份饱和度被算两次。
+                    if (active) Apply(Identity());
+                    ApplyGamma(m, 0.0);
+                }
+                else
+                {
+                    if (active) Apply(ChromaOf(m));
+                    ApplyGamma(m, active ? 0.5 : 1.0);
+                }
                 return;
             }
 
-            // 回到普通窗口:先撤销 gamma,否则放大镜和 LUT 会叠在一起,画面被调两次。
+            // 回到普通窗口:先撤销 gamma 和驱动数字振动,否则放大镜和它们会叠在一起,画面被调两次。
             RestoreGamma();
+            NvApi.Restore();
             Init(force);
             if (!active)
             {
                 // 放大镜被系统关掉或被别的放大类工具占着时,颜色矩阵根本推不出去,
                 // 表现就是「界面上已经开了,画面一点没变」。退回显卡 LUT,
-                // 至少亮度/对比度/色温仍然起作用(饱和度仍只能靠放大镜)。
-                ApplyGamma(m);
+                // 至少亮度/对比度/色温仍然起作用,饱和度用数字振动或 S 曲线补。
+                double vib = VibranceFrac(m);
+                bool nv = vib > 0.001 && NvApi.Boost(vib);
+                ApplyGamma(m, nv ? 0.0 : 1.0);
                 return;
             }
+            // 放大镜能给出完整矩阵(含饱和度),驱动那边不能再叠一层。
             Apply(m);
         }
 
         /// <summary>滤镜当前是否真的在起作用(放大镜生效中或已改写 gamma LUT)。</summary>
         public static bool On
         {
-            get { return active || gammaDirty; }
+            get { return active || gammaDirty || NvApi.Applied; }
         }
 
         /// <summary>独占全屏下用显示器 gamma LUT 近似整套调色。</summary>
-        private static void ApplyGamma(float[] m)
+        private static void ApplyGamma(float[] m, double approximate)
         {
             EnsureGammaDcs();
             if (gammaDcs.Count == 0) return;
 
-            ushort[] ramp = BuildRamp(m);
+            gammaM = (float[])m.Clone();
+            gammaApprox = approximate;
+            ushort[] ramp = BuildRamp(m, approximate);
             bool ok = false;
             for (int i = 0; i < gammaDcs.Count; i++)
             {
@@ -184,8 +219,9 @@ namespace FrameForge.Sys
             }
             if (ok)
             {
+                // 只在状态从"没写"变"写了"时记一笔,定时补写不该刷日志。
+                if (!gammaDirty) Log.Write("filter gamma lut" + (approximate > 0.01 ? " approx" : ""));
                 gammaDirty = true;
-                Log.Write("filter gamma lut");
             }
             else if ((DateTime.UtcNow - gammaLogAt).TotalSeconds > 30)
             {
@@ -194,11 +230,110 @@ namespace FrameForge.Sys
             }
         }
 
+        /// <summary>
+        /// 按上次的矩阵把 LUT 重新写一遍。游戏切分辨率、切换独占全屏、驱动重置
+        /// 都会把 LUT 顶回默认值,只写一次的话用户会看到滤镜"过一会儿自己没了"。
+        /// </summary>
+        public static void RefreshGamma()
+        {
+            // NVIDIA App / 驱动会在游戏启动、Alt+Tab 时按配置文件重放显示设置,
+            // 数字振动也要跟着补写,否则用户会看到饱和度"过一会儿自己没了"。
+            NvApi.Reapply();
+            if (!gammaDirty || gammaM == null) return;
+            if (gammaDcs.Count == 0) return;
+            ushort[] ramp = BuildRamp(gammaM, gammaApprox);
+            for (int i = 0; i < gammaDcs.Count; i++)
+            {
+                try { Native.SetDeviceGammaRamp(gammaDcs[i], ramp); }
+                catch { }
+            }
+        }
+
+        /// <summary>gamma LUT 是否已被改写(独占全屏或放大镜不可用时的兜底路径)。</summary>
+        public static bool GammaActive { get { return gammaDirty; } }
+
+        /// <summary>放大镜是否正在生效(窗口/无边框全屏的完整矩阵路径)。</summary>
+        public static bool MagActive { get { return active; } }
+
+        /// <summary>数字振动是否正被接管(独占全屏下的饱和度来源)。</summary>
+        public static bool NvActive { get { return NvApi.Applied; } }
+
+        /// <summary>
+        /// 从矩阵对角线估算饱和度,换算成驱动数字振动需要抬升的量程比例(0-1)。
+        /// 饱和矩阵行和为 1、对角线之和为 1+2×sat,所以 sat=(和-1)/2。
+        /// 返回 0 表示不需要驱动介入(没有增饱和,或者矩阵形状不是饱和度矩阵)。
+        /// 不同驱动的 DVC 量程不一样(常见 0-100,也有 0-63),所以只给比例不给绝对值。
+        /// </summary>
+        private static double VibranceFrac(float[] m)
+        {
+            if (m == null || m.Length < 25) return 0;
+            double sum = 0;
+            for (int c = 0; c < 3; c++)
+            {
+                int row = c * 5;
+                double gain = m[row] + m[row + 1] + m[row + 2];
+                if (gain < 0.05) return 0;
+                sum += m[row + c] / gain;
+            }
+            double sat = (sum - 1.0) / 2.0;
+            if (sat <= 1.01) return 0;
+            if (sat > 2.0) sat = 2.0;
+            // 1.12 倍饱和度大约抬到量程的 18%,再高就过艳了。
+            double v = (sat - 1.0) * 1.5;
+            if (v > 1.0) v = 1.0;
+            return v;
+        }
+
+        /// <summary>
+        /// 把矩阵拆出一半给 LUT:每一行除以行和,只留下跨通道的混合关系(饱和度/分割色调)。
+        /// 行和交给 LUT 后,两者叠加得到的乘积正好是原矩阵;
+        /// 独占全屏下放大镜失效时,LUT 那一半仍然独立生效。
+        /// </summary>
+        private static float[] ChromaOf(float[] m)
+        {
+            float[] r = Identity();
+            if (m == null || m.Length < 25) return r;
+            for (int c = 0; c < 3; c++)
+            {
+                int row = c * 5;
+                double gain = m[row] + m[row + 1] + m[row + 2];
+                if (gain < 0.02) gain = 1;
+                for (int j = 0; j < 3; j++) r[row + j] = (float)(m[row + j] / gain);
+                r[row + 4] = 0;
+            }
+            return r;
+        }
+
+        /// <summary>
+        /// 从颜色矩阵对角线估算饱和度,换算成 S 曲线的强度。
+        /// 饱和矩阵的行和为 1、对角线之和为 1+2×sat,所以 sat=(和-1)/2。
+        /// 只有 sat&gt;1 才会加,S 曲线本身不会真的分离色彩通道,
+        /// 但能让画面看起来更"透",比完全没变化的强。
+        /// </summary>
+        private static double SatCurve(float[] m)
+        {
+            if (m == null || m.Length < 25) return 0;
+            double sum = 0;
+            for (int c = 0; c < 3; c++)
+            {
+                int row = c * 5;
+                double gain = m[row] + m[row + 1] + m[row + 2];
+                if (gain < 0.05) return 0;
+                sum += m[row + c] / gain;
+            }
+            double sat = (sum - 1.0) / 2.0;
+            if (sat <= 1.0) return 0;
+            if (sat > 2.0) sat = 2.0;
+            return Math.Min(0.40, (sat - 1.0) * 1.1);
+        }
+
         /// <summary>把显示器 LUT 还原成启动时保存的原样。</summary>
         private static void RestoreGamma()
         {
             if (!gammaDirty) return;
             gammaDirty = false;
+            gammaM = null;
+            gammaApprox = 0;
             for (int i = 0; i < gammaDcs.Count && i < gammaSaved.Count; i++)
             {
                 try { if (gammaSaved[i] != null) Native.SetDeviceGammaRamp(gammaDcs[i], gammaSaved[i]); }
@@ -212,10 +347,13 @@ namespace FrameForge.Sys
         /// 饱和度的行和恒为 1(灰度不变),所以 LUT 下它不起作用,
         /// 真正生效的是亮度、对比度、色温和暗部提升。
         /// </summary>
-        private static ushort[] BuildRamp(float[] m)
+        private static ushort[] BuildRamp(float[] m, double approximate)
         {
             var ramp = new ushort[3 * 256];
             if (m == null || m.Length < 25) m = Identity();
+            // LUT 是逐通道的,饱和度这种跨通道混合只能靠 S 曲线近似:
+            // 一个轻微的两端外扩、中间收拢,画面会更"透",至少不是完全没反应。
+            double k = approximate > 0.01 ? SatCurve(m) * approximate : 0;
             for (int c = 0; c < 3; c++)
             {
                 int row = c * 5;
@@ -224,6 +362,11 @@ namespace FrameForge.Sys
                 for (int i = 0; i < 256; i++)
                 {
                     double v = Clamp01(gain * (i / 255.0) + offset);
+                    if (k > 0.001)
+                    {
+                        double t = v - 0.5;
+                        v = Clamp01(v + k * t * (1.0 - Math.Abs(t) * 2.0) * 3.0);
+                    }
                     ramp[c * 256 + i] = (ushort)Math.Round(v * 65535.0);
                 }
             }
