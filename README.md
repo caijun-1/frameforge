@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
   <img src="https://img.shields.io/badge/size-579%20KB-brightgreen" alt="size 579 KB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.4.5-orange" alt="1.4.5">
+  <img src="https://img.shields.io/badge/version-1.4.5.1-orange" alt="1.4.5.1">
 </p>
 
 <p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
@@ -298,6 +298,12 @@ frameforge/
 - 仅支持 Windows；Linux / macOS 不在计划内。
 
 ## 更新日志
+
+### v1.4.5.1
+
+**新增**
+
+- **实时加速**：设置页新增「实时加速」开关，开启后常驻后台，把**当前前台程序**提到高优先级，并把它的同名进程（浏览器 / QQ / 微信这类多进程应用的后台进程）提到高于正常——切到浏览器就加速浏览器，切到微信就加速微信，不用先选游戏再点加速。常用浏览器与聊天软件即使不在前台，同名进程也提到高于正常，后台消息拉取更跟手；同时开启系统级基础加速（高性能电源计划 + 1ms 系统计时器精度），可用内存低于 20% 时清理系统文件缓存与待命内存（不动各进程工作集）。关闭开关或退出程序时逐项还原优先级、计时器精度与电源计划；加速页模式卡顶部新增常驻状态行，显示是否开启、当前加速的程序和进程数。
 
 ### v1.4.5
 

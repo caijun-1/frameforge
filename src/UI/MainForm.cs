@@ -18,6 +18,8 @@ namespace FrameForge.UI
         public FpsEngine Fps;
         public Overlay Ov;
         public BoostEngine Boost;
+        /// <summary>实时加速:常驻监视前台程序,关闭窗口时整体还原。</summary>
+        public GlobalBoost RealBoost;
         public ProfileStore Profiles;
         public SessionStore Sessions;
         public SessionTracker Tracker;
@@ -126,6 +128,7 @@ namespace FrameForge.UI
             Fps = new FpsEngine();
             Ov = new Overlay(St);
             Boost = new BoostEngine();
+            RealBoost = new GlobalBoost();
             Profiles = new ProfileStore();
             Profiles.Load();
 
@@ -394,6 +397,9 @@ namespace FrameForge.UI
             SyncOverlay();
             // 放大镜按需初始化(ApplyFilter 内部决定),不再开机就挂着。
             ApplyFilter();
+            // 设置里开着实时加速就随程序启动,最小化到托盘也保持运行。
+            try { if (St.RealBoost && RealBoost != null) RealBoost.Start(); }
+            catch (Exception ex) { Log.Write("global boost start: " + ex.Message); }
             if (startMinimized) { HideToTray(false); return; }
             if (!St.AskedElevation && !MemEngine.IsAdmin) AskElevationOnce();
         }
@@ -762,6 +768,8 @@ namespace FrameForge.UI
             try { if (Fps != null) { Fps.Stop(); Fps.Dispose(); } } catch { }
             try { if (Mon != null) Mon.Dispose(); } catch { }
             try { if (Ov != null) { Ov.Stop(); Ov.Dispose(); } } catch { }
+            // 先停实时加速再还原一键加速:两边都会动电源计划,先还它会盖掉最终结果。
+            try { if (RealBoost != null) { RealBoost.Stop(); RealBoost.Dispose(); } } catch { }
             try { if (Boost != null) { Boost.Restore(); Boost.Dispose(); } } catch { }
             try { Sys.Filter.Shutdown(); } catch { }
             try { Sys.Display.Shutdown(); } catch { }

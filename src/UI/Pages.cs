@@ -51,6 +51,8 @@ namespace FrameForge.UI
         // “游戏启动自动优化”的快捷开关,直接摆在一键加速旁边,不用再进设置页。
         private readonly Toggle tgAuto;
         private readonly TextLabel autoLbl;
+        // 实时加速的常驻状态行:跟着页面刷新走,不另起界面定时器。
+        private readonly TextLabel realLbl;
 
         private readonly RingGauge cpuRing, gpuRing;
         private readonly RadarChart radar;
@@ -64,6 +66,7 @@ namespace FrameForge.UI
 
         private string lastGame = "";
         private string lastSub = "";
+        private string lastReal = "";
         private bool lastBoosted;
         private int modeIndex;
 
@@ -171,6 +174,13 @@ namespace FrameForge.UI
             autoLbl.Ellipsis = true;
             autoLbl.Text = I18n.T("boost.auto");
 
+            realLbl = new TextLabel();
+            realLbl.Size = 8.5f;
+            realLbl.ForeColor = Theme.Faint;
+            realLbl.Ellipsis = true;
+            realLbl.Text = I18n.T("boost.real.off");
+            lastReal = realLbl.Text;
+
             cpuRing = new RingGauge();
             cpuRing.Caption = I18n.T("mon.cpu");
             cpuRing.Ticks = true;
@@ -235,6 +245,7 @@ namespace FrameForge.UI
             // 先加编辑按钮:同一容器里先加入的控件 z 序更高,后加的模式条不会把它盖住。
             modeCard.Controls.Add(editBtn);
             modeCard.Controls.Add(modes);
+            modeCard.Controls.Add(realLbl);
 
             Controls.Add(hero);
             Controls.Add(cpuCard);
@@ -488,6 +499,22 @@ namespace FrameForge.UI
 
             SyncPerf();
             SyncCoreMap();
+            SyncRealBoost();
+        }
+
+        /// <summary>实时加速状态:开关在设置页,这里只读引擎状态。</summary>
+        private void SyncRealBoost()
+        {
+            GlobalBoost real = Host.RealBoost;
+            bool on = real != null && real.Active;
+            string name = on && real.CurrentName.Length > 0 ? real.CurrentName : "—";
+            string text = on
+                ? I18n.T("boost.real.on", name, on ? real.CurrentCount : 0)
+                : I18n.T("boost.real.off");
+            if (text == lastReal) return;
+            lastReal = text;
+            realLbl.Text = text;
+            realLbl.ForeColor = on ? Theme.Accent : Theme.Faint;
         }
 
         /// <summary>加速后的帧率对比:拿到结果才显示,平时不占位。</summary>
@@ -571,7 +598,8 @@ namespace FrameForge.UI
             int gap = Ui.Px(12);
             int heroH = Math.Max(Ui.Px(160), Math.Min(Ui.Px(178), Height / 5));
             int stripH = Ui.Px(46);
-            int modeH = Ui.Px(56);
+            // 模式卡上方多留一行实时加速状态,模式条整体下移。
+            int modeH = Ui.Px(78);
             int bodyW = Width - pad * 2;
             int y = pad;
 
@@ -650,8 +678,10 @@ namespace FrameForge.UI
             int ebH = Ui.Px(22);
             int ebRight = Ui.Px(12);
             int modesW = bodyW - mp * 2;
-            modes.SetBounds(mp, (modeH - Ui.Px(44)) / 2, modesW, Ui.Px(44));
-            editBtn.SetBounds(mp + modesW - ebRight - ebW, (modeH - ebH) / 2, ebW, ebH);
+            realLbl.SetBounds(mp, Ui.Px(8), modesW, Ui.Px(18));
+            int modesY = modeH - Ui.Px(44) - Ui.Px(6);
+            modes.SetBounds(mp, modesY, modesW, Ui.Px(44));
+            editBtn.SetBounds(mp + modesW - ebRight - ebW, modesY + (Ui.Px(44) - ebH) / 2, ebW, ebH);
             // 预留位在布局里一次算定,不随模式显隐变化:切到自定义时文字不会左右跳。
             modes.LastItemInset = ebRight + ebW + Ui.Px(8);
         }
@@ -2029,7 +2059,7 @@ namespace FrameForge.UI
     {
         private readonly Card genCard, memCard, fpsCard, rtssCard, adminCard, aboutCard, hotCard;
         private readonly Segmented segLang, segTheme;
-        private readonly Toggle tgAuto, tgTray, tgMemAuto, tgBoostProfile, tgUpdates;
+        private readonly Toggle tgAuto, tgTray, tgMemAuto, tgBoostProfile, tgUpdates, tgRealBoost;
         private readonly Segmented segMemMode;
         private readonly Slider sldThreshold;
         private readonly TextLabel memInfo, fpsStatus, fpsNote, adminStatus, adminNote, aboutName, aboutNotice, aboutEnv;
@@ -2039,6 +2069,7 @@ namespace FrameForge.UI
         private readonly FlatButton btnFps, btnRtss, btnRtssUninstall, btnAdmin, btnLog, btnWhitelist, btnRestore;
         private readonly TextLabel langTitle, themeTitle, autoTitle, autoSub, trayTitle, traySub;
         private readonly TextLabel boostProfileTitle, boostProfileSub;
+        private readonly TextLabel realBoostTitle, realBoostSub;
         private readonly TextLabel updateTitle, updateSub;
         private readonly TextLabel memAutoTitle;
         private readonly TextLabel rtssTitle, rtssSub;
@@ -2157,6 +2188,24 @@ namespace FrameForge.UI
             genCard.Controls.Add(updateTitle);
             genCard.Controls.Add(updateSub);
             genCard.Controls.Add(tgUpdates);
+
+            // 实时加速:常驻提升前台程序与同名进程,开关立即生效。
+            realBoostTitle = RowTitle(I18n.T("set.realboost"));
+            realBoostSub = RowSub(I18n.T("set.realboost.sub"));
+            tgRealBoost = new Toggle();
+            tgRealBoost.SetSilent(host.St.RealBoost);
+            tgRealBoost.CheckedChanged += delegate
+            {
+                Host.St.RealBoost = tgRealBoost.Checked;
+                Host.SaveSettingsSoon();
+                if (Host.RealBoost == null) return;
+                if (tgRealBoost.Checked) Host.RealBoost.Start();
+                else Host.RealBoost.Stop();
+            };
+
+            genCard.Controls.Add(realBoostTitle);
+            genCard.Controls.Add(realBoostSub);
+            genCard.Controls.Add(tgRealBoost);
 
             // 内存
             memAutoTitle = RowTitle(I18n.T("set.memauto"));
@@ -2786,16 +2835,16 @@ namespace FrameForge.UI
             int rightX = colW + gap;
             int rightW = Width - rightX;
 
-            int genH = Ui.Px(286);
+            int genH = Ui.Px(324);
             int hotH = Ui.Px(152);
             int aboutH = Height - genH - hotH - gap * 2;
             if (aboutH < Ui.Px(166))
             {
                 // 关于卡最小 166:版本、声明、环境三行加上底部按钮正好占 158,再留 8 的呼吸。
-                // 高度不够时先让热键卡(三行 142)和常规卡(274)收,别让"打开日志"被卡片下沿切掉。
+                // 高度不够时先让热键卡(三行 142)和常规卡(312)收,别让"打开日志"被卡片下沿切掉。
                 aboutH = Ui.Px(166);
                 hotH = Math.Max(Ui.Px(142), Height - genH - aboutH - gap * 2);
-                genH = Math.Max(Ui.Px(274), Height - hotH - aboutH - gap * 2);
+                genH = Math.Max(Ui.Px(312), Height - hotH - aboutH - gap * 2);
             }
 
             int memH = Ui.Px(160);
@@ -2841,6 +2890,10 @@ namespace FrameForge.UI
             updateTitle.SetBounds(pad, Ui.Px(230), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(20));
             updateSub.SetBounds(pad, Ui.Px(248), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(18));
             tgUpdates.SetBounds(colW - pad - toggleW, Ui.Px(232), toggleW, Ui.Px(24));
+
+            realBoostTitle.SetBounds(pad, Ui.Px(268), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(20));
+            realBoostSub.SetBounds(pad, Ui.Px(286), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(18));
+            tgRealBoost.SetBounds(colW - pad - toggleW, Ui.Px(270), toggleW, Ui.Px(24));
 
             PlaceHeader(memCard, pad);
             // 模式选择放在标题下方左侧,右侧留给开关,两者不再抢同一块位置。

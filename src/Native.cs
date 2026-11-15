@@ -207,6 +207,7 @@ namespace FrameForge
         public const uint NORMAL_PRIORITY_CLASS = 0x00000020;
         public const uint ABOVE_NORMAL_PRIORITY_CLASS = 0x00008000;
         public const uint HIGH_PRIORITY_CLASS = 0x00000080;
+        public const uint REALTIME_PRIORITY_CLASS = 0x00000100;
 
         public const int GWL_STYLE = -16;
         public const int GWL_EXSTYLE = -20;

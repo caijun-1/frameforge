@@ -75,6 +75,8 @@ namespace FrameForge
         public int BoostPriorityLevel = 4;
         // 实验项:只调整游戏线程的理想处理器,不改亲和性掩码。默认关闭。
         public bool BoostIdealCpu = false;
+        // 实时加速:常驻提升前台程序与同名进程优先级,并叠加系统级基础加速。
+        public bool RealBoost = false;
 
         // 画面滤镜
         public int FilterMode = 0;            // 0 关 | 1 仅游戏 | 2 始终
@@ -217,6 +219,7 @@ namespace FrameForge
                 case "gamesscannedat": GamesScannedAt = Time(v); break;
                 case "boostprioritylevel": BoostPriorityLevel = Math.Max(0, Math.Min(4, Int(v, 4))); break;
                 case "boostidealcpu": BoostIdealCpu = Bool(v, false); break;
+                case "realboost": RealBoost = Bool(v, false); break;
                 case "filtermode": FilterMode = Int(v, 0); break;
                 case "filterpreset": FilterPreset = Int(v, 0); break;
                 case "filterintensity": FilterIntensity = Int(v, 100); break;
@@ -297,6 +300,7 @@ namespace FrameForge
                     sb.AppendLine("gamesScannedAt=" + GamesScannedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
                 sb.AppendLine("boostPriorityLevel=" + BoostPriorityLevel.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("boostIdealCpu=" + B(BoostIdealCpu));
+                sb.AppendLine("realBoost=" + B(RealBoost));
                 sb.AppendLine("affinityCores=" + AffinityCores.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterMode=" + FilterMode.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterPreset=" + FilterPreset.ToString(CultureInfo.InvariantCulture));
