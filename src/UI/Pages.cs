@@ -731,9 +731,6 @@ namespace FrameForge.UI
                     {
                         float dy = r.Y + (h - dot) / 2f;
                         g.FillEllipse(b, r.X + Ui.Fp(8), dy, dot, dot);
-                        if (on)
-                            using (var halo = new SolidBrush(Theme.Alpha(acc, Theme.Dark ? 54 : 34)))
-                                g.FillEllipse(halo, r.X + Ui.Fp(8) - dot * 0.8f, dy - dot * 0.8f, dot * 2.6f, dot * 2.6f);
                     }
 
                     TextRenderer.DrawText(g, Labels[i], f,
@@ -801,10 +798,10 @@ namespace FrameForge.UI
 
                         bool used = UsedMask != 0 && (cores[i].Mask & UsedMask) != 0;
                         Color fill;
+                        // 核心条是一条刻度带:没被加速的核心走中性灰,只有分到手的核心才上色。
                         if (used) fill = Mode == 1 ? Theme.Alpha(acc, 150) : acc;
                         else if (cores[i].Parked) fill = Theme.Alpha(Theme.Track, Theme.Dark ? 120 : 90);
-                        else if (cores[i].Efficient) fill = Theme.Alpha(Theme.Faint, Theme.Dark ? 110 : 80);
-                        else fill = Theme.Alpha(acc, Theme.Dark ? 80 : 46);
+                        else fill = Theme.Alpha(Theme.Track, Theme.Dark ? 150 : 255);
 
                         Ui.Fill(g, new RectangleF(x, 0, cell, bandH), radius, fill);
                         x += cell;
@@ -836,9 +833,8 @@ namespace FrameForge.UI
                 var bar = new RectangleF(Ui.Fp(1), Ui.Fp(14), barW, Math.Max(4f, Height - Ui.Fp(28)));
                 // 左侧强调条:野兽模式下整条变红,是这张卡唯一的强色,其余留白更干净。
                 using (GraphicsPath p = Ui.Round(bar, barW / 2f))
-                using (var lg = new LinearGradientBrush(new RectangleF(bar.X, bar.Y, bar.Width, bar.Height),
-                           a, Theme.Alpha(a, 26), LinearGradientMode.Vertical))
-                    g.FillPath(lg, p);
+                using (var b = new SolidBrush(a))
+                    g.FillPath(b, p);
             }
         }
 
@@ -867,7 +863,7 @@ namespace FrameForge.UI
                     var valR = new Rectangle((int)(i * w), (int)(Height * 0.40f), (int)w, (int)(Height * 0.60f));
                     TextRenderer.DrawText(g, Caps[i], Theme.F(8f, FontStyle.Regular), capR, Theme.Faint,
                         Ui.Flags(ContentAlignment.MiddleCenter, false));
-                    TextRenderer.DrawText(g, Vals.Length > i ? Vals[i] : "—", Theme.Num(11f), valR, Theme.Accent,
+                    TextRenderer.DrawText(g, Vals.Length > i ? Vals[i] : "—", Theme.Num(11f), valR, Theme.Text,
                         Ui.Flags(ContentAlignment.MiddleCenter, false));
 
                     if (i > 0)

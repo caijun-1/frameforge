@@ -227,7 +227,8 @@ namespace FrameForge.UI
         {
             Graphics g = e.Graphics;
             Prep(g);
-            float rad = Radius < 0 ? Height / 2f : Ui.Fp(Radius);
+            // 默认 10 的圆角:按钮是控件,不是胶囊;只有显式指定 Radius 的才是通栏/圆形。
+            float rad = Radius < 0 ? Math.Min(Ui.Fp(10), Height / 2f) : Ui.Fp(Radius);
             var r = new RectangleF(0, 0, Width - 1, Height - 1);
             Color fill, fg;
             if (Primary)
@@ -249,9 +250,8 @@ namespace FrameForge.UI
             }
             if (Primary)
             {
-                // 主按钮做上亮下暗的薄渐变,像一颗有弧面的实体键。
-                Ui.FillVGrad(g, r, rad, Theme.Mix(fill, Color.White, Theme.Dark ? 0.10 : 0.20),
-                    Theme.Mix(fill, Color.Black, Theme.Dark ? 0.18 : 0.08));
+                // 主按钮是一块实心色面,不叠高光渐变:颜色只在这里出现一次。
+                Ui.Fill(g, r, rad, fill);
             }
             else
             {
@@ -573,11 +573,8 @@ namespace FrameForge.UI
             float pillW = itemW - Ui.Fp(4);
             var pill = new RectangleF(Ui.Fp(2) + anim * itemW, Ui.Fp(2), pillW, Height - Ui.Fp(4));
             Color acc = AccentColor.A == 0 ? Theme.Accent : AccentColor;
-            // 选中胶囊带一层同色投影 + 顶部提亮,像一颗凸起的按键。
-            Ui.Fill(g, new RectangleF(pill.X, pill.Y + Ui.Fp(1.5f), pill.Width, pill.Height),
-                pill.Height / 2f, Theme.Alpha(acc, Theme.Dark ? 70 : 45));
-            Ui.FillVGrad(g, pill, pill.Height / 2f, Theme.Mix(acc, Color.White, 0.18),
-                Theme.Mix(acc, Color.Black, 0.10));
+            // 选中胶囊是一块实心色面:不加同色投影,也不做上亮下暗的渐变。
+            Ui.Fill(g, pill, pill.Height / 2f, acc);
 
             for (int i = 0; i < Items.Length; i++)
             {
@@ -668,9 +665,7 @@ namespace FrameForge.UI
                     Color acc = AccentColor.A == 0 ? Theme.Accent : AccentColor;
                     float uw = Math.Min(Ui.Fp(30), r.Width * 0.34f);
                     var bar = new RectangleF(r.X + (r.Width - uw) / 2f, Height - Ui.Fp(6), uw, Math.Max(2f, Ui.Fp(2.5)));
-                    // 光晕 + 实线:选中项像仪表盘上被点亮的刻度。
-                    Ui.Fill(g, new RectangleF(bar.X - Ui.Fp(4), bar.Y - Ui.Fp(2), bar.Width + Ui.Fp(8), bar.Height + Ui.Fp(4)),
-                        bar.Height, Theme.Alpha(acc, Theme.Dark ? 60 : 40));
+                    // 一条实心下划线就够了:去掉外圈光晕,让文字自己说明选中状态。
                     Ui.Fill(g, bar, bar.Height / 2f, acc);
                 }
             }
@@ -729,27 +724,7 @@ namespace FrameForge.UI
             float cx = Width / 2f, cy = Height / 2f;
             if (Ticks) DrawTicks(g, cx, cy, rad + thick * 1.45f, side);
 
-            // 内圈做一块微微凸起的"表盘玻璃":上亮下暗,边缘一圈几乎看不见的细线。
-            float innerR = rad - thick * 1.05f;
-            if (innerR > 4f)
-            {
-                var inner = new RectangleF(cx - innerR, cy - innerR, innerR * 2f, innerR * 2f);
-                Color top = Theme.Dark ? Theme.CardAlt : Color.White;
-                Color bottom = Theme.Dark ? Theme.Mix(Theme.Card, Color.Black, 0.18)
-                                          : Theme.Mix(Theme.Card, Theme.Track, 0.35);
-                Ui.FillVGrad(g, inner, innerR, top, bottom);
-                using (var pen = new Pen(Theme.Alpha(Theme.Border, Theme.Dark ? 110 : 90), 1f))
-                    g.DrawEllipse(pen, inner);
-                // 内圈底部一道极淡的内阴影:玻璃盘有厚度,不会像贴上去的白纸。
-                using (var pen = new Pen(Theme.Alpha(Theme.Text, Theme.Dark ? 30 : 16), Math.Max(2f, innerR * 0.045f)))
-                {
-                    pen.StartCap = LineCap.Round;
-                    pen.EndCap = LineCap.Round;
-                    var sd = new RectangleF(cx - innerR * 0.86f, cy - innerR * 0.86f, innerR * 1.72f, innerR * 1.72f);
-                    g.DrawArc(pen, sd, 42f, 96f);
-                }
-            }
-
+            // 内圈留白:不再画"表盘玻璃",卡片本身就是底色,少一层渐变少一层噪音。
             var arc = new RectangleF(cx - rad + thick / 2f, cy - rad + thick / 2f, rad * 2f - thick, rad * 2f - thick);
 
             using (var pen = new Pen(Theme.Mix(Theme.Track, Theme.Sub, Theme.Dark ? 0.10 : 0.20), thick))
@@ -781,39 +756,12 @@ namespace FrameForge.UI
             {
                 if (sweep >= 359.5f) sweep = 359.5f;
 
-                // 光晕:由内到外叠四层同心弧,宽度递增、透明度递减,
-                // 读数色会像灯光一样洇到卡片上,而不是贴上去的一条硬色带。
-                float[] gw = new float[] { 1.28f, 1.58f, 1.94f, 2.34f };
-                int[] ga = Theme.Dark ? new int[] { 58, 34, 20, 11 } : new int[] { 42, 26, 15, 8 };
-                for (int i = 0; i < gw.Length; i++)
+                // 进度弧只用一档纯色:没有光晕、没有同色渐变,读数靠长度说话。
+                using (var pen = new Pen(col, thick))
                 {
-                    using (var glow = new Pen(Theme.Alpha(col, ga[i]), thick * gw[i]))
-                    {
-                        glow.StartCap = LineCap.Round;
-                        glow.EndCap = LineCap.Round;
-                        g.DrawArc(glow, arc, -90, sweep);
-                    }
-                }
-
-                bool gradient = col == baseCol;
-                Pen pen = null;
-                LinearGradientBrush br = null;
-                try
-                {
-                    if (gradient)
-                    {
-                        br = new LinearGradientBrush(arc, Theme.Mix(baseCol, Color.Black, 0.18), Theme.Mix(baseCol, Color.White, 0.30), LinearGradientMode.ForwardDiagonal);
-                        pen = new Pen(br, thick);
-                    }
-                    else pen = new Pen(col, thick);
                     pen.StartCap = LineCap.Round;
                     pen.EndCap = LineCap.Round;
                     g.DrawArc(pen, arc, -90, sweep);
-                }
-                finally
-                {
-                    if (pen != null) pen.Dispose();
-                    if (br != null) br.Dispose();
                 }
 
                 // 弧尖一颗小亮点:读数停在哪里一眼可见,像表针的针尖。
@@ -825,9 +773,7 @@ namespace FrameForge.UI
                     float mid = rad - thick / 2f;
                     float ex = cx + (float)Math.Cos(ea) * mid;
                     float ey = cy + (float)Math.Sin(ea) * mid;
-                    float tr = Math.Max(1.6f, thick * 0.30f);
-                    using (var b = new SolidBrush(Theme.Alpha(col, Theme.Dark ? 90 : 60)))
-                        g.FillEllipse(b, ex - tr * 2f, ey - tr * 2f, tr * 4f, tr * 4f);
+                    float tr = Math.Max(1.6f, thick * 0.26f);
                     using (var b = new SolidBrush(Color.White))
                         g.FillEllipse(b, ex - tr, ey - tr, tr * 2f, tr * 2f);
                 }
@@ -837,15 +783,16 @@ namespace FrameForge.UI
             if (Caption.Length > 0)
             {
                 var capRect = new RectangleF(0, cy - rad * 0.72f, Width, rad * 0.30f);
-                TextRenderer.DrawText(g, Caption, Theme.F(10.5f, FontStyle.Bold), Rectangle.Round(capRect), Theme.Sub,
+                TextRenderer.DrawText(g, Caption, Theme.F(10f, FontStyle.Regular), Rectangle.Round(capRect), Theme.Sub,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
             }
 
-            // 中心大号百分比(约 48 逻辑像素)
+            // 中心大号百分比(约 48 逻辑像素):默认用正文色,只有越过警戒线才转红。
+            Color readCol = disp >= 0.80 ? Theme.Danger : Theme.Text;
             string pct = ((int)Math.Round(disp * 100)) + "%";
             float pt = side / Math.Max(1f, Ui.S) * (Ticks ? 0.145f : 0.165f);
             var txtRect = new RectangleF(0, cy - rad * (Ticks ? 0.34f : 0.62f), Width, rad * (Ticks ? 0.62f : 0.64f));
-            TextRenderer.DrawText(g, pct, Theme.Num(pt), Rectangle.Round(txtRect), col,
+            TextRenderer.DrawText(g, pct, Theme.Num(pt), Rectangle.Round(txtRect), readCol,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
 
             // 圆环内下方:已用 / 总量

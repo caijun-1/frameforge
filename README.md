@@ -5,15 +5,15 @@
 <p align="center"><b>轻量级 FPS 游戏增效工具 · A lightweight FPS toolkit for Windows</b><br>
 一键加速 + 实时帧率监测 + 游戏内叠加层 + 画面滤镜 + 赛后性能报告 + 系统优化</p>
 
-<p align="center">单文件 · 免安装 · 579 KB · 默认不注入游戏 · RTSS 叠加可选</p>
+<p align="center">单文件 · 免安装 · 772 KB · 默认不注入游戏 · RTSS 叠加可选</p>
 
 <p align="center">
   <img src="https://github.com/caijun-1/frameforge/actions/workflows/build.yml/badge.svg" alt="build">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue" alt="platform">
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
-  <img src="https://img.shields.io/badge/size-579%20KB-brightgreen" alt="size 579 KB">
+  <img src="https://img.shields.io/badge/size-772%20KB-brightgreen" alt="size 772 KB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.4.5.1-orange" alt="1.4.5.1">
+  <img src="https://img.shields.io/badge/version-1.4.6-orange" alt="1.4.6">
 </p>
 
 <p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
@@ -61,11 +61,11 @@
 
 ## 截图
 
-以下为浅色主题界面，全部取自 v1.4.5。加速页的模式条为铺满整卡的三等分色块，「编辑选项」只在自定义模式下出现；「我的游戏」按平台列出已安装游戏；滤镜预设分「通用 / 热门游戏 / ICC」三页；叠加层页能直接看到 RTSS 状态，没启动时一键启动，由 RTSS 接管后独占全屏也能显示读数。
+以下为浅色主题界面，加速页取自 v1.4.6，其余取自 v1.4.5。加速页的模式条为铺满整卡的三等分色块，「编辑选项」只在自定义模式下出现；「我的游戏」按平台列出已安装游戏；滤镜预设分「通用 / 热门游戏 / ICC」三页；叠加层页能直接看到 RTSS 状态，没启动时一键启动，由 RTSS 接管后独占全屏也能显示读数。
 
 | 加速 | 我的游戏 |
 | --- | --- |
-| ![加速](docs/screenshots/v1.4.5/boost.png) | ![我的游戏](docs/screenshots/v1.4.5/games.png) |
+| ![加速](docs/screenshots/v1.4.6/boost.png) | ![我的游戏](docs/screenshots/v1.4.5/games.png) |
 
 | 滤镜 | 叠加层（RTSS 接管） |
 | --- | --- |
@@ -299,6 +299,15 @@ frameforge/
 
 ## 更新日志
 
+### v1.4.6
+
+**改进**
+
+- **界面去噪**：环形与弧形仪表去掉外发光、同色渐变弧和「表盘玻璃」内圈，改为一档实心色 + 一个针尖亮点；读数只在载荷超过 80% 时变红，平时回到正文色，温度 / 频率 / 功耗 / 显存四列同样不再整行飘红。
+- **卡片与按钮收敛**：主按钮、导航选中胶囊、模式条下划线、预设胶囊统一为实心色面，去掉渐变高光与彩色投影；普通按钮从全胶囊改为 10px 圆角。
+- **核心条重做**：未分配的核心改为中性灰刻度，只有真正被加速的核心才上色，不再整条粉色装饰；雷达图去掉外发光与径向渐变，改为平涂数据面。
+- **新图标**：应用图标换成银色圆角底 + 白色闪电，生成 16 / 20 / 24 / 32 / 40 / 48 / 64 / 128 / 256 共九档，标题栏与托盘同步使用，16px 下仍可辨认。
+
 ### v1.4.5.1
 
 **新增**
@@ -490,7 +499,7 @@ frameforge/
 
 ## English
 
-**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay, desktop-wide screen filters, and an automatic post-game performance report. It ships as a single 579 KB executable with about 20 MB of resident memory. Nothing is injected into games and no driver is installed by default; the optional RTSS overlay is the only path that injects text, and you can leave it off.
+**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay, desktop-wide screen filters, and an automatic post-game performance report. It ships as a single 772 KB executable with about 20 MB of resident memory. Nothing is injected into games and no driver is installed by default; the optional RTSS overlay is the only path that injects text, and you can leave it off.
 
 ### Highlights
 

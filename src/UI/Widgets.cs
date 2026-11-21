@@ -213,7 +213,8 @@ namespace FrameForge.UI
             }
             if (Selected)
             {
-                Ui.FillVGrad(g, r, rad, Theme.Mix(fill, Color.White, 0.16), Theme.Mix(fill, Color.Black, 0.08));
+                // 选中态用实心强调色:胶囊本身不需要再叠一层渐变。
+                Ui.Fill(g, r, rad, fill);
             }
             else
             {
@@ -349,18 +350,8 @@ namespace FrameForge.UI
             Color acc = AccentColor.A == 0 ? Theme.Accent : AccentColor;
             if (disp > 0.001)
             {
-                using (var glow = new Pen(Theme.Alpha(acc, Theme.Dark ? 44 : 20), thick * 1.8f))
-                {
-                    glow.StartCap = LineCap.Round;
-                    glow.EndCap = LineCap.Round;
-                    g.DrawArc(glow, arc, 180f, (float)(180.0 * disp));
-                }
-                Color col = acc;
-                // 渐变范围向外各扩一个线宽:否则圆头端帽超出渐变区,平铺模式会取到
-                // 另一端的浅色,左下角出现一块浅色竖条。两点构造的画笔不支持 Clamp,只能靠扩范围。
-                using (var brush = new LinearGradientBrush(new PointF(arc.Left - thick, arc.Bottom),
-                    new PointF(arc.Right + thick, arc.Bottom), Theme.Mix(col, Color.Black, 0.18), Theme.Mix(col, Color.White, 0.25)))
-                using (var pen = new Pen(brush, thick))
+                // 单色弧:去掉光晕与同色渐变,刻度盘上的颜色只表示这一段用量。
+                using (var pen = new Pen(acc, thick))
                 {
                     pen.StartCap = LineCap.Round;
                     pen.EndCap = LineCap.Round;
@@ -371,9 +362,7 @@ namespace FrameForge.UI
                 double ea = (180.0 + 180.0 * disp) * Math.PI / 180.0;
                 float ex = cx + (float)Math.Cos(ea) * rad;
                 float ey = cy + (float)Math.Sin(ea) * rad;
-                float tr = Math.Max(1.8f, thick * 0.30f);
-                using (var b = new SolidBrush(Theme.Alpha(acc, Theme.Dark ? 90 : 55)))
-                    g.FillEllipse(b, ex - tr * 2f, ey - tr * 2f, tr * 4f, tr * 4f);
+                float tr = Math.Max(1.8f, thick * 0.26f);
                 using (var b = new SolidBrush(Color.White))
                     g.FillEllipse(b, ex - tr, ey - tr, tr * 2f, tr * 2f);
             }
@@ -387,14 +376,14 @@ namespace FrameForge.UI
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
 
             if (Caption.Length > 0)
-                TextRenderer.DrawText(g, Caption, Theme.F(10f, FontStyle.Bold),
+                TextRenderer.DrawText(g, Caption, Theme.F(10f, FontStyle.Regular),
                     Rectangle.Round(new RectangleF(0, cy - rad * 0.66f, Width, rad * 0.30f)), Theme.Sub,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
 
             string pct = Readout.Length > 0 ? Readout : ((int)Math.Round(disp * 100)) + "%";
             float pt = rad / Math.Max(1f, Ui.S) * 0.30f;
             TextRenderer.DrawText(g, pct, Theme.Num(pt),
-                Rectangle.Round(new RectangleF(0, cy - rad * 0.44f, Width, rad * 0.44f)), acc,
+                Rectangle.Round(new RectangleF(0, cy - rad * 0.44f, Width, rad * 0.44f)), Theme.Text,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
 
             TextRenderer.DrawText(g, sub, Theme.F(8.5f, FontStyle.Regular),
@@ -468,38 +457,13 @@ namespace FrameForge.UI
             var dp = new PointF[n];
             for (int i = 0; i < n; i++)
                 dp[i] = P(cx, cy, rad * (float)(i < vals.Length ? vals[i] : 0), 360.0 / n * i);
-            // 外圈先画一圈柔光,数据面像浮在刻度盘上方。
-            using (var glow = new Pen(Theme.Alpha(acc, Theme.Dark ? 66 : 40), Math.Max(4f, Ui.Fp(5))))
+            // 一块平涂的数据面:没有外发光,边缘和轴线负责说明形状。
+            using (var fill = new SolidBrush(Theme.Alpha(acc, Theme.Dark ? 58 : 40)))
+            using (var pen = new Pen(acc, Math.Max(1.5f, Ui.Fp(2))))
             {
-                glow.LineJoin = LineJoin.Round;
-                g.DrawPolygon(glow, dp);
-            }
-            double maxV = 0;
-            for (int i = 0; i < n; i++) if (i < vals.Length && vals[i] > maxV) maxV = vals[i];
-            if (maxV < 0.01)
-            {
-                // 还没有数据时多边形退化成一个点,径向渐变会画不出来,退回平涂。
-                using (var fill = new SolidBrush(Theme.Alpha(acc, Theme.Dark ? 58 : 42)))
-                using (var pen = new Pen(acc, Math.Max(1.5f, Ui.Fp(2))))
-                {
-                    g.FillPolygon(fill, dp);
-                    g.DrawPolygon(pen, dp);
-                }
-            }
-            else
-            {
-                using (var fill = new PathGradientBrush(dp))
-                using (var pen = new Pen(acc, Math.Max(1.5f, Ui.Fp(2))))
-                {
-                    // 由外向内提亮的径向渐变:数据面有中间鼓起来的体积感,不是一张平涂的色块。
-                    Color[] ring = new Color[n];
-                    for (int i = 0; i < n; i++) ring[i] = Theme.Alpha(acc, Theme.Dark ? 26 : 16);
-                    fill.CenterColor = Theme.Alpha(acc, Theme.Dark ? 96 : 66);
-                    fill.CenterPoint = new PointF(cx, cy);
-                    fill.SurroundColors = ring;
-                    g.FillPolygon(fill, dp);
-                    g.DrawPolygon(pen, dp);
-                }
+                pen.LineJoin = LineJoin.Round;
+                g.FillPolygon(fill, dp);
+                g.DrawPolygon(pen, dp);
             }
             // 中心一个极小的圆点,把五条轴线收在一处。
             using (var hub = new SolidBrush(Theme.Alpha(acc, Theme.Dark ? 150 : 110)))

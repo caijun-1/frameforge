@@ -804,16 +804,24 @@ namespace FrameForge.UI
                     g.SmoothingMode = SmoothingMode.AntiAlias;
                     g.Clear(Color.Transparent);
                     using (GraphicsPath p = Ui.Round(new RectangleF(0.5f, 0.5f, 31, 31), 7.5f))
-                    using (var b = new LinearGradientBrush(new RectangleF(0, 0, 32, 32),
-                        Theme.Hex("#5C9BFF"), Theme.Hex("#2B62D9"), 55f))
-                        g.FillPath(b, p);
-                    // 闪电:与 app.ico 保持同一套视觉
+                    {
+                        using (var b = new LinearGradientBrush(new RectangleF(0, 0, 32, 32),
+                            Theme.Hex("#F7F8FA"), Theme.Hex("#C4C9D1"), 62f))
+                            g.FillPath(b, p);
+                        using (var pen = new Pen(Theme.Alpha(Theme.Hex("#6B7280"), 90), 1f))
+                            g.DrawPath(pen, p);
+                    }
+                    // 闪电:与 app.ico 保持同一套视觉(银色底面 + 白色凸起闪电)
                     var bolt = new PointF[]
                     {
                         new PointF(18.1f, 2.4f), new PointF(7.8f, 17.8f), new PointF(14.6f, 17.8f),
                         new PointF(13.0f, 29.6f), new PointF(24.2f, 14.2f), new PointF(17.1f, 14.2f)
                     };
-                    using (var b = new SolidBrush(Color.White)) g.FillPolygon(b, bolt);
+                    var shadow = (PointF[])bolt.Clone();
+                    for (int i = 0; i < shadow.Length; i++) { shadow[i].X += 0.5f; shadow[i].Y += 0.9f; }
+                    using (var b = new SolidBrush(Theme.Alpha(Theme.Hex("#6B7280"), 80))) g.FillPolygon(b, shadow);
+                    using (var b = new SolidBrush(Theme.Hex("#FCFCFD"))) g.FillPolygon(b, bolt);
+                    using (var pen = new Pen(Theme.Alpha(Theme.Hex("#8B9099"), 110), 0.6f)) g.DrawPolygon(pen, bolt);
                 }
                 IntPtr h = bmp.GetHicon();
                 try
