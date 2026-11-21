@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/icon.png" width="120" alt="FrameForge"></p>
+<p align="center"><img src="docs/icon-1.4.6.png" width="120" alt="FrameForge"></p>
 
 <h1 align="center">FrameForge</h1>
 
