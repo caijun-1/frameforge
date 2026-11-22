@@ -13,6 +13,8 @@ namespace FrameForge.Sys
     public sealed class GlobalBoost : IDisposable
     {
         private const int TickMs = 1000;
+        /// <summary>进程枚举(常用程序、同名进程计数)的重活间隔,单位秒;每秒全表枚举太浪费。</summary>
+        private const int SlowEverySeconds = 5;
         /// <summary>内存检查间隔,单位秒。</summary>
         private const int MemCheckSeconds = 60;
         /// <summary>可用内存低于总内存的这个百分比就整理一次。</summary>
@@ -59,6 +61,9 @@ namespace FrameForge.Sys
         private string prevScheme = "";
         private string currentName = "";
         private int currentCount;
+        private int lastPid;
+        private string lastBoostName = "";
+        private DateTime nextSlow = DateTime.MinValue;
         private DateTime lastMemTrim = DateTime.MinValue;
         private DateTime nextMemCheck = DateTime.MinValue;
 
@@ -94,6 +99,9 @@ namespace FrameForge.Sys
                 active = true;
                 currentName = "";
                 currentCount = 0;
+                lastPid = 0;
+                lastBoostName = "";
+                nextSlow = DateTime.UtcNow;
                 lastMemTrim = DateTime.MinValue;
                 nextMemCheck = DateTime.UtcNow.AddSeconds(MemCheckSeconds);
             }
@@ -152,6 +160,9 @@ namespace FrameForge.Sys
                 prevScheme = "";
                 currentName = "";
                 currentCount = 0;
+                lastPid = 0;
+                lastBoostName = "";
+                nextSlow = DateTime.MinValue;
                 nextMemCheck = DateTime.MinValue;
             }
 
@@ -206,14 +217,26 @@ namespace FrameForge.Sys
             int pid = 0;
             if (fg != IntPtr.Zero) Native.GetWindowThreadProcessId(fg, out pid);
 
+            // 前台窗口每秒看一次就够;真正重的进程枚举(常用程序、同名进程)每 5 秒一次。
+            bool slow = false;
+            lock (gate)
+            {
+                if (!active) return;
+                if (DateTime.UtcNow >= nextSlow)
+                {
+                    nextSlow = DateTime.UtcNow.AddSeconds(SlowEverySeconds);
+                    slow = true;
+                }
+            }
+
             if (pid > 0 && pid != SelfPid && !SkipPid(pid))
             {
                 string name = Native.ProcessName(pid);
                 if (name.Length > 0 && !SkipNames.Contains(name) && !name.StartsWith("frameforge", StringComparison.OrdinalIgnoreCase))
-                    BoostForeground(pid, name);
+                    BoostForeground(pid, name, slow);
             }
 
-            BoostCommon();
+            if (slow) BoostCommon();
             PurgeDeadIfNeeded();
             CheckMemory();
         }
@@ -245,9 +268,21 @@ namespace FrameForge.Sys
             }
         }
 
-        /// <summary>前台进程提为高,它的同名进程(浏览器/QQ/微信的子进程)提到高于正常。</summary>
-        private void BoostForeground(int pid, string name)
+        /// <summary>
+        /// 前台进程提为高,它的同名进程(浏览器/QQ/微信的子进程)提到高于正常。
+        /// 前台没变且还没到慢速刷新时直接返回,避免每秒重复枚举整张进程表。
+        /// </summary>
+        private void BoostForeground(int pid, string name, bool slow)
         {
+            bool sameFront;
+            lock (gate)
+            {
+                sameFront = pid == lastPid && string.Equals(lastBoostName, name, StringComparison.OrdinalIgnoreCase);
+                lastPid = pid;
+                lastBoostName = name;
+            }
+            if (sameFront && !slow) return;
+
             if (!IsSaved(pid))
             {
                 uint prev;

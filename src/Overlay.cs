@@ -23,12 +23,14 @@ namespace FrameForge
         private SysSample last = new SysSample();
         private double fps = -1;
         private double low = -1;
+        private double frameTime = -1;
         private DateTime upFrom = DateTime.Now;
 
         private bool moving;
         // 用户是否打开了叠加层。窗口被隐藏(内容清空、被游戏压掉)后靠它自愈显示,
         // 否则 Hide 之后没有任何东西会把窗口叫回来,开关看着还是"开"的却永远不出现。
         private bool wanted;
+        private DateTime nextTopmost = DateTime.MinValue;
         private Rectangle lastWa = Rectangle.Empty;
         // 上次画上去的内容。数值没变就不重画:UpdateLayeredWindow 每次都会让 DWM
         // 重新合成一层,游戏里叠加层本来就在和游戏抢合成,能少一次是一次。
@@ -113,11 +115,12 @@ namespace FrameForge
             Render();
         }
 
-        public void Feed(SysSample s, double currentFps, double low1)
+        public void Feed(SysSample s, double currentFps, double low1, double frameTimeMs)
         {
             last = s ?? new SysSample();
             fps = currentFps;
             low = low1;
+            frameTime = frameTimeMs;
         }
 
         private void ApplyInputMode()
@@ -223,16 +226,18 @@ namespace FrameForge
 
         /// <summary>
         /// 有些游戏会反复把自己的窗口提到最前,把第三方置顶窗口压到后面。
-        /// 每帧重新声明一次 TOPMOST(不移动、不缩放、不抢焦点),被压下去后能自己回来。
+        /// 每秒恢复一次 TOPMOST(不移动、不缩放、不抢焦点),被压下去后能自己回来。
         /// </summary>
         private void KeepTopmost()
         {
             if (!IsHandleCreated) return;
+            DateTime now = DateTime.UtcNow;
+            if (now < nextTopmost) return;
+            nextTopmost = now.AddSeconds(1);
             try
             {
                 uint flags = Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE;
-                // 游戏切全屏/切分辨率时可能把窗口顺手收起来,带上 SHOWWINDOW 再声明一次,
-                // 内容没变也能重新上屏。
+                // 每秒看门狗式恢复一次置顶即可,不再随 200ms 渲染节拍反复 SetWindowPos。
                 if (wanted) flags |= Native.SWP_SHOWWINDOW;
                 Native.SetWindowPos(Handle, Native.HWND_TOPMOST, 0, 0, 0, 0, flags);
             }
@@ -542,13 +547,14 @@ namespace FrameForge
         {
             var rows = new List<Row>();
 
-            if (st.ShowFps || st.ShowLow)
+            if (st.ShowFps || st.ShowLow || st.ShowFrameTime)
             {
                 Row r = new Row();
                 r.Label = "FPS";
                 r.FpsCell = st.ShowFps;
                 if (st.ShowFps) r.Cells.Add(fps > 0 ? fps.ToString("0") : "--");
-                if (st.ShowLow) r.Cells.Add("1% " + (low > 0 ? low.ToString("0") : "--"));
+                if (st.ShowLow) r.Cells.Add((I18n.IsEn ? "1%·5s " : "1%·5秒 ") + (low > 0 ? low.ToString("0") : "--"));
+                if (st.ShowFrameTime) r.Cells.Add(frameTime > 0 ? frameTime.ToString("0.0") + " ms" : "-- ms");
                 rows.Add(r);
             }
             if (st.ShowCpu)

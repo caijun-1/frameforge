@@ -47,8 +47,8 @@ namespace FrameForge
                 Card = Hex("#FFFFFF");
                 CardAlt = Hex("#FAFBFD");
                 Text = Hex("#1B1E23");
-                Sub = Hex("#6E7783");
-                Faint = Hex("#A2AAB6");
+                Sub = Hex("#606B78");
+                Faint = Hex("#87919D");
                 Border = Hex("#E8ECF2");
                 Track = Hex("#EAEEF4");
                 Hover = Hex("#F1F4F8");
@@ -61,7 +61,7 @@ namespace FrameForge
                 CardAlt = Hex("#1D232C");
                 Text = Hex("#EAEEF5");
                 Sub = Hex("#9BA6B4");
-                Faint = Hex("#6F7A88");
+                Faint = Hex("#8995A5");
                 Border = Hex("#2A3140");
                 Track = Hex("#2A313C");
                 Hover = Hex("#222933");

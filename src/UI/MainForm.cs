@@ -503,7 +503,7 @@ namespace FrameForge.UI
             if (s.GamePid > 0) Fps.Track(s.GamePid);
             else Fps.Stop();
 
-            Ov.Feed(s, Fps.Fps, Fps.Low1);
+            Ov.Feed(s, Fps.Fps, Fps.Low1, Fps.FrameTime);
             Tracker.Feed(s, Fps.Fps, Fps.Low1);
             Perf.Feed(Boost != null && Boost.Active, Fps.Fps, Fps.Low1);
             UpdateTrayTip(s);

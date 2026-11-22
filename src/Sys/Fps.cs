@@ -57,11 +57,18 @@ namespace FrameForge.Sys
         private long lastRowTicks;
         private volatile bool stopping;
         private volatile bool gotRow;
-        private readonly Queue<Frame> window = new Queue<Frame>();
+        // 原始呈现事件逐条入环形缓冲,统计每 200ms 才聚合一次。
+        // 不在每条事件上遍历并排序整个 5 秒窗口,避免高 FPS 时监控自身成为负载。
+        private Frame[] window = new Frame[4096];
+        private double[] sortBuffer = new double[4096];
+        private int windowHead;
+        private int windowCount;
+        private double lastAggregateAt = double.MinValue;
 
         public volatile FpsStatus Status = FpsStatus.Idle;
         public double Fps = -1;
         public double Low1 = -1;
+        public double FrameTime = -1;
         public string Message = "";
 
         private struct Frame
@@ -360,9 +367,10 @@ namespace FrameForge.Sys
             int gen = Interlocked.Increment(ref watchGen);
             try
             {
-                lock (Gate) { window.Clear(); }
+                lock (Gate) { windowHead = 0; windowCount = 0; lastAggregateAt = double.MinValue; }
                 Fps = -1;
                 Low1 = -1;
+                FrameTime = -1;
                 stopping = false;
                 gotRow = false;
                 Interlocked.Exchange(ref lastRowTicks, DateTime.UtcNow.Ticks);
@@ -426,6 +434,7 @@ namespace FrameForge.Sys
             Interlocked.Exchange(ref lastRowTicks, 0);
             Fps = -1;
             Low1 = -1;
+            FrameTime = -1;
             if (Status == FpsStatus.Running || Status == FpsStatus.NeedAdmin) Status = FpsStatus.Idle;
         }
 
@@ -628,39 +637,81 @@ namespace FrameForge.Sys
             }
             lock (Gate)
             {
-                window.Enqueue(new Frame { T = t, Ms = ms });
-                while (window.Count > 0 && window.Peek().T < t - 5.0) window.Dequeue();
-
-                if (window.Count < 2) return;
-
-                // FPS:最后一秒内的帧数
-                int framesLastSecond = 0;
-                double oldest = double.MaxValue;
-                foreach (Frame f in window)
+                // 先剔除过期帧,再按容量追加。正常每条只做 O(1) 工作;
+                // 极高帧率下容量不够时按倍数扩容,不会丢成固定窗口。
+                while (windowCount > 0 && window[windowHead].T < t - 5.0)
                 {
-                    if (f.T >= t - 1.0) framesLastSecond++;
-                    oldest = f.T;
+                    windowHead = (windowHead + 1) % window.Length;
+                    windowCount--;
                 }
-                double span = t - oldest;
-                double fps;
-                if (framesLastSecond >= 2 && span > 0.05) fps = framesLastSecond / Math.Min(1.0, span);
-                else
-                {
-                    double sum = 0;
-                    foreach (Frame f in window) sum += f.Ms;
-                    fps = 1000.0 / (sum / window.Count);
-                }
+                if (windowCount == window.Length) GrowWindow();
+                int tail = (windowHead + windowCount) % window.Length;
+                window[tail].T = t;
+                window[tail].Ms = ms;
+                windowCount++;
+                FrameTime = ms;
 
-                // 1% Low:5 秒窗口内帧时间的 99 分位
-                var times = new List<double>(window.Count);
-                foreach (Frame f in window) times.Add(f.Ms);
-                times.Sort();
-                int idx = (int)Math.Floor((times.Count - 1) * 0.99);
-                double p99 = times[Math.Min(idx, times.Count - 1)];
-
-                Fps = fps > 0 ? fps : -1;
-                Low1 = p99 > 0 ? 1000.0 / p99 : -1;
+                if (windowCount < 2 || t - lastAggregateAt < 0.2) return;
+                lastAggregateAt = t;
+                Aggregate(t);
             }
+        }
+
+        private void GrowWindow()
+        {
+            int size = window.Length * 2;
+            var next = new Frame[size];
+            for (int i = 0; i < windowCount; i++)
+                next[i] = window[(windowHead + i) % window.Length];
+            window = next;
+            sortBuffer = new double[size];
+            windowHead = 0;
+        }
+
+        /// <summary>低频聚合:FPS 看最后一秒,1% Low 看 5 秒帧时间的 99 分位。</summary>
+        private void Aggregate(double t)
+        {
+            int framesLastSecond = 0;
+            double sum = 0;
+            for (int i = 0; i < windowCount; i++)
+            {
+                Frame f = window[(windowHead + i) % window.Length];
+                if (f.T >= t - 1.0) framesLastSecond++;
+                sum += f.Ms;
+            }
+            double oldest = window[windowHead].T;
+            double span = t - oldest;
+            double fps;
+            if (framesLastSecond >= 2 && span > 0.05) fps = framesLastSecond / Math.Min(1.0, span);
+            else fps = 1000.0 / (sum / windowCount);
+
+            if (sortBuffer.Length < windowCount) sortBuffer = new double[window.Length];
+            for (int i = 0; i < windowCount; i++)
+                sortBuffer[i] = window[(windowHead + i) % window.Length].Ms;
+            Array.Sort(sortBuffer, 0, windowCount);
+            int idx = (int)Math.Floor((windowCount - 1) * 0.99);
+            double p99 = sortBuffer[Math.Min(idx, windowCount - 1)];
+
+            Fps = fps > 0 ? fps : -1;
+            Low1 = p99 > 0 ? 1000.0 / p99 : -1;
+        }
+
+        internal static bool SelfTestAggregation(out string note)
+        {
+            var engine = new FpsEngine();
+            for (int i = 0; i < 2400; i++)
+            {
+                double t = i / 240.0;
+                double ms = 1000.0 / 240.0 + (i % 480 == 0 ? 8 : 0);
+                engine.Push(t, ms);
+            }
+            bool ok = engine.Fps >= 200 && engine.Fps <= 280 && engine.Low1 > 0
+                && engine.FrameTime > 0 && engine.windowCount > 0 && engine.windowCount < 1300;
+            note = "fps=" + engine.Fps.ToString("0.0", CultureInfo.InvariantCulture)
+                + " low=" + engine.Low1.ToString("0.0", CultureInfo.InvariantCulture)
+                + " window=" + engine.windowCount;
+            engine.Stop();
+            return ok;
         }
 
         private static string[] SplitCsv(string line)

@@ -42,8 +42,9 @@ namespace FrameForge
         public bool ShowGpuTemp = true;       // GPU 温度(NVML)
         public bool ShowRam = false;
         public bool ShowRamPct = false;       // 内存占用百分比
-        public bool ShowLow = false;          // 1% Low
-        public bool ShowClock = false;        // 帧时间 / 当前时间由 OverlayStyle 决定
+        public bool ShowLow = false;          // 1% Low(5 秒)
+        public bool ShowFrameTime = false;    // 帧时间 ms
+        public bool ShowClock = false;        // 当前时间
         public bool ShowSession = false;      // 已游戏时长
 
         // 加速
@@ -197,6 +198,7 @@ namespace FrameForge
                 case "showram": ShowRam = Bool(v, false); break;
                 case "showrampct": ShowRamPct = Bool(v, false); break;
                 case "showlow": ShowLow = Bool(v, false); break;
+                case "showframetime": ShowFrameTime = Bool(v, false); break;
                 case "showclock": ShowClock = Bool(v, false); break;
                 case "showsession": ShowSession = Bool(v, false); break;
                 case "boostpriority": BoostPriority = Bool(v, true); break;
@@ -273,6 +275,7 @@ namespace FrameForge
                 sb.AppendLine("showRam=" + B(ShowRam));
                 sb.AppendLine("showRamPct=" + B(ShowRamPct));
                 sb.AppendLine("showLow=" + B(ShowLow));
+                sb.AppendLine("showFrameTime=" + B(ShowFrameTime));
                 sb.AppendLine("showClock=" + B(ShowClock));
                 sb.AppendLine("showSession=" + B(ShowSession));
                 sb.AppendLine("boostPriority=" + B(BoostPriority));

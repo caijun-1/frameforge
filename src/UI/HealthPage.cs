@@ -175,8 +175,8 @@ namespace FrameForge.UI
                     values[i].Text = it.Value;
                     values[i].ForeColor = LevelColor(it.Level);
                     notes[i].Text = ComposeNote(it);
-                    notes[i].ForeColor = it.Level == HealthLevel.Bad ? Theme.Danger
-                        : it.Level == HealthLevel.Warn ? Theme.Warn : Theme.Faint;
+                    // 说明行保持中性色,只让真正有问题的一行用红色:整页橙色会失去重点。
+                    notes[i].ForeColor = it.Level == HealthLevel.Bad ? Theme.Danger : Theme.Faint;
                     dots[i].Dot = LevelColor(it.Level);
 
                     if (it.CanToggle) toggles[i].SetSilent(it.On);

@@ -222,6 +222,8 @@ namespace FrameForge.UI
             tips.SetToolTip(negBtn, I18n.T("boost.notgame.sub"));
             tips.SetToolTip(tgAuto, I18n.T("boost.autoboost.sub"));
             tips.SetToolTip(editBtn, I18n.T("boost.opt.edit"));
+            // 常驻加速的开关在设置页,这里用气泡说明去哪儿打开。
+            tips.SetToolTip(realLbl, I18n.T("set.realboost.sub"));
 
             hero.Controls.Add(stateLbl);
             hero.Controls.Add(gameLbl);
@@ -236,6 +238,8 @@ namespace FrameForge.UI
             hero.Controls.Add(negBtn);
             hero.Controls.Add(tgAuto);
             hero.Controls.Add(autoLbl);
+            // 常驻加速属于「状态」,和左上角的加速状态放在一起,不再塞进底部模式条。
+            hero.Controls.Add(realLbl);
 
             cpuCard.Controls.Add(cpuRing);
             gpuCard.Controls.Add(gpuRing);
@@ -245,7 +249,6 @@ namespace FrameForge.UI
             // 先加编辑按钮:同一容器里先加入的控件 z 序更高,后加的模式条不会把它盖住。
             modeCard.Controls.Add(editBtn);
             modeCard.Controls.Add(modes);
-            modeCard.Controls.Add(realLbl);
 
             Controls.Add(hero);
             Controls.Add(cpuCard);
@@ -598,8 +601,8 @@ namespace FrameForge.UI
             int gap = Ui.Px(12);
             int heroH = Math.Max(Ui.Px(160), Math.Min(Ui.Px(178), Height / 5));
             int stripH = Ui.Px(46);
-            // 模式卡上方多留一行实时加速状态,模式条整体下移。
-            int modeH = Ui.Px(78);
+            // 实时加速状态移到 Hero 后,模式条不再需要额外一行。
+            int modeH = Ui.Px(66);
             int bodyW = Width - pad * 2;
             int y = pad;
 
@@ -635,6 +638,8 @@ namespace FrameForge.UI
             int textW = Math.Max(Ui.Px(180), btnX - hp - Ui.Px(14));
 
             stateLbl.SetBounds(hp, Ui.Px(12), Ui.Px(120), Ui.Px(18));
+            // 常驻加速状态跟在「未加速」右边,同一行显示两个加速状态。
+            realLbl.SetBounds(hp + Ui.Px(124), Ui.Px(12), Math.Max(Ui.Px(90), textW - Ui.Px(124)), Ui.Px(18));
             gameLbl.SetBounds(hp, Ui.Px(30), textW, Ui.Px(32));
             gameSub.SetBounds(hp, Ui.Px(62), textW, Ui.Px(16));
             // 状态胶囊移到标题下方:四种生效项一眼看全,也不再和"未加速"挤在同一行。
@@ -678,7 +683,6 @@ namespace FrameForge.UI
             int ebH = Ui.Px(22);
             int ebRight = Ui.Px(12);
             int modesW = bodyW - mp * 2;
-            realLbl.SetBounds(mp, Ui.Px(8), modesW, Ui.Px(18));
             int modesY = modeH - Ui.Px(44) - Ui.Px(6);
             modes.SetBounds(mp, modesY, modesW, Ui.Px(44));
             editBtn.SetBounds(mp + modesW - ebRight - ebW, modesY + (Ui.Px(44) - ebH) / 2, ebW, ebH);
@@ -903,12 +907,12 @@ namespace FrameForge.UI
         private readonly Segmented style, corner;
         private readonly Slider scale;
         private readonly OverlayPreview preview;
-        private readonly Chip[] chips = new Chip[9];
+        private readonly Chip[] chips = new Chip[10];
         private readonly ToolTip rtssTip;
 
         private static readonly string[] ItemKeys =
         {
-            "fps", "low", "cpu", "gpu", "gputemp", "ram", "rampct", "clock", "session"
+            "fps", "low", "frametime", "cpu", "gpu", "gputemp", "ram", "rampct", "clock", "session"
         };
         private static readonly string[] CornerKeys = { "auto", "tl", "tr", "bl", "br" };
         // 与 Rtss.ColorHex 一一对应,设置页只暴露这几种颜色。
@@ -1286,12 +1290,13 @@ namespace FrameForge.UI
             {
                 case 0: return st.ShowFps;
                 case 1: return st.ShowLow;
-                case 2: return st.ShowCpu;
-                case 3: return st.ShowGpu;
-                case 4: return st.ShowGpuTemp;
-                case 5: return st.ShowRam;
-                case 6: return st.ShowRamPct;
-                case 7: return st.ShowClock;
+                case 2: return st.ShowFrameTime;
+                case 3: return st.ShowCpu;
+                case 4: return st.ShowGpu;
+                case 5: return st.ShowGpuTemp;
+                case 6: return st.ShowRam;
+                case 7: return st.ShowRamPct;
+                case 8: return st.ShowClock;
                 default: return st.ShowSession;
             }
         }
@@ -1302,12 +1307,13 @@ namespace FrameForge.UI
             {
                 case 0: st.ShowFps = v; break;
                 case 1: st.ShowLow = v; break;
-                case 2: st.ShowCpu = v; break;
-                case 3: st.ShowGpu = v; break;
-                case 4: st.ShowGpuTemp = v; break;
-                case 5: st.ShowRam = v; break;
-                case 6: st.ShowRamPct = v; break;
-                case 7: st.ShowClock = v; break;
+                case 2: st.ShowFrameTime = v; break;
+                case 3: st.ShowCpu = v; break;
+                case 4: st.ShowGpu = v; break;
+                case 5: st.ShowGpuTemp = v; break;
+                case 6: st.ShowRam = v; break;
+                case 7: st.ShowRamPct = v; break;
+                case 8: st.ShowClock = v; break;
                 default: st.ShowSession = v; break;
             }
         }
@@ -1550,13 +1556,13 @@ namespace FrameForge.UI
             if (Width <= 0 || Height <= 0) return;
             int gap = Ui.Px(12);
             int itemH = Ui.Px(116);
-            // 说明卡多了一行常驻状态,高度从 146 抬到 166;多出来的高度让给上面的设置卡和预览。
-            int hintH = Ui.Px(166);
+            // 说明卡只留状态、快捷键和一行限制说明,不再单独占用标题行。
+            int hintH = Ui.Px(124);
             int cardH = Height - itemH - hintH - gap * 2;
             if (cardH < Ui.Px(306))
             {
                 cardH = Ui.Px(306);
-                hintH = Math.Max(Ui.Px(140), Height - itemH - cardH - gap * 2);
+                hintH = Math.Max(Ui.Px(116), Height - itemH - cardH - gap * 2);
             }
 
             // 顶部一行拆成两栏:左边是设置,右边是效果预览。
@@ -1640,14 +1646,14 @@ namespace FrameForge.UI
             rtssLayout.SetBounds(leftW - pad - rSegW, Ui.Px(200), rSegW, Ui.Px(32));
             rtssNote.SetBounds(pad, Ui.Px(240), leftW - pad * 2, Math.Max(Ui.Px(28), cardH - Ui.Px(252)));
 
-            hintTitle.SetBounds(pad, Ui.Px(12), Width - pad * 2, Ui.Px(20));
-            // 状态行在最上面,下面依次是快捷键与限制说明;窗口极矮时说明整行收起,避免文字互压。
-            int sy = Ui.Px(36);
+            // 说明卡不再重复一个「说明」标题,状态行直接顶到卡片上沿。
+            hintTitle.Visible = false;
+            int sy = Ui.Px(14);
             int sh = Ui.Px(40);
             statusLbl.SetBounds(pad, sy, Width - pad * 2, sh);
             int hy = sy + sh + Ui.Px(4);
-            hotkey.SetBounds(pad, hy, Width - pad * 2, Ui.Px(34));
-            int ny = hy + Ui.Px(36);
+            hotkey.SetBounds(pad, hy, Width - pad * 2, Ui.Px(22));
+            int ny = hy + Ui.Px(28);
             int noteH = hintH - ny - Ui.Px(6);
             // 页面还没显示时读 Visible 会沿父链得到 false,必须用局部变量判断,否则说明行永远排不上位置。
             bool showNote = noteH >= Ui.Px(22);
@@ -1683,7 +1689,7 @@ namespace FrameForge.UI
             // 假数据:数值长度覆盖 2~8 个字符(含带秒的时间),用来检验换行/挤位问题。
             private static readonly string[] Samples =
             {
-                "144", "112", "38%", "76%", "64°", "9.8G", "62%", "21:40:36", "32:08"
+                "144", "112", "6.9 ms", "38%", "76%", "64°", "9.8G", "62%", "21:40:36", "32:08"
             };
 
             // 和真实叠加层保持同一支粉色(小飞机风格的帧率配色)。
@@ -1979,50 +1985,51 @@ namespace FrameForge.UI
             {
                 var rows = new List<PvRow>();
 
-                if (ItemValue(st, 0) || ItemValue(st, 1))
+                if (ItemValue(st, 0) || ItemValue(st, 1) || ItemValue(st, 2))
                 {
                     PvRow r = new PvRow();
                     r.Label = "FPS";
                     r.FpsCell = st.ShowFps;
                     if (ItemValue(st, 0)) r.Cells.Add(Samples[0]);
-                    if (ItemValue(st, 1)) r.Cells.Add("1% " + Samples[1]);
+                    if (ItemValue(st, 1)) r.Cells.Add((I18n.IsEn ? "1%·5s " : "1%·5秒 ") + Samples[1]);
+                    if (ItemValue(st, 2)) r.Cells.Add(Samples[2]);
                     rows.Add(r);
                 }
-                if (ItemValue(st, 2))
+                if (ItemValue(st, 3))
                 {
                     PvRow r = new PvRow();
                     r.Label = "CPU";
-                    r.Cells.Add(Samples[2]);
+                    r.Cells.Add(Samples[3]);
                     rows.Add(r);
                 }
-                if (ItemValue(st, 3) || ItemValue(st, 4))
+                if (ItemValue(st, 4) || ItemValue(st, 5))
                 {
                     PvRow r = new PvRow();
                     r.Label = "GPU";
-                    if (ItemValue(st, 3)) r.Cells.Add(Samples[3]);
                     if (ItemValue(st, 4)) r.Cells.Add(Samples[4]);
+                    if (ItemValue(st, 5)) r.Cells.Add(Samples[5]);
                     rows.Add(r);
                 }
-                if (ItemValue(st, 5) || ItemValue(st, 6))
+                if (ItemValue(st, 6) || ItemValue(st, 7))
                 {
                     PvRow r = new PvRow();
                     r.Label = I18n.IsEn ? "RAM" : "内存";
-                    if (ItemValue(st, 5)) r.Cells.Add(Samples[5]);
                     if (ItemValue(st, 6)) r.Cells.Add(Samples[6]);
-                    rows.Add(r);
-                }
-                if (ItemValue(st, 7))
-                {
-                    PvRow r = new PvRow();
-                    r.Label = I18n.IsEn ? "TIME" : "时间";
-                    r.Cells.Add(Samples[7]);
+                    if (ItemValue(st, 7)) r.Cells.Add(Samples[7]);
                     rows.Add(r);
                 }
                 if (ItemValue(st, 8))
                 {
                     PvRow r = new PvRow();
-                    r.Label = I18n.IsEn ? "UPTIME" : "时长";
+                    r.Label = I18n.IsEn ? "TIME" : "时间";
                     r.Cells.Add(Samples[8]);
+                    rows.Add(r);
+                }
+                if (ItemValue(st, 9))
+                {
+                    PvRow r = new PvRow();
+                    r.Label = I18n.IsEn ? "UPTIME" : "时长";
+                    r.Cells.Add(Samples[9]);
                     rows.Add(r);
                 }
                 return rows;
@@ -2831,7 +2838,7 @@ namespace FrameForge.UI
             int rightX = colW + gap;
             int rightW = Width - rightX;
 
-            int genH = Ui.Px(324);
+            int genH = Ui.Px(300);
             int hotH = Ui.Px(152);
             int aboutH = Height - genH - hotH - gap * 2;
             if (aboutH < Ui.Px(166))
@@ -2871,25 +2878,27 @@ namespace FrameForge.UI
             themeTitle.SetBounds(pad, Ui.Px(78), Ui.Px(80), Ui.Px(28));
             segTheme.SetBounds(colW - pad - segW, Ui.Px(76), segW, Ui.Px(30));
 
-            autoTitle.SetBounds(pad, Ui.Px(116), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(20));
-            autoSub.SetBounds(pad, Ui.Px(134), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(18));
-            tgAuto.SetBounds(colW - pad - toggleW, Ui.Px(118), toggleW, Ui.Px(24));
+            // 常规卡的单行开关不再配副标题:标题本身就说明了作用,省下的一行让卡片更紧凑。
+            autoSub.Visible = false;
+            traySub.Visible = false;
+            boostProfileSub.Visible = false;
+            updateSub.Visible = false;
 
-            trayTitle.SetBounds(pad, Ui.Px(154), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(20));
-            traySub.SetBounds(pad, Ui.Px(172), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(18));
-            tgTray.SetBounds(colW - pad - toggleW, Ui.Px(156), toggleW, Ui.Px(24));
+            autoTitle.SetBounds(pad, Ui.Px(112), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(24));
+            tgAuto.SetBounds(colW - pad - toggleW, Ui.Px(112), toggleW, Ui.Px(24));
 
-            boostProfileTitle.SetBounds(pad, Ui.Px(192), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(20));
-            boostProfileSub.SetBounds(pad, Ui.Px(210), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(18));
-            tgBoostProfile.SetBounds(colW - pad - toggleW, Ui.Px(194), toggleW, Ui.Px(24));
+            trayTitle.SetBounds(pad, Ui.Px(146), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(24));
+            tgTray.SetBounds(colW - pad - toggleW, Ui.Px(146), toggleW, Ui.Px(24));
 
-            updateTitle.SetBounds(pad, Ui.Px(230), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(20));
-            updateSub.SetBounds(pad, Ui.Px(248), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(18));
-            tgUpdates.SetBounds(colW - pad - toggleW, Ui.Px(232), toggleW, Ui.Px(24));
+            boostProfileTitle.SetBounds(pad, Ui.Px(180), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(24));
+            tgBoostProfile.SetBounds(colW - pad - toggleW, Ui.Px(180), toggleW, Ui.Px(24));
 
-            realBoostTitle.SetBounds(pad, Ui.Px(268), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(20));
-            realBoostSub.SetBounds(pad, Ui.Px(286), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(18));
-            tgRealBoost.SetBounds(colW - pad - toggleW, Ui.Px(270), toggleW, Ui.Px(24));
+            updateTitle.SetBounds(pad, Ui.Px(214), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(24));
+            tgUpdates.SetBounds(colW - pad - toggleW, Ui.Px(214), toggleW, Ui.Px(24));
+
+            realBoostTitle.SetBounds(pad, Ui.Px(248), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(20));
+            realBoostSub.SetBounds(pad, Ui.Px(270), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(16));
+            tgRealBoost.SetBounds(colW - pad - toggleW, Ui.Px(250), toggleW, Ui.Px(24));
 
             PlaceHeader(memCard, pad);
             // 模式选择放在标题下方左侧,右侧留给开关,两者不再抢同一块位置。
@@ -2988,7 +2997,7 @@ namespace FrameForge.UI
     public class FilterPage : Page
     {
         private readonly Card modeCard, presetCard, customCard;
-        private readonly TextLabel modeTitle, modeNote, presetTitle, customTitle;
+        private readonly TextLabel modeTitle, modeNote, presetTitle, customTitle, compareTitle, compareSub;
         private readonly Segmented mode, presetGroup;
         private readonly Chip[] chips = new Chip[Filter.PresetKeys.Length];
         private readonly FilterPreview preview;
@@ -2999,6 +3008,7 @@ namespace FrameForge.UI
         private readonly List<Chip> iccChips = new List<Chip>();
         private readonly ToolTip tips;
         private readonly Timer brightTimer;
+        private readonly Timer applyTimer;
         private int brightPending;
         // 0 = 通用,1 = 热门游戏,2 = ICC;只是分组显示,不写进设置。
         private int group;
@@ -3028,14 +3038,30 @@ namespace FrameForge.UI
             preview = new FilterPreview();
 
             modeNote = new TextLabel();
-            modeNote.Size = 8.5f;
-            modeNote.ForeColor = Theme.Faint;
+            modeNote.Size = 9f;
+            modeNote.ForeColor = Theme.Sub;
             modeNote.Wrap = true;
+
+            compareTitle = new TextLabel();
+            compareTitle.Text = I18n.T("flt.compare.title");
+            compareTitle.Size = 10.2f;
+            compareTitle.Style = FontStyle.Bold;
+            compareTitle.ForeColor = Theme.Text;
+            compareTitle.Wrap = true;
+
+            compareSub = new TextLabel();
+            compareSub.Text = I18n.T("flt.compare.sub");
+            compareSub.Size = 8.6f;
+            compareSub.ForeColor = Theme.Sub;
+            compareSub.Wrap = true;
+            compareSub.Align = ContentAlignment.TopLeft;
 
             modeCard.Controls.Add(modeTitle);
             modeCard.Controls.Add(mode);
             modeCard.Controls.Add(preview);
             modeCard.Controls.Add(modeNote);
+            modeCard.Controls.Add(compareTitle);
+            modeCard.Controls.Add(compareSub);
 
             presetTitle = Header(I18n.T("flt.preset"));
             presetCard.Controls.Add(presetTitle);
@@ -3117,6 +3143,16 @@ namespace FrameForge.UI
 
             sIntensity = MakeSlider(I18n.T("flt.intensity"), 0, 100, "%", host.St.FilterIntensity);
 
+            // 预览随拖动即时更新,真正写 DWM / Gamma LUT 则做短暂防抖,
+            // 避免一次拖动连续重建系统颜色效果链。
+            applyTimer = new Timer();
+            applyTimer.Interval = 100;
+            applyTimer.Tick += delegate
+            {
+                applyTimer.Stop();
+                Host.ApplyFilter();
+            };
+
             // 亮度直接写显示器硬件背光(DDC/CI),不再进滤镜矩阵。
             brightTimer = new Timer();
             brightTimer.Interval = 180;
@@ -3182,6 +3218,11 @@ namespace FrameForge.UI
             if (!Visible)
             {
                 brightTimer.Stop();
+                if (applyTimer.Enabled)
+                {
+                    applyTimer.Stop();
+                    Host.ApplyFilter();
+                }
                 return;
             }
 
@@ -3275,8 +3316,9 @@ namespace FrameForge.UI
             Host.St.FilterVibrance = sVibrance.Value;
             Host.St.FilterVibranceOn = sVibrance.Switched;
             Host.SaveSettingsSoon();
-            Host.ApplyFilter();
             UpdatePreview();
+            applyTimer.Stop();
+            applyTimer.Start();
         }
 
         private void ResetCustom()
@@ -3513,11 +3555,11 @@ namespace FrameForge.UI
             }
 
             int perRow = group == 1 ? 4 : 5;
-            int cgap = Ui.Px(8);
+            int cgap = Ui.Px(7);
             int cw = (Width - pad * 2 - cgap * (perRow - 1)) / perRow;
-            int ch = Ui.Px(32);
-            // 游戏组只有两行,在通用组的三行高度里垂直居中,避免卡片底部塌出一块空白。
-            int top = Ui.Px(46) + (group == 1 ? Ui.Px(20) : 0);
+            int ch = Ui.Px(24);
+            // 预设区压缩成轻量工具条,把主要空间留给真正需要观察细节的预览。
+            int top = Ui.Px(36) + (group == 1 ? Ui.Px(10) : 0);
             int used = 0;
             for (int i = 0; i < chips.Length; i++)
             {
@@ -3525,7 +3567,7 @@ namespace FrameForge.UI
                 chips[i].Visible = show;
                 if (!show) continue;
                 int row = used / perRow, col = used % perRow;
-                chips[i].SetBounds(pad + col * (cw + cgap), top + row * (ch + Ui.Px(6)), cw, ch);
+                chips[i].SetBounds(pad + col * (cw + cgap), top + row * (ch + Ui.Px(3)), cw, ch);
                 used++;
             }
         }
@@ -3598,20 +3640,21 @@ namespace FrameForge.UI
         {
             if (Width <= 0 || Height <= 0) return;
             int gap = Ui.Px(12);
-            int modeH = Ui.Px(150);
-            // ICC 分组的胶囊按文字宽度换行,卡片高度跟着实际行数走,不留空白也不挤在一起。
-            int presetH = Ui.Px(176);
+            int modeH = Ui.Px(300);
+            // 预设区只保留紧凑选择器,省下的高度全部给 16:9 场景预览。
+            int presetH = Ui.Px(120);
             if (group == 2)
             {
                 int iccRowCount = IccRows(Width - Ui.Px(20) * 2);
                 // 导入按钮那一行 46~74,条目从 88 开始;一行条目时 142 高,每多一行加 38。
                 presetH = Ui.Px(142 + (iccRowCount > 1 ? (iccRowCount - 1) * 38 : 0));
             }
-            int customH = Height - modeH - presetH - gap * 2;
-            if (customH < Ui.Px(244))
+            // 底部多留一个间距,自定义卡不要顶着页面下沿。
+            int customH = Height - modeH - presetH - gap * 3;
+            if (customH < Ui.Px(190))
             {
-                customH = Ui.Px(244);
-                modeH = Math.Max(Ui.Px(132), Height - presetH - customH - gap * 2);
+                customH = Ui.Px(190);
+                modeH = Math.Max(Ui.Px(220), Height - presetH - customH - gap * 3);
             }
 
             modeCard.SetBounds(0, 0, Width, modeH);
@@ -3625,9 +3668,15 @@ namespace FrameForge.UI
             mode.SetBounds(Width - pad - segW, Ui.Px(9), segW, segH);
 
             int prevY = Ui.Px(48);
-            preview.SetBounds(pad, prevY, Width - pad * 2, Ui.Px(54));
-            modeNote.SetBounds(pad, prevY + Ui.Px(54) + Ui.Px(8),
-                Width - pad * 2, Math.Max(Ui.Px(20), modeH - prevY - Ui.Px(70)));
+            int prevH = Math.Max(Ui.Px(140), modeH - prevY - Ui.Px(14));
+            int prevW = Math.Min((int)((Width - pad * 2) * 0.56), (int)(prevH * 16.0 / 9.0));
+            preview.SetBounds(pad, prevY, prevW, prevH);
+            int noteX = pad + prevW + Ui.Px(18);
+            int noteW = Math.Max(Ui.Px(120), Width - noteX - pad);
+            modeNote.Align = ContentAlignment.TopLeft;
+            modeNote.SetBounds(noteX, prevY + Ui.Px(2), noteW, Ui.Px(40));
+            compareTitle.SetBounds(noteX, prevY + Ui.Px(50), noteW, Ui.Px(20));
+            compareSub.SetBounds(noteX, prevY + Ui.Px(72), noteW, Math.Max(Ui.Px(40), prevH - Ui.Px(76)));
 
             presetTitle.SetBounds(pad, Ui.Px(12), Width - pad * 2 - segW - Ui.Px(16), Ui.Px(20));
             presetGroup.SetBounds(Width - pad - segW, Ui.Px(8), segW, Ui.Px(28));
@@ -3641,10 +3690,10 @@ namespace FrameForge.UI
             int rows = (all.Length + 1) / 2;
             int colGap = Ui.Px(26);
             int colW = (Width - pad * 2 - colGap) / 2;
-            int sh = Ui.Px(42), sy = Ui.Px(40);
+            int sh = Ui.Px(34), sy = Ui.Px(28);
             // 间距按卡片剩余高度分摊,避免自定义卡底部留出大片空白。
             int sgap = (customH - sy - sh * rows - Ui.Px(12)) / (rows - 1);
-            if (sgap > Ui.Px(22)) sgap = Ui.Px(22);
+            if (sgap > Ui.Px(16)) sgap = Ui.Px(16);
             if (sgap < Ui.Px(4)) sgap = Ui.Px(4);
             for (int i = 0; i < all.Length; i++)
             {
@@ -3654,15 +3703,18 @@ namespace FrameForge.UI
         }
     }
 
-    /// <summary>滤镜实时预览:把当前颜色矩阵套到一张缓存的游戏画面上,按住可对比原图。</summary>
+    /// <summary>滤镜实时预览:原图与当前效果常驻分屏,拖动分界线比较细节。</summary>
     public class FilterPreview : Ctl
     {
         private float[] matrix = Filter.Identity();
-        private bool hold;
+        private float splitRatio = 0.5f;
+        private bool draggingSplit;
 
         // 预览底图只画一次:用真实场景(天空/远山/地面/人物/HUD)代替抽象色带,
         // 亮部、暗部、肤色、绿色植被的变化都能直接看出来,而不是凭渐变条猜。
         private static Bitmap scene;
+
+        public FilterPreview() { Cursor = Cursors.VSplit; }
 
         public void SetMatrix(float[] m)
         {
@@ -3670,7 +3722,7 @@ namespace FrameForge.UI
             Invalidate();
         }
 
-        /// <summary>矩阵等于恒等矩阵时预览没有任何变化,这时不该再提示"按住对比"。</summary>
+        /// <summary>矩阵等于恒等矩阵时预览没有任何变化,这时不显示分屏对比提示。</summary>
         private static bool IsIdentity(float[] m)
         {
             if (m == null || m.Length < 25) return true;
@@ -3683,19 +3735,33 @@ namespace FrameForge.UI
         protected override void OnMouseDown(MouseEventArgs e)
         {
             base.OnMouseDown(e);
-            if (e.Button == MouseButtons.Left && !IsIdentity(matrix)) { hold = true; Invalidate(); }
+            if (e.Button == MouseButtons.Left && !IsIdentity(matrix))
+            {
+                draggingSplit = true;
+                Capture = true;
+                UpdateSplit(e.X);
+            }
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            if (draggingSplit) UpdateSplit(e.X);
         }
 
         protected override void OnMouseUp(MouseEventArgs e)
         {
             base.OnMouseUp(e);
-            if (hold) { hold = false; Invalidate(); }
+            draggingSplit = false;
+            Capture = false;
         }
 
-        protected override void OnMouseLeave(EventArgs e)
+        private void UpdateSplit(int x)
         {
-            base.OnMouseLeave(e);
-            if (hold) { hold = false; Invalidate(); }
+            splitRatio = x / Math.Max(1f, Width);
+            if (splitRatio < 0.08f) splitRatio = 0.08f;
+            if (splitRatio > 0.92f) splitRatio = 0.92f;
+            Invalidate();
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -3704,22 +3770,31 @@ namespace FrameForge.UI
             Prep(g);
             if (Width < 8 || Height < 8) return;
 
-            bool split = hold && !IsIdentity(matrix);
+            bool split = !IsIdentity(matrix);
+            float splitX = Width * splitRatio;
             var r = new RectangleF(0, 0, Width - 1, Height - 1);
             using (GraphicsPath p = Ui.Round(r, Ui.Fp(10)))
             {
                 if (split)
                 {
-                    // 对比态:左半原图、右半当前滤镜。两侧同色相邻,
-                    // 预设只做了轻微调整时,接缝处的色差也比整块切换更容易看出来。
-                    g.SetClip(new RectangleF(0, 0, Width / 2f, Height));
+                    // 原图与滤镜常驻相邻,拖动分界线即可比较,不再需要按住等待。
+                    g.SetClip(new RectangleF(0, 0, splitX, Height));
                     DrawScene(g, p, Filter.Identity());
-                    g.SetClip(new RectangleF(Width / 2f, 0, Width - Width / 2f, Height));
+                    g.SetClip(new RectangleF(splitX, 0, Width - splitX, Height));
                     DrawScene(g, p, matrix);
                     g.ResetClip();
 
-                    using (var pen = new Pen(Color.FromArgb(215, 255, 255, 255), Math.Max(1f, Ui.Fp(1.5f))))
-                        g.DrawLine(pen, Width / 2f, Ui.Px(7), Width / 2f, Height - Ui.Px(7));
+                    using (var pen = new Pen(Color.FromArgb(225, 255, 255, 255), Math.Max(1f, Ui.Fp(1.5f))))
+                        g.DrawLine(pen, splitX, 0, splitX, Height);
+                    float hr = Ui.Fp(18);
+                    using (var b = new SolidBrush(Color.FromArgb(225, 255, 255, 255)))
+                        g.FillEllipse(b, splitX - hr / 2f, Height / 2f - hr / 2f, hr, hr);
+                    using (var pen = new Pen(Color.FromArgb(110, 35, 45, 60), Ui.Fp(1.2f)))
+                    {
+                        pen.StartCap = LineCap.Round; pen.EndCap = LineCap.Round;
+                        g.DrawLine(pen, splitX - Ui.Fp(4), Height / 2f - Ui.Fp(3), splitX - Ui.Fp(4), Height / 2f + Ui.Fp(3));
+                        g.DrawLine(pen, splitX + Ui.Fp(4), Height / 2f - Ui.Fp(3), splitX + Ui.Fp(4), Height / 2f + Ui.Fp(3));
+                    }
                 }
                 else
                 {
@@ -3738,7 +3813,7 @@ namespace FrameForge.UI
 
             // 右下角操作提示:没有滤镜效果时直说,避免"按住没反应"的错觉
             string tip = I18n.T("flt.ab.none");
-            if (!IsIdentity(matrix)) tip = I18n.T(hold ? "flt.ab.orig" : "flt.ab");
+            if (!IsIdentity(matrix)) tip = I18n.T("flt.ab");
             SizeF sz = g.MeasureString(tip, f);
             DrawTag(g, f, tip, Width - sz.Width - Ui.Px(18), Height - sz.Height - Ui.Px(7));
         }
@@ -3766,6 +3841,8 @@ namespace FrameForge.UI
             {
                 // 对比模式下外面已经按左右半屏裁过,这里只做交集,不能把那个裁剪覆盖掉。
                 g.SetClip(path, CombineMode.Intersect);
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
                 using (var ia = new ImageAttributes())
                 {
                     ia.SetColorMatrix(cm, ColorMatrixFlag.Default, ColorAdjustType.Bitmap);
@@ -3777,91 +3854,193 @@ namespace FrameForge.UI
         }
 
         /// <summary>
-        /// 生成一张 480×270 的"一帧游戏画面":天空渐变、太阳、两层远山、地面、
-        /// 人物剪影、准星与血条。缓存复用,不随窗口重绘重新生成。
+        /// 生成一张 480×270 的"一帧游戏画面":黄昏天空、夕阳、远山、湖面倒影、
+        /// 草坡、树影、人物剪影与 HUD。按 2 倍分辨率合成,缩小后边缘更干净。
         /// </summary>
         private static Bitmap Scene()
         {
             if (scene != null) return scene;
             const int W = 480, H = 270;
-            var bmp = new Bitmap(W, H, PixelFormat.Format32bppArgb);
+            var bmp = new Bitmap(W * 2, H * 2, PixelFormat.Format32bppArgb);
             try
             {
                 using (Graphics g = Graphics.FromImage(bmp))
                 {
                     g.SmoothingMode = SmoothingMode.AntiAlias;
+                    g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                    g.ScaleTransform(2f, 2f);
 
-                    // 天空:上方冷蓝、贴近地平线转暖,色温和饱和度调整在这里最直观
+                    // 天空:顶端冷蓝,靠近地平线转暖,色温与饱和度调整在这里最直观。
                     using (var sky = new LinearGradientBrush(
                         new Rectangle(0, 0, W, H * 2 / 3 + 1),
-                        Color.FromArgb(30, 54, 98), Color.FromArgb(232, 152, 86), LinearGradientMode.Vertical))
+                        Color.FromArgb(22, 36, 70), Color.FromArgb(238, 152, 88), LinearGradientMode.Vertical))
                         g.FillRectangle(sky, 0, 0, W, H * 2 / 3);
 
-                    // 太阳:对比度拉过头时最先在这里溢白,给高光一个参照
-                    using (var sun = new SolidBrush(Color.FromArgb(248, 232, 186)))
-                        g.FillEllipse(sun, W * 0.64f, H * 0.30f, 30, 30);
+                    // 夕阳:多层同心圆叠出柔和光晕,不用 PathGradientBrush(会在边缘留一圈灰边)。
+                    float sx = W * 0.70f, sy = H * 0.27f;
+                    for (int i = 24; i >= 1; i--)
+                    {
+                        float rr = 9f + i * 3.3f;
+                        using (var glow = new SolidBrush(Color.FromArgb(5, 255, 214, 160)))
+                            g.FillEllipse(glow, sx - rr, sy - rr, rr * 2, rr * 2);
+                    }
+                    using (var sun = new SolidBrush(Color.FromArgb(255, 250, 232)))
+                        g.FillEllipse(sun, sx - 13, sy - 13, 26, 26);
 
-                    // 远山:两层不同的深度,用来看暗部层次会不会被压成一团
+                    // 远山两层:远层偏冷偏淡,近层更深,用来看暗部层次会不会被压平。
                     var far = new PointF[]
                     {
-                        new PointF(0, H * 0.56f), new PointF(W * 0.16f, H * 0.40f),
-                        new PointF(W * 0.32f, H * 0.50f), new PointF(W * 0.48f, H * 0.34f),
-                        new PointF(W * 0.66f, H * 0.50f), new PointF(W * 0.82f, H * 0.38f),
-                        new PointF(W, H * 0.52f), new PointF(W, H), new PointF(0, H)
+                        new PointF(0, H * 0.55f), new PointF(W * 0.14f, H * 0.37f),
+                        new PointF(W * 0.29f, H * 0.47f), new PointF(W * 0.44f, H * 0.32f),
+                        new PointF(W * 0.60f, H * 0.46f), new PointF(W * 0.78f, H * 0.35f),
+                        new PointF(W, H * 0.50f), new PointF(W, H), new PointF(0, H)
                     };
-                    using (var br = new SolidBrush(Color.FromArgb(74, 92, 120))) g.FillPolygon(br, far);
+                    using (var br = new SolidBrush(Color.FromArgb(104, 120, 146))) g.FillPolygon(br, far);
 
-                    var near = new PointF[]
+                    var mid = new PointF[]
                     {
-                        new PointF(0, H * 0.66f), new PointF(W * 0.14f, H * 0.56f),
-                        new PointF(W * 0.30f, H * 0.64f), new PointF(W * 0.46f, H * 0.54f),
-                        new PointF(W * 0.62f, H * 0.66f), new PointF(W * 0.80f, H * 0.58f),
-                        new PointF(W, H * 0.66f), new PointF(W, H), new PointF(0, H)
+                        new PointF(0, H * 0.62f), new PointF(W * 0.18f, H * 0.50f),
+                        new PointF(W * 0.34f, H * 0.58f), new PointF(W * 0.52f, H * 0.47f),
+                        new PointF(W * 0.70f, H * 0.58f), new PointF(W, H * 0.52f),
+                        new PointF(W, H), new PointF(0, H)
                     };
-                    using (var br = new SolidBrush(Color.FromArgb(42, 58, 52))) g.FillPolygon(br, near);
+                    using (var br = new SolidBrush(Color.FromArgb(56, 72, 92))) g.FillPolygon(br, mid);
 
-                    // 地面:暖绿到暗绿,人物脚下留一点亮面
+                    // 湖面加夕阳倒影:一块高饱和暖色,饱和度和色温的变化一眼可见。
+                    using (var haze = new LinearGradientBrush(
+                        new Rectangle(0, (int)(H * 0.52f), W, (int)(H * 0.14f) + 1),
+                        Color.FromArgb(0, 236, 196, 168), Color.FromArgb(70, 236, 196, 168), LinearGradientMode.Vertical))
+                        g.FillRectangle(haze, 0, H * 0.52f, W, H * 0.14f);
+                    // 湖面:横向从冷灰过渡到夕阳暖色,再叠一层向下变暗的水深,不产生方形色块。
+                    using (var lake = new LinearGradientBrush(
+                        new Rectangle(0, (int)(H * 0.62f), W, (int)(H * 0.12f) + 1),
+                        Color.FromArgb(116, 104, 114, 136), Color.FromArgb(120, 208, 156, 122), LinearGradientMode.Horizontal))
+                        g.FillRectangle(lake, 0, H * 0.62f, W, H * 0.12f);
+                    using (var deep = new LinearGradientBrush(
+                        new Rectangle(0, (int)(H * 0.62f), W, (int)(H * 0.12f) + 1),
+                        Color.FromArgb(0, 20, 30, 40), Color.FromArgb(74, 20, 30, 40), LinearGradientMode.Vertical))
+                        g.FillRectangle(deep, 0, H * 0.62f, W, H * 0.12f);
+                    using (var refl = new SolidBrush(Color.FromArgb(110, 255, 208, 150)))
+                    {
+                        g.FillRectangle(refl, sx - 13f, H * 0.626f, 26f, 2f);
+                        g.FillRectangle(refl, sx - 9f, H * 0.651f, 18f, 2f);
+                    }
+                    using (var rip = new Pen(Color.FromArgb(66, 255, 220, 180), 1f))
+                    {
+                        for (int i = 0; i < 5; i++)
+                        {
+                            float yy = H * 0.638f + i * H * 0.012f;
+                            float ww = 30f - i * 4f;
+                            g.DrawLine(rip, sx - ww / 2f, yy, sx + ww / 2f, yy);
+                        }
+                    }
+
+                    // 前景草地:人物脚下留一点亮面,避免整块死黑。
                     using (var ground = new LinearGradientBrush(
-                        new Rectangle(0, (int)(H * 0.68f), W, (int)(H * 0.32f) + 1),
-                        Color.FromArgb(96, 116, 70), Color.FromArgb(26, 34, 26), LinearGradientMode.Vertical))
-                        g.FillRectangle(ground, 0, (int)(H * 0.68f), W, H);
+                        new Rectangle(0, (int)(H * 0.70f), W, (int)(H * 0.30f) + 1),
+                        Color.FromArgb(92, 112, 66), Color.FromArgb(18, 25, 20), LinearGradientMode.Vertical))
+                        g.FillRectangle(ground, 0, H * 0.70f, W, H * 0.30f);
+                    // 岸线:把湖面和草地轻轻分开,避免两条色带直接相接。
+                    using (var shore = new Pen(Color.FromArgb(80, 24, 32, 30), 1f))
+                        g.DrawLine(shore, 0, H * 0.70f, W, H * 0.70f);
 
-                    // 人物剪影:深色主体 + 脸部落差,方便观察"暗部会不会糊死"
-                    using (var body = new SolidBrush(Color.FromArgb(28, 30, 36)))
+                    // 草叶与树影都是暗部细节,滤镜压暗部时最容易糊掉。
+                    var rnd = new Random(20241122);
+                    using (var grass = new Pen(Color.FromArgb(110, 30, 42, 26), 1f))
                     {
-                        g.FillEllipse(body, W * 0.665f, H * 0.50f, 26, 26);        // 头
+                        for (int i = 0; i < 130; i++)
+                        {
+                            float gx = (float)rnd.NextDouble() * W;
+                            float gy = H * 0.70f + (float)rnd.NextDouble() * H * 0.10f;
+                            float gh = 2f + (float)rnd.NextDouble() * 5f;
+                            g.DrawLine(grass, gx, gy, gx + (float)rnd.NextDouble() * 2f - 1f, gy - gh);
+                        }
+                    }
+                    Tree(g, 4, H * 0.735f, 34, 62, Color.FromArgb(16, 23, 20));
+                    Tree(g, 42, H * 0.725f, 24, 44, Color.FromArgb(22, 30, 24));
+                    Tree(g, W - 38, H * 0.745f, 30, 56, Color.FromArgb(16, 23, 20));
+                    Tree(g, W - 70, H * 0.730f, 20, 38, Color.FromArgb(22, 30, 24));
+
+                    // 人物:背对夕阳的剪影,头、肩、躯干和双腿分开画,轮廓更像真人。
+                    float px = W * 0.30f, py = H * 0.745f;
+                    using (var body = new SolidBrush(Color.FromArgb(22, 24, 30)))
+                    {
+                        // 双腿
                         g.FillPolygon(body, new PointF[]
                         {
-                            new PointF(W * 0.66f, H * 0.58f), new PointF(W * 0.73f, H * 0.58f),
-                            new PointF(W * 0.75f, H * 0.82f), new PointF(W * 0.64f, H * 0.82f)
+                            new PointF(px + 2, py - 17), new PointF(px + 9, py - 17),
+                            new PointF(px + 8, py), new PointF(px + 3, py)
                         });
+                        g.FillPolygon(body, new PointF[]
+                        {
+                            new PointF(px + 11, py - 17), new PointF(px + 18, py - 17),
+                            new PointF(px + 19, py), new PointF(px + 14, py)
+                        });
+                        // 躯干
+                        g.FillPolygon(body, new PointF[]
+                        {
+                            new PointF(px + 1, py - 35), new PointF(px + 19, py - 35),
+                            new PointF(px + 17, py - 15), new PointF(px + 3, py - 15)
+                        });
+                        // 手臂与枪
+                        g.FillPolygon(body, new PointF[]
+                        {
+                            new PointF(px + 15, py - 34), new PointF(px + 20, py - 32),
+                            new PointF(px + 18, py - 23), new PointF(px + 14, py - 25)
+                        });
+                        g.FillRectangle(body, px + 17, py - 28, 19f, 2.5f);
+                        g.FillRectangle(body, px + 13, py - 29, 2.5f, 7f);
+                        // 头
+                        g.FillEllipse(body, px + 4, py - 47, 12, 12);
                     }
-
-                    // HUD:血条、准星、小地图,顺便检验滤镜不会把 UI 染得认不出来
-                    using (var hud = new SolidBrush(Color.FromArgb(210, 232, 238, 242)))
+                    using (var rim = new Pen(Color.FromArgb(170, 255, 202, 156), 1.2f))
                     {
-                        g.FillRectangle(hud, 18, H - 34, 96, 8);
-                        g.FillRectangle(hud, 18, H - 22, 62, 4);
-                        g.FillRectangle(hud, W - 128, H - 34, 58, 6);
-                        g.FillRectangle(hud, W - 128, H - 24, 34, 4);
+                        rim.StartCap = LineCap.Round; rim.EndCap = LineCap.Round;
+                        g.DrawArc(rim, px + 4, py - 47, 12, 12, -70, 130);
+                        g.DrawLine(rim, px + 19, py - 35, px + 17, py - 15);
+                        g.DrawLine(rim, px + 35, py - 29, px + 36, py - 26);
                     }
-                    using (var bar = new SolidBrush(Color.FromArgb(220, 206, 66, 58)))
-                        g.FillRectangle(bar, 18, H - 34, 58, 8);
 
-                    using (var cross = new Pen(Color.FromArgb(180, 240, 244, 248), 1.4f))
+                    // HUD:血条、护甲、弹药、小地图与准星,顺便检验 UI 不会被滤镜染得认不出来。
+                    using (var hud = new SolidBrush(Color.FromArgb(212, 232, 238, 242)))
                     {
-                        g.DrawLine(cross, W / 2f - 10, H / 2f, W / 2f - 4, H / 2f);
-                        g.DrawLine(cross, W / 2f + 4, H / 2f, W / 2f + 10, H / 2f);
-                        g.DrawLine(cross, W / 2f, H / 2f - 10, W / 2f, H / 2f - 4);
-                        g.DrawLine(cross, W / 2f, H / 2f + 4, W / 2f, H / 2f + 10);
+                        g.FillRectangle(hud, 18, H - 36, 104, 9);
+                        g.FillRectangle(hud, 18, H - 22, 70, 4);
+                        g.FillRectangle(hud, W - 76, H - 38, 58, 6);
+                        g.FillRectangle(hud, W - 76, H - 26, 34, 4);
+                    }
+                    using (var hp = new SolidBrush(Color.FromArgb(232, 214, 68, 58)))
+                        g.FillRectangle(hp, 18, H - 36, 74, 9);
+                    using (var shield = new SolidBrush(Color.FromArgb(200, 96, 186, 226)))
+                        g.FillRectangle(shield, 18, H - 22, 70, 4);
+
+                    using (var mini = new SolidBrush(Color.FromArgb(128, 10, 14, 18)))
+                        g.FillEllipse(mini, W - 72, 14, 56, 56);
+                    using (var mp = new Pen(Color.FromArgb(160, 222, 228, 234), 1.2f))
+                    {
+                        g.DrawEllipse(mp, W - 72, 14, 56, 56);
+                        g.DrawLine(mp, W - 44, 20, W - 44, 27);
+                        g.DrawLine(mp, W - 44, 57, W - 44, 64);
+                        g.DrawLine(mp, W - 66, 42, W - 59, 42);
+                        g.DrawLine(mp, W - 29, 42, W - 22, 42);
+                    }
+                    using (var you = new SolidBrush(Color.FromArgb(210, 255, 214, 96)))
+                        g.FillPolygon(you, new PointF[]
+                        {
+                            new PointF(W - 44, 34), new PointF(W - 40, 42),
+                            new PointF(W - 48, 42)
+                        });
+
+                    using (var cross = new Pen(Color.FromArgb(205, 244, 248, 252), 1.4f))
+                    {
+                        g.DrawLine(cross, W / 2f - 12, H / 2f, W / 2f - 5, H / 2f);
+                        g.DrawLine(cross, W / 2f + 5, H / 2f, W / 2f + 12, H / 2f);
+                        g.DrawLine(cross, W / 2f, H / 2f - 12, W / 2f, H / 2f - 5);
+                        g.DrawLine(cross, W / 2f, H / 2f + 5, W / 2f, H / 2f + 12);
+                        g.DrawEllipse(cross, W / 2f - 1.4f, H / 2f - 1.4f, 2.8f, 2.8f);
                     }
 
-                    using (var mini = new SolidBrush(Color.FromArgb(120, 12, 16, 20)))
-                        g.FillEllipse(mini, W - 70, 14, 54, 54);
-                    using (var mp = new Pen(Color.FromArgb(150, 220, 226, 232), 1.2f))
-                        g.DrawEllipse(mp, W - 70, 14, 54, 54);
-
-                    // 暗角:让画面更像游戏实拍,同时压一压四角的高光
+                    // 暗角:压一压四角,让画面更像游戏实拍。
                     using (var p = new GraphicsPath())
                     {
                         p.AddRectangle(new Rectangle(0, 0, W, H));
@@ -3869,7 +4048,7 @@ namespace FrameForge.UI
                         {
                             v.CenterPoint = new PointF(W / 2f, H * 0.45f);
                             v.CenterColor = Color.Transparent;
-                            v.SurroundColors = new Color[] { Color.FromArgb(130, 0, 0, 0) };
+                            v.SurroundColors = new Color[] { Color.FromArgb(140, 0, 0, 0) };
                             g.FillRectangle(v, 0, 0, W, H);
                         }
                     }
@@ -3878,6 +4057,26 @@ namespace FrameForge.UI
             }
             catch { scene = bmp; }
             return scene;
+        }
+
+        /// <summary>树影:一根树干加三层树冠,放在岸边当远景参照。</summary>
+        private static void Tree(Graphics g, float x, float baseY, float w, float h, Color c)
+        {
+            using (var b = new SolidBrush(c))
+            {
+                g.FillRectangle(b, x + w * 0.45f, baseY - h * 0.32f, Math.Max(1.5f, w * 0.1f), h * 0.32f);
+                for (int i = 0; i < 3; i++)
+                {
+                    float yy = baseY - h * (0.30f + i * 0.20f);
+                    float ww = w * (1f - i * 0.22f);
+                    g.FillPolygon(b, new PointF[]
+                    {
+                        new PointF(x + w / 2f, yy - h * 0.24f),
+                        new PointF(x + w / 2f - ww / 2f, yy),
+                        new PointF(x + w / 2f + ww / 2f, yy)
+                    });
+                }
+            }
         }
 
         /// <summary>黑底白字的小标签。</summary>
@@ -4593,7 +4792,7 @@ namespace FrameForge.UI
             if (scanning) return;
             scanning = true;
             scanBtn.Enabled = false;
-            scanBtn.Text = I18n.T("games.scanning");
+            scanBtn.Text = I18n.T("games.scanning.btn");
             status.Text = I18n.T("games.scanning");
 
             System.Threading.ThreadPool.QueueUserWorkItem(delegate(object state)

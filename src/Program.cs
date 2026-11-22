@@ -335,6 +335,13 @@ namespace FrameForge
             }
             catch (Exception ex) { check("presentmon", false, ex.Message); }
 
+            try
+            {
+                string aggregationNote;
+                check("fps aggregation 240fps", FpsEngine.SelfTestAggregation(out aggregationNote), aggregationNote);
+            }
+            catch (Exception ex) { check("fps aggregation 240fps", false, ex.Message); }
+
             // 10. 叠加层可构造
             try
             {
