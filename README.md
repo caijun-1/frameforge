@@ -600,6 +600,35 @@ frameforge/
 
 ### Changelog
 
+#### v1.5.0
+
+**New**
+
+- **Transactional boost**: all 9 kinds of system changes are recorded before they are applied, confirmed one by one and committed atomically; a failure rolls back only what already ran. If the app crashes, loses power or is killed mid-boost, the next start reconciles the journal and restores everything, and a watchdog process takes over if the main app exits unexpectedly. A `--restore` switch runs the reconciliation manually. Old v1 journals migrate to v2 instead of being dropped, and damaged or unknown-version journals are quarantined.
+- **Core scheduling policies**: Auto / P-core first / Single CCD, with an adjustable rebalance interval (15–120 s) and load hysteresis (default 2%). The topology snapshot exposes CCD / NUMA / SMT / LLC.
+- **Reference-counted resource arbiter**: the power plan and system timer are shared by the one-click boost and the real-time boost, so neither overwrites the other's original value; memory trimming is throttled.
+- **Per-game profiles**: a new optimization dialog stores an independent policy per game (8 toggles plus the ideal core set). Process keys are normalized to lowercase names, old display-name profiles are migrated, and the matching profile is applied automatically.
+- **Diagnostic Optimize page**: summary on top, read-only hardware topology (P/E cores, SMT, LLC) on the left and every system setting on the right; side-by-side on wide windows, stacked on narrow ones, 36 px row rhythm.
+- **Session FPS chart** in the post-game report (soft fill + thin line + average line).
+- Self-test grew to 70+ checks covering journal round-trip and migration, shared arbitration, conflict/missing/pending reconciliation and core policies.
+
+**Visual**
+
+- Wuxia dual theme (paper-ink day / shadow-blade night) sharing one continuous backdrop, glass cards composited once per card, new gauges (metal ring, big inner dial, vermilion gradient arc, 60 ticks) with the app's original sans-serif numerals, sword icons above the CPU/GPU dials, a five-axis radar (CPU / GPU / RAM / frequency / temperature), a restyled nav capsule, segmented control, toggles, buttons and sliders, plus a new white-leather-and-vermillion app icon.
+- The core strip lights only the cores actually used by the active boost; when idle the whole strip stays neutral grey.
+
+**Fixed**
+
+- Child controls each stacking their own glass layer (bright patches and hard rectangular edges), segmented controls painting the page background inside cards, the Optimize page's opaque scroll host, the covered "Restart as administrator" button, and the heavy vermilion corner slashes.
+
+**Improved**
+
+- Filter and overlay previews use the built-in watercolor frame with cover cropping; the filter page keeps its draggable A/B divider. The boost hero card was re-spaced and secondary buttons are translucent.
+
+**Performance**
+
+- Whole-card appearance cache, per-size preview caches (no more rescaling the 1024 px source every frame), single-stroke gauge arcs, page pre-build after startup and a 2 s refresh for static pages.
+
 #### v1.4.5
 
 **New**
