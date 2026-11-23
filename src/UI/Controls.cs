@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.IO;
 using System.Windows.Forms;
@@ -46,6 +47,34 @@ namespace FrameForge.UI
         }
 
         /// <summary>自上而下的柔和渐变填充,用来做卡片的顶亮底暗。</summary>
+        /// <summary>缝线:虚线沿圆角内侧走一圈,像皮革上的手缝边。</summary>
+        public static void Stitch(Graphics g, RectangleF r, float rad, Color c)
+        {
+            if (c.A == 0 || r.Width <= 4 || r.Height <= 4) return;
+            using (GraphicsPath p = Round(r, rad))
+            using (var pen = new Pen(c, 1f))
+            {
+                pen.DashStyle = DashStyle.Custom;
+                pen.DashPattern = new float[] { 3f, 3f };
+                g.DrawPath(pen, p);
+            }
+        }
+
+        /// <summary>控件在窗口坐标系里的位置,用来让底纹跨控件对齐。</summary>
+        public static Point Origin(Control c)
+        {
+            int x = 0, y = 0;
+            Control p = c;
+            // 顶层窗口的 Left/Top 是屏幕坐标,加进来反而会让底纹错位。
+            while (p != null && !(p is Form))
+            {
+                x += p.Left;
+                y += p.Top;
+                p = p.Parent;
+            }
+            return new Point(x, y);
+        }
+
         public static void FillVGrad(Graphics g, RectangleF r, float rad, Color top, Color bottom)
         {
             if (r.Width <= 0 || r.Height <= 0) return;
@@ -98,32 +127,147 @@ namespace FrameForge.UI
 
         protected void Prep(Graphics g)
         {
+            Hints(g);
+            // 卡片里的控件必须铺上和卡片一致的玻璃底:控件单独刷新时不会清屏,
+            // 不铺底就会把上一帧的文字叠在下面,出现重影。
+            Control p = Parent;
+            while (p != null)
+            {
+                Card card = p as Card;
+                if (card != null)
+                {
+                    card.PaintGlassFor(g, this);
+                    return;
+                }
+                if (p is Form || p is Page) break;
+                p = p.Parent;
+            }
+            using (var b = new SolidBrush(BackColor)) g.FillRectangle(b, ClientRectangle);
+        }
+
+        /// <summary>只设绘制质量、不铺底色:标题栏上需要透出窗口底纹的控件用它。</summary>
+        protected void Hints(Graphics g)
+        {
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
             g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
-            using (var b = new SolidBrush(BackColor)) g.FillRectangle(b, ClientRectangle);
         }
     }
 
     /// <summary>圆角卡片。</summary>
     public class Card : Ctl
     {
-        public float Radius = 15;
+        public float Radius = 10;
         public bool ShowBorder = true;
 
-        /// <summary>按父容器坐标重建页面背景渐变,圆角外和页面无缝衔接;无卡片底的控件也能复用。</summary>
+        // 卡面玻璃只算一次并缓存:卡片内每个子控件都从这张图裁同一块,
+        // 避免每个标签/按钮各自再叠一层半透明底,在卡面上留下亮块和硬边。
+        private Bitmap glass;
+        private Size glassSize;
+        private bool glassDark;
+        private Point glassOrigin;
+
+        // 整张卡片的最终外观(圆角外清晰背景 + 内层玻璃 + 边框)也只算一次,
+        // 每帧只贴一张图,切页时不再每张卡都重画背景和玻璃。
+        private Bitmap face;
+        private Size faceSize;
+        private bool faceDark;
+        private Point faceOrigin;
+
+        /// <summary>按窗口坐标重建页面底纹,圆角外和页面无缝衔接;无卡片底的控件也能复用。</summary>
         public static void PaintBackdrop(Graphics g, Control c)
         {
             if (c == null || c.Width <= 0 || c.Height <= 0) return;
-            RectangleF area = c.Parent != null
-                ? new RectangleF(-c.Left, -c.Top, c.Parent.ClientRectangle.Width, c.Parent.ClientRectangle.Height)
-                : new RectangleF(0, 0, c.Width, c.Height);
-            bool onPage = c.Parent is Page;
-            Color bgFrom = onPage ? Theme.BgTop : (c.Parent != null ? c.Parent.BackColor : Theme.Bg);
-            Color bgTo = onPage ? Theme.BgBottom : bgFrom;
-            if (area.Width <= 0 || area.Height <= 0) return;
-            using (var b = new LinearGradientBrush(area, bgFrom, bgTo, LinearGradientMode.Vertical))
-                g.FillRectangle(b, c.ClientRectangle);
+            Theme.PaintBg(g, c.ClientRectangle, Ui.Origin(c));
+        }
+
+        private Bitmap Glass()
+        {
+            if (Width <= 0 || Height <= 0) return null;
+            Point o = Ui.Origin(this);
+            if (glass != null && glassSize.Width == Width && glassSize.Height == Height
+                && glassDark == Theme.Dark && glassOrigin == o)
+                return glass;
+
+            if (glass != null) { glass.Dispose(); glass = null; }
+            glass = new Bitmap(Width, Height, PixelFormat.Format32bppPArgb);
+            glassSize = new Size(Width, Height);
+            glassDark = Theme.Dark;
+            glassOrigin = o;
+            using (Graphics gg = Graphics.FromImage(glass))
+            {
+                gg.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                Theme.PaintGlass(gg, ClientRectangle, o, o.Y, Height);
+            }
+            return glass;
+        }
+
+        // 缓存按尺寸自检重建,不在这里清空:可见性/布局切换也会触发 Resize,
+        // 一清就把预热好的卡面白白扔掉,首次显示又变慢。
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                if (glass != null) { glass.Dispose(); glass = null; }
+                if (face != null) { face.Dispose(); face = null; }
+            }
+            base.Dispose(disposing);
+        }
+
+        /// <summary>提前把整卡外观算好,首次切到该页时不再现场生成。</summary>
+        public void WarmFace()
+        {
+            Face();
+        }
+
+        private Bitmap Face()
+        {
+            if (Width <= 0 || Height <= 0) return null;
+            Point o = Ui.Origin(this);
+            if (face != null && faceSize.Width == Width && faceSize.Height == Height
+                && faceDark == Theme.Dark && faceOrigin == o)
+                return face;
+
+            if (face != null) { face.Dispose(); face = null; }
+            Bitmap bmp = Glass();
+            var img = new Bitmap(Width, Height, PixelFormat.Format32bppPArgb);
+            using (Graphics gg = Graphics.FromImage(img))
+            {
+                gg.SmoothingMode = SmoothingMode.AntiAlias;
+                gg.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                PaintBackdrop(gg, this);
+
+                float rad = Ui.Fp(Radius);
+                using (GraphicsPath gp = Ui.Round(new RectangleF(0, 0, Width, Height), rad))
+                {
+                    GraphicsState st = gg.Save();
+                    gg.SetClip(gp);
+                    if (bmp != null) gg.DrawImageUnscaled(bmp, 0, 0);
+                    gg.Restore(st);
+                }
+                if (ShowBorder)
+                    Ui.Stroke(gg, new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f), rad, Theme.Border, 1f);
+            }
+            face = img;
+            faceSize = new Size(Width, Height);
+            faceDark = Theme.Dark;
+            faceOrigin = o;
+            return face;
+        }
+
+        /// <summary>卡片里的子控件调用:直接从卡片玻璃缓存裁同一块,和卡面完全一致。</summary>
+        public void PaintGlassFor(Graphics g, Control c)
+        {
+            if (c == null || c.Width <= 0 || c.Height <= 0) return;
+            Bitmap bmp = Glass();
+            if (bmp == null) return;
+            Point co = Ui.Origin(c);
+            int sx = co.X - glassOrigin.X, sy = co.Y - glassOrigin.Y;
+            var src = new Rectangle(sx, sy, c.Width, c.Height);
+            Rectangle clip = Rectangle.Intersect(src, new Rectangle(0, 0, bmp.Width, bmp.Height));
+            if (clip.Width <= 0 || clip.Height <= 0) return;
+            var dest = new Rectangle(clip.X - sx, clip.Y - sy, clip.Width, clip.Height);
+            g.DrawImage(bmp, dest, clip, GraphicsUnit.Pixel);
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -133,18 +277,9 @@ namespace FrameForge.UI
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
             g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
 
-            // 圆角外侧不能铺卡片色:控件本身是矩形,而 BackColor 又被子控件继承成卡片色,
-            // 整块铺底就会在四个圆角外面留下四个直角(浅色主题下就是四个白角)。
-            // 页面背景是纵向渐变,只铺平色会在圆角外留下一块比周围更暗的灰角,
-            // 这里按父容器坐标重建同一条渐变,圆角外和页面无缝衔接。
-            PaintBackdrop(g, this);
-
-            // 卡片保持纯白:子控件是自带底色的矩形,卡片一旦上渐变,
-            // 文字标签就会在渐变上露出一块块白斑。层次感交给柔和底色和细描边。
-            float rad = Ui.Fp(Radius);
-            Ui.Fill(g, new RectangleF(0, 0, Width, Height), rad, Theme.Card);
-            if (ShowBorder)
-                Ui.Stroke(g, new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f), rad, Theme.Border, 1f);
+            // 整卡已经缓存成一张图,这里只做一次位图拷贝。
+            Bitmap f = Face();
+            if (f != null) g.DrawImageUnscaled(f, 0, 0);
         }
     }
 
@@ -227,36 +362,39 @@ namespace FrameForge.UI
         {
             Graphics g = e.Graphics;
             Prep(g);
-            // 默认 10 的圆角:按钮是控件,不是胶囊;只有显式指定 Radius 的才是通栏/圆形。
-            float rad = Radius < 0 ? Math.Min(Ui.Fp(10), Height / 2f) : Ui.Fp(Radius);
+            // 控件使用紧凑的 6px 圆角，不再把所有操作都做成胶囊。
+            float rad = Radius < 0 ? Math.Min(Ui.Fp(6), Height / 2f) : Ui.Fp(Radius);
             var r = new RectangleF(0, 0, Width - 1, Height - 1);
             Color fill, fg;
             if (Primary)
             {
+                // 朱砂实心 + 上亮下暗的轻微渐变 + 一圈金线,像一枚漆器按钮。
                 Color acc = AccentColor.A == 0 ? Theme.Accent : AccentColor;
-                Color hoverCol = Theme.Mix(acc, Theme.Dark ? Color.Black : Color.FromArgb(255, 0, 0, 0), Theme.Dark ? 0.10 : 0.12);
-                fill = !Enabled ? Theme.Mix(acc, BackColor, 0.55) : (hover || down ? hoverCol : acc);
-                fg = Color.White;
+                if (!Enabled) acc = Theme.Mix(acc, Theme.Card, 0.55);
+                fill = down ? Theme.Mix(acc, Color.Black, 0.20)
+                    : (hover ? Theme.Mix(acc, Color.White, 0.09) : acc);
+                Ui.FillVGrad(g, r, rad, Theme.Mix(fill, Color.White, Theme.Dark ? 0f : 0.03),
+                    Theme.Mix(fill, Color.Black, Theme.Dark ? 0.08 : 0.05));
+                Ui.Stroke(g, r, rad, Theme.Alpha(Theme.Mix(acc, Color.White, 0.25), Enabled ? 210 : 90), 1f);
+                fg = Enabled ? Theme.Hex("#FBEFDD") : Theme.Alpha(Theme.Hex("#FBEFDD"), 150);
+            }
+            else if (Ghost)
+            {
+                fill = hover || down ? Theme.Hover : Theme.Alpha(Theme.Accent, Theme.Dark ? 26 : 14);
+                Ui.Fill(g, r, rad, fill);
+                Ui.Stroke(g, r, rad, Theme.Mix(Theme.Accent, Theme.Border, 0.35), 1f);
+                fg = Enabled ? Theme.Accent : Theme.Sub;
             }
             else
             {
-                fill = down ? Theme.Track : (hover ? Theme.Hover : Theme.Card);
+                // 次级按钮用半透明白,让卡面的水墨纹理透出来,不再是一块实心卡色。
+                int wa = Theme.Dark ? 18 : 96;
+                fill = down ? Color.FromArgb(Theme.Dark ? 34 : 150, 255, 255, 255)
+                    : (hover ? Color.FromArgb(wa + (Theme.Dark ? 12 : 28), 255, 255, 255)
+                             : Color.FromArgb(wa, 255, 255, 255));
+                Ui.Fill(g, r, rad, fill);
+                Ui.Stroke(g, r, rad, Theme.Border, 1f);
                 fg = Enabled ? Theme.Text : Theme.Sub;
-                if (Ghost)
-                {
-                    fill = hover || down ? Theme.Hover : Theme.Card;
-                    fg = Enabled ? Theme.Accent : Theme.Sub;
-                }
-            }
-            if (Primary)
-            {
-                // 主按钮是一块实心色面,不叠高光渐变:颜色只在这里出现一次。
-                Ui.Fill(g, r, rad, fill);
-            }
-            else
-            {
-                Ui.Fill(g, r, rad, fill);
-                Ui.Stroke(g, r, rad, Ghost ? Theme.Mix(Theme.Border, Theme.Accent, 0.45) : Theme.Border, 1f);
             }
 
             // 转圈固定画在按钮右侧留白里。
@@ -264,7 +402,7 @@ namespace FrameForge.UI
             RectangleF sr = new RectangleF(Width - d - Ui.Fp(14), (Height - d) / 2f, d, d);
 
             // 文字始终在整颗按钮里居中:忙碌时也不缩小文字区域,避免点下去文字突然前移。
-            Font font = Theme.F(FontPt, FontStyle.Bold);
+            Font font = Theme.F(FontPt, Primary ? FontStyle.Bold : FontStyle.Regular);
             TextRenderer.DrawText(g, Text ?? "", font, ClientRectangle, fg,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
 
@@ -303,17 +441,19 @@ namespace FrameForge.UI
         protected override void OnPaint(PaintEventArgs e)
         {
             Graphics g = e.Graphics;
-            Prep(g);
+            // 标题栏有底纹,按钮不能铺一块纯色底。
+            Hints(g);
+            Theme.PaintBg(g, ClientRectangle, Ui.Origin(this));
             float d = Math.Min(Width, Height) - Ui.Fp(4);
             var c = new RectangleF((Width - d) / 2f, (Height - d) / 2f, d, d);
             Color hoverFill = Kind == Glyph.Close ? Color.FromArgb(down ? 255 : 230, Theme.Danger) : Color.FromArgb(Theme.Dark ? 26 : 14, Theme.Text);
-            if (hover) Ui.Fill(g, c, d / 2f, hoverFill);
+            if (hover) Ui.Fill(g, c, Ui.Fp(5), hoverFill);
 
             Color fg = Kind == Glyph.Close && hover ? Color.White : Theme.Sub;
             if (Kind == Glyph.Lang)
             {
                 float pt = d / Ui.S * 0.30f;
-                TextRenderer.DrawText(g, LangText, Theme.F(pt, FontStyle.Bold), Rectangle.Round(c), fg,
+                TextRenderer.DrawText(g, LangText, Theme.F(pt, FontStyle.Regular), Rectangle.Round(c), fg,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
                 return;
             }
@@ -336,41 +476,15 @@ namespace FrameForge.UI
                 }
                 else if (Kind == Glyph.Theme)
                 {
-                    if (Theme.Dark)
+                    // 两张参考图都使用太阳图标,主题按钮不再随夜间模式换成月亮。
+                    using (var b = new SolidBrush(fg))
+                        g.FillEllipse(b, cx - r * 0.55f, cy - r * 0.55f, r * 1.1f, r * 1.1f);
+                    for (int i = 0; i < 8; i++)
                     {
-                        // 月亮:拿两个圆的交点拼出一条双圆弧路径再填充。
-                        // 早先是"画个实心圆,再用 BackColor 盖掉一块"——底色一变(悬停高亮、换页)
-                        // 盖子就会在图标上留下一块补丁,而且盖出来的边没有抗锯齿。
-                        float bx = cx + r * 0.65f, by = cy - r * 0.25f;
-                        double dx = bx - cx, dy = by - cy;
-                        double d2 = Math.Sqrt(dx * dx + dy * dy);
-                        if (d2 < r * 0.1) d2 = r * 0.1;
-                        double proj = d2 / 2.0;                       // 两圆等径,交点连线正好在中间
-                        double half = Math.Sqrt(Math.Max(0.0, (double)r * r - proj * proj));
-                        double baseAng = Math.Atan2(dy, dx) * 180.0 / Math.PI;
-                        double off = Math.Atan2(half, proj) * 180.0 / Math.PI;
-
-                        var ob = new RectangleF(cx - r, cy - r, r * 2, r * 2);
-                        var ib = new RectangleF(bx - r, by - r, r * 2, r * 2);
-                        using (var mp = new GraphicsPath())
-                        {
-                            mp.AddArc(ob, (float)(baseAng + off), (float)(360.0 - off * 2.0));
-                            mp.AddArc(ib, (float)(baseAng + 180.0 + off), (float)(-off * 2.0));
-                            mp.CloseFigure();
-                            using (var b = new SolidBrush(fg)) g.FillPath(b, mp);
-                        }
-                    }
-                    else
-                    {
-                        using (var b = new SolidBrush(fg))
-                            g.FillEllipse(b, cx - r * 0.55f, cy - r * 0.55f, r * 1.1f, r * 1.1f);
-                        for (int i = 0; i < 8; i++)
-                        {
-                            double a = i * Math.PI / 4;
-                            g.DrawLine(pen,
-                                cx + (float)(Math.Cos(a) * r * 0.95), cy + (float)(Math.Sin(a) * r * 0.95),
-                                cx + (float)(Math.Cos(a) * r * 1.35), cy + (float)(Math.Sin(a) * r * 1.35));
-                        }
+                        double a = i * Math.PI / 4;
+                        g.DrawLine(pen,
+                            cx + (float)(Math.Cos(a) * r * 0.95), cy + (float)(Math.Sin(a) * r * 0.95),
+                            cx + (float)(Math.Cos(a) * r * 1.35), cy + (float)(Math.Sin(a) * r * 1.35));
                     }
                 }
             }
@@ -453,12 +567,11 @@ namespace FrameForge.UI
             var track = new RectangleF((Width - tw) / 2, (Height - th) / 2, tw, th);
             float rad = track.Height * 0.5f;
 
-            Color on = Theme.Accent;
-            Color off = Theme.Dark
-                ? Theme.Mix(Theme.Track, Theme.Text, 0.12f)
-                : Theme.Mix(Theme.Track, Theme.Sub, 0.32f);
+            // 两套主题一致:开启时是朱砂轨道 + 白色旋钮。
+            Color on = Theme.Dark ? Theme.Hex("#A62E2A") : Theme.Hex("#A62F29");
+            Color off = Theme.Dark ? Theme.Hex("#2B2B2C") : Theme.Hex("#D6D3CD");
             Color fill = Theme.Mix(off, on, anim);
-            Color edge = Theme.Mix(fill, Color.Black, Theme.Dark ? 0.22f : 0.08f);
+            Color edge = Theme.Mix(fill, Color.Black, Theme.Dark ? 0.30f : 0.14f);
 
             // 描边画成"外圈填边色 + 内圈填底色"的环,而不是拿 1px 画笔去描路径:
             // 画笔是骑在路径上的,一半会溢出到轨道外面,再叠上父容器裁剪,
@@ -468,21 +581,22 @@ namespace FrameForge.UI
             Ui.Fill(g, inner, Math.Max(0f, rad - 1f), fill);
 
             // 旋钮:四周留出内边距,滑到两端也不会贴死圆弧。
-            float inset = Math.Max(2f, (float)Math.Round(track.Height * 0.145f));
+            float inset = Math.Max(2f, (float)Math.Round(track.Height * 0.085f));
             float knob = track.Height - inset * 2f;
             if (knob <= 3f) return;
             float from = track.X + inset;
             float to = track.Right - inset - knob;
             float kx = (float)Math.Round(from + (to - from) * anim);
             float ky = (float)Math.Round(track.Y + inset);
-            using (var sh = new SolidBrush(Color.FromArgb(Theme.Dark ? 90 : 30, 15, 23, 42)))
-                g.FillEllipse(sh, kx, ky + Ui.Fp(0.8f), knob, knob);
-            using (var b = new SolidBrush(Color.White))
+            Color kc = Theme.Mix(Theme.Hex("#E7E4DE"), Color.White, anim);
+            using (var b = new SolidBrush(kc))
                 g.FillEllipse(b, kx, ky, knob, knob);
+            using (var pen = new Pen(Theme.Alpha(Color.Black, 25), 1f))
+                g.DrawEllipse(pen, kx + 0.5f, ky + 0.5f, knob - 1f, knob - 1f);
         }
     }
 
-    /// <summary>分段选择器(胶囊)。</summary>
+    /// <summary>分段选择器。</summary>
     public class Segmented : Ctl
     {
         public string[] Items = new string[0];
@@ -554,34 +668,54 @@ namespace FrameForge.UI
         {
             if (Items.Length == 0 || Width <= 0) return -1;
             float itemW = (float)Width / Items.Length;
-            int i = (int)(x / itemW);
-            if (i < 0) i = 0;
-            if (i >= Items.Length) i = Items.Length - 1;
-            return i;
+            int hit = (int)(x / itemW);
+            if (hit < 0) hit = 0;
+            if (hit >= Items.Length) hit = Items.Length - 1;
+            return hit;
+        }
+
+        /// <summary>铺所在容器的底:卡片里画同一层毛玻璃,标题栏/页面上铺窗口底纹。</summary>
+        private void Backdrop(Graphics g)
+        {
+            Control p = Parent;
+            while (p != null)
+            {
+                Card card = p as Card;
+                if (card != null)
+                {
+                    card.PaintGlassFor(g, this);
+                    return;
+                }
+                if (p is Form || p is Page) break;
+                p = p.Parent;
+            }
+            Theme.PaintBg(g, ClientRectangle, Ui.Origin(this));
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
             Graphics g = e.Graphics;
-            Prep(g);
-            var all = new RectangleF(0, 0, Width - 1, Height - 1);
-            float rad = Height / 2f;
-            Ui.Fill(g, all, rad, Theme.Track);
+            // 导航条直接压在标题栏底纹上,卡片里的分段控件则必须跟卡片共用毛玻璃底。
+            Hints(g);
+            Backdrop(g);
             if (Items.Length == 0) return;
 
             float itemW = (float)Width / Items.Length;
-            float pillW = itemW - Ui.Fp(4);
-            var pill = new RectangleF(Ui.Fp(2) + anim * itemW, Ui.Fp(2), pillW, Height - Ui.Fp(4));
+            var pill = new RectangleF(anim * itemW + Ui.Fp(1), 0,
+                itemW - Ui.Fp(2), Height - Ui.Fp(2));
+            Ui.Fill(g, pill, Ui.Fp(6), Theme.NavPill);
+            Ui.Stroke(g, pill, Ui.Fp(6), Theme.NavBorder, 1f);
             Color acc = AccentColor.A == 0 ? Theme.Accent : AccentColor;
-            // 选中胶囊是一块实心色面:不加同色投影,也不做上亮下暗的渐变。
-            Ui.Fill(g, pill, pill.Height / 2f, acc);
+            float uw = Math.Min(Ui.Fp(26), pill.Width * 0.34f);
+            Ui.Fill(g, new RectangleF(pill.X + (pill.Width - uw) / 2f, pill.Bottom - Ui.Fp(5), uw, Ui.Fp(2)),
+                Ui.Fp(1), acc);
 
             for (int i = 0; i < Items.Length; i++)
             {
-                var r = new RectangleF(i * itemW, 0, itemW, Height);
+                var r = new RectangleF(i * itemW, 0, itemW, Height - Ui.Fp(3));
                 bool selected = i == sel;
-                Color fg = selected ? Color.White : (i == hoverIndex ? Theme.Text : Theme.Sub);
-                TextRenderer.DrawText(g, Items[i], Theme.F(9.5f, selected ? FontStyle.Bold : FontStyle.Regular),
+                Color fg = selected ? Theme.Text : (i == hoverIndex ? Theme.Mix(Theme.Sub, Theme.Text, 0.6) : Theme.Sub);
+                TextRenderer.DrawText(g, Items[i], Theme.F(9.4f, selected ? FontStyle.Bold : FontStyle.Regular),
                     Rectangle.Round(r), fg,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
             }
@@ -647,6 +781,7 @@ namespace FrameForge.UI
             Prep(g);
             if (Items.Length == 0) return;
 
+            Color selCol = AccentColor.A == 0 ? Theme.Accent : AccentColor;
             float itemW = (float)Width / Items.Length;
             for (int i = 0; i < Items.Length; i++)
             {
@@ -655,7 +790,8 @@ namespace FrameForge.UI
                 if (i == Items.Length - 1 && LastItemInset > 0)
                     r.Width = Math.Max(Ui.Fp(24), r.Width - LastItemInset);
                 bool on = i == sel;
-                Color fg = on ? Theme.Text : (i == hoverIndex ? Theme.Mix(Theme.Sub, Theme.Text, 0.55) : Theme.Sub);
+                Color fg = on ? (Theme.Dark ? Theme.Mix(selCol, Color.White, 0.18f) : selCol)
+                    : (i == hoverIndex ? Theme.Mix(Theme.Sub, Theme.Text, 0.55) : Theme.Sub);
                 TextRenderer.DrawText(g, Items[i], Theme.F(10.5f, on ? FontStyle.Bold : FontStyle.Regular),
                     Rectangle.Round(r), fg,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
@@ -664,7 +800,7 @@ namespace FrameForge.UI
                 {
                     Color acc = AccentColor.A == 0 ? Theme.Accent : AccentColor;
                     float uw = Math.Min(Ui.Fp(30), r.Width * 0.34f);
-                    var bar = new RectangleF(r.X + (r.Width - uw) / 2f, Height - Ui.Fp(6), uw, Math.Max(2f, Ui.Fp(2.5)));
+                    var bar = new RectangleF(r.X + (r.Width - uw) / 2f, Height - Ui.Fp(7), uw, Math.Max(2f, Ui.Fp(2.5)));
                     // 一条实心下划线就够了:去掉外圈光晕,让文字自己说明选中状态。
                     Ui.Fill(g, bar, bar.Height / 2f, acc);
                 }
@@ -716,97 +852,180 @@ namespace FrameForge.UI
             Graphics g = e.Graphics;
             Prep(g);
 
-            // 全部度量按控件自身尺寸比例计算:半径 = min(w,h)*0.40,线宽 = 14/220
+            // 刻度、投影、金属圈、内盘、进度弧分层绘制,尺寸按参考图的大表盘比例收口。
             float side = Math.Min(Width, Height);
-            // 带刻度盘时把圆环收小一点,把外圈让给刻度。
-            float rad = side * (Ticks ? 0.355f : 0.40f);
-            float thick = Math.Max(2f, side * (14f / 220f));
             float cx = Width / 2f, cy = Height / 2f;
-            if (Ticks) DrawTicks(g, cx, cy, rad + thick * 1.45f, side);
+            float outer = side * (Ticks ? 0.385f : 0.39f);
+            float band = Math.Max(Ui.Fp(5), side * 0.036f);
+            if (Ticks) DrawTicks(g, cx, cy, outer + Ui.Fp(10), side);
 
-            // 内圈留白:不再画"表盘玻璃",卡片本身就是底色,少一层渐变少一层噪音。
-            var arc = new RectangleF(cx - rad + thick / 2f, cy - rad + thick / 2f, rad * 2f - thick, rad * 2f - thick);
+            var ro = new RectangleF(cx - outer, cy - outer, outer * 2f, outer * 2f);
+            var ri = new RectangleF(cx - outer + band, cy - outer + band,
+                (outer - band) * 2f, (outer - band) * 2f);
 
-            using (var pen = new Pen(Theme.Mix(Theme.Track, Theme.Sub, Theme.Dark ? 0.10 : 0.20), thick))
+            // 柔和的右下投影让金属圈从背景上浮起来,不使用生硬的纯黑单边。
+            for (int i = 4; i >= 1; i--)
             {
-                pen.StartCap = LineCap.Round;
-                pen.EndCap = LineCap.Round;
-                g.DrawArc(pen, arc, -90, 359.98f);
+                float grow = Ui.Fp(i * 1.2f);
+                using (var pen = new Pen(Color.FromArgb(Theme.Dark ? 13 : 8, 0, 0, 0), Ui.Fp(2.2f)))
+                    g.DrawEllipse(pen, ro.X - grow + Ui.Fp(1), ro.Y - grow + Ui.Fp(3),
+                        ro.Width + grow * 2f, ro.Height + grow * 2f);
             }
-            // 80%~100% 压一层淡色"警戒区":颜色跟随当前模式,均衡/自定义是浅蓝、野兽是浅红。
-            // 读数真的越过 80% 时,进度弧与数字会自己转成红色,警示靠那一层传达。
-            Color baseCol = AccentColor.A == 0 ? Theme.Accent : AccentColor;
-            using (var pen = new Pen(Theme.Alpha(baseCol, Theme.Dark ? 54 : 34), thick))
+
+            using (var ring = new GraphicsPath())
             {
-                pen.StartCap = LineCap.Round;
-                pen.EndCap = LineCap.Round;
-                g.DrawArc(pen, arc, -90 + 288f, 71.5f);
-            }
-            // 轨道外侧一条细轮廓线:圆环有"金属边"的收口,不会糊成一圈灰。
-            using (var pen = new Pen(Theme.Alpha(Theme.Border, Theme.Dark ? 110 : 130), 1f))
-                g.DrawEllipse(pen, new RectangleF(cx - rad - thick / 2f + 0.5f, cy - rad - thick / 2f + 0.5f,
-                    rad * 2f + thick - 1f, rad * 2f + thick - 1f));
-
-            Color col = baseCol;
-            if (disp >= 0.80) col = Theme.Danger;
-            else if (disp >= 0.60) col = Theme.Warn;
-
-            float sweep = (float)(disp * 360.0);
-            if (sweep > 0.5f)
-            {
-                if (sweep >= 359.5f) sweep = 359.5f;
-
-                // 进度弧只用一档纯色:没有光晕、没有同色渐变,读数靠长度说话。
-                using (var pen = new Pen(col, thick))
+                ring.FillMode = FillMode.Alternate;
+                ring.AddEllipse(ro);
+                ring.AddEllipse(ri);
+                using (var b = new LinearGradientBrush(ro, Color.White, Color.Black, 48f))
                 {
-                    pen.StartCap = LineCap.Round;
-                    pen.EndCap = LineCap.Round;
-                    g.DrawArc(pen, arc, -90, sweep);
+                    ColorBlend blend = new ColorBlend(4);
+                    blend.Colors = Theme.Dark
+                        ? new Color[] { Theme.Hex("#484849"), Theme.Hex("#171718"), Theme.Hex("#2B2B2C"), Theme.Hex("#0C0C0D") }
+                        : new Color[] { Theme.Hex("#F4F3F0"), Theme.Hex("#999691"), Theme.Hex("#D9D6D0"), Theme.Hex("#85827D") };
+                    blend.Positions = new float[] { 0f, 0.38f, 0.72f, 1f };
+                    b.InterpolationColors = blend;
+                    g.FillPath(b, ring);
                 }
-
-                // 弧尖一颗小亮点:读数停在哪里一眼可见,像表针的针尖。
-                if (sweep > 8f)
+                using (var pen = new Pen(Theme.Alpha(Theme.Dark ? Color.Black : Theme.Hex("#625F5A"), 190), Ui.Fp(1.1f)))
                 {
-                    // 弧线是沿着 rad-thick/2 的中线画的,亮点必须落在同一条中线上,
-                    // 否则会飘到轨道外侧去。
-                    double ea = (-90.0 + sweep) * Math.PI / 180.0;
-                    float mid = rad - thick / 2f;
-                    float ex = cx + (float)Math.Cos(ea) * mid;
-                    float ey = cy + (float)Math.Sin(ea) * mid;
-                    float tr = Math.Max(1.6f, thick * 0.26f);
-                    using (var b = new SolidBrush(Color.White))
-                        g.FillEllipse(b, ex - tr, ey - tr, tr * 2f, tr * 2f);
+                    g.DrawEllipse(pen, ro);
+                    g.DrawEllipse(pen, ri);
+                }
+                using (var pen = new Pen(Theme.Alpha(Color.White, Theme.Dark ? 52 : 165), Ui.Fp(1.2f)))
+                {
+                    float hr = outer - Ui.Fp(2.5f);
+                    g.DrawArc(pen, new RectangleF(cx - hr, cy - hr, hr * 2f, hr * 2f), 192f, 128f);
                 }
             }
 
-            // 环内上方小标题:仪表盘上比百分比更容易一眼看到是哪个部件。
+            using (var pgp = new GraphicsPath())
+            {
+                pgp.AddEllipse(ri);
+                using (var b = new PathGradientBrush(pgp))
+                {
+                    b.CenterColor = Theme.Dark ? Theme.Hex("#2B2B2C") : Theme.Hex("#F1F0EC");
+                    b.SurroundColors = new Color[] { Theme.Dark ? Theme.Hex("#1B1B1C") : Theme.Hex("#D8D5CF") };
+                    g.FillPath(b, pgp);
+                }
+                using (var pen = new Pen(Theme.Alpha(Theme.Dark ? Color.Black : Theme.Hex("#77736C"), 145), Ui.Fp(1.2f)))
+                    g.DrawEllipse(pen, ri.X + 0.5f, ri.Y + 0.5f, ri.Width - 1f, ri.Height - 1f);
+            }
+
+            // 弧线落在内盘边缘,左端暗、上端亮,不再压在金属外圈上。
+            Color acc = AccentColor.A == 0 ? Theme.Accent : AccentColor;
+            if (Theme.Dark) acc = Color.FromArgb((int)(acc.R * 0.93f), (int)(acc.G * 0.88f), (int)(acc.B * 0.88f));
+            float midR = outer - band * 1.9f;
+            var arc = new RectangleF(cx - midR, cy - midR, midR * 2f, midR * 2f);
+            double sweep = 80.0 + disp * 240.0;
+            float thick = band * 1.55f;
+            GradientArc(g, arc, 205f, (float)sweep, thick, acc, true);
+            double ea2 = (205.0 + sweep) * Math.PI / 180.0;
+            float ex = cx + (float)Math.Cos(ea2) * midR;
+            float ey = cy + (float)Math.Sin(ea2) * midR;
+            float tr = Math.Max(2.2f, thick * 0.24f);
+            using (var b = new SolidBrush(Color.White)) g.FillEllipse(b, ex - tr, ey - tr, tr * 2f, tr * 2f);
+
+            float iconY = cy - side * 0.180f;
+            DrawSword(g, cx, iconY, side * 0.030f);
             if (Caption.Length > 0)
             {
-                var capRect = new RectangleF(0, cy - rad * 0.72f, Width, rad * 0.30f);
-                TextRenderer.DrawText(g, Caption, Theme.F(10f, FontStyle.Regular), Rectangle.Round(capRect), Theme.Sub,
+                var capRect = new RectangleF(0, cy - side * 0.147f, Width, side * 0.05f);
+                TextRenderer.DrawText(g, Caption, Theme.F(8.5f, FontStyle.Regular), Rectangle.Round(capRect),
+                    Theme.Mix(Theme.Sub, Theme.Text, 0.25f),
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
             }
 
-            // 中心大号百分比(约 48 逻辑像素):默认用正文色,只有越过警戒线才转红。
-            Color readCol = disp >= 0.80 ? Theme.Danger : Theme.Text;
             string pct = ((int)Math.Round(disp * 100)) + "%";
-            float pt = side / Math.Max(1f, Ui.S) * (Ticks ? 0.145f : 0.165f);
-            var txtRect = new RectangleF(0, cy - rad * (Ticks ? 0.34f : 0.62f), Width, rad * (Ticks ? 0.62f : 0.64f));
-            TextRenderer.DrawText(g, pct, Theme.Num(pt), Rectangle.Round(txtRect), readCol,
+            float pt = side / Math.Max(1f, Ui.S) * 0.142f;
+            var txtRect = new RectangleF(0, cy - side * 0.093f, Width, side * 0.17f);
+            TextRenderer.DrawText(g, pct, Theme.Num(pt), Rectangle.Round(txtRect), Theme.Text,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
 
-            // 圆环内下方:已用 / 总量
-            var subRect = new RectangleF(0, cy + rad * (Ticks ? 0.26f : 0.06f), Width, rad * 0.40f);
-            TextRenderer.DrawText(g, sub, Theme.F(9f, FontStyle.Regular), Rectangle.Round(subRect), Theme.Sub,
+            var subRect = new RectangleF(0, cy + side * 0.129f, Width, side * 0.05f);
+            TextRenderer.DrawText(g, sub, Theme.F(8.5f, FontStyle.Regular), Rectangle.Round(subRect), Theme.Sub,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+        }
+
+        /// <summary>沿圆弧做明暗过渡;一次描边完成,避免上百段 DrawArc 拖慢重绘。</summary>
+        public static void GradientArc(Graphics g, RectangleF rect, float start, float sweep,
+            float thick, Color acc, bool metalStart)
+        {
+            if (sweep <= 0f) return;
+            Color first = metalStart
+                ? (Theme.Dark ? Theme.Hex("#4E4C4C") : Theme.Hex("#8C8780"))
+                : Theme.Mix(acc, Color.Black, 0.38f);
+            Color end = Theme.Dark
+                ? Color.FromArgb(Math.Min(255, acc.R + 16), acc.G, acc.B)
+                : Theme.Mix(acc, Color.White, 0.05f);
+
+            RectangleF box = rect;
+            box.Inflate(thick, thick);
+            using (var br = new LinearGradientBrush(box, first, end, 315f))
+            using (var pen = new Pen(br, thick))
+            {
+                pen.StartCap = LineCap.Round;
+                pen.EndCap = LineCap.Round;
+                g.DrawArc(pen, rect, start, sweep);
+            }
+        }
+
+        /// <summary>内盘上方的小剑标记,使用提供的透明 PNG,夜间转成米色。</summary>
+        private static void DrawSword(Graphics g, float cx, float cy, float r)
+        {
+            Bitmap sw = Theme.Sword;
+            if (sw != null)
+            {
+                Rectangle src = Theme.SwordBounds;
+                float h = r * 2.9f;
+                float w = h * src.Width / Math.Max(1, src.Height);
+                int dw = Math.Max(2, (int)Math.Round(w));
+                int dh = Math.Max(2, (int)Math.Round(h));
+                int dx = (int)Math.Round(cx - dw / 2f);
+                int dy = (int)Math.Round(cy - dh / 2f);
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                if (Theme.Dark)
+                {
+                    // 黑色线稿在深色内盘上看不见:用偏移矩阵整体提亮成米色,保留 alpha。
+                    ColorMatrix cm = new ColorMatrix(new float[][] {
+                        new float[]{1,0,0,0,0},
+                        new float[]{0,1,0,0,0},
+                        new float[]{0,0,1,0,0},
+                        new float[]{0,0,0,1,0},
+                        new float[]{0.86f,0.80f,0.68f,0,1}
+                    });
+                    using (var ia = new ImageAttributes())
+                    {
+                        ia.SetColorMatrix(cm);
+                        g.DrawImage(sw, new Rectangle(dx, dy, dw, dh),
+                            src.X, src.Y, src.Width, src.Height, GraphicsUnit.Pixel, ia);
+                    }
+                }
+                else
+                {
+                    g.DrawImage(sw, new Rectangle(dx, dy, dw, dh),
+                        src.X, src.Y, src.Width, src.Height, GraphicsUnit.Pixel);
+                }
+                return;
+            }
+
+            // 资源缺失时退回矢量小剑
+            using (var pen = new Pen(Theme.Alpha(Theme.Sub, 230), Math.Max(1.1f, r * 0.18f)))
+            {
+                pen.StartCap = LineCap.Round;
+                pen.EndCap = LineCap.Round;
+                g.DrawLine(pen, cx, cy - r, cx, cy + r * 0.35f);
+                g.DrawLine(pen, cx - r * 0.6f, cy + r * 0.35f, cx + r * 0.6f, cy + r * 0.35f);
+                g.DrawLine(pen, cx, cy + r * 0.35f, cx, cy + r * 0.95f);
+            }
         }
 
         /// <summary>圆环外侧刻度:小刻度弱、每 6 格一格主刻度。</summary>
         private void DrawTicks(Graphics g, float cx, float cy, float r, float side)
         {
-            int count = 72;
-            float minor = Math.Max(3f, side * 0.016f);
-            float major = Math.Max(5f, side * 0.030f);
+            int count = 60;
+            float minor = Math.Max(2.5f, side * 0.018f);
+            float major = Math.Max(5f, side * 0.035f);
             using (var pen = new Pen(Theme.Alpha(Theme.Text, Theme.Dark ? 46 : 38), Math.Max(1f, Ui.Fp(1))))
             {
                 for (int i = 0; i < count; i++)
@@ -879,8 +1098,7 @@ namespace FrameForge.UI
                 path.AddLine(pts[pts.Length - 1].X, pts[pts.Length - 1].Y, pts[pts.Length - 1].X, Height);
                 path.AddLine(pts[pts.Length - 1].X, Height, pts[0].X, Height);
                 path.CloseFigure();
-                using (var b = new LinearGradientBrush(new RectangleF(0, 0, Width, Height),
-                    Theme.Alpha(AccentColor.A == 0 ? Theme.Accent : AccentColor, 70), Theme.Alpha(AccentColor.A == 0 ? Theme.Accent : AccentColor, 4), LinearGradientMode.Vertical))
+                using (var b = new SolidBrush(Theme.Alpha(AccentColor.A == 0 ? Theme.Accent : AccentColor, Theme.Dark ? 22 : 16)))
                     g.FillPath(b, path);
             }
             using (var pen = new Pen(AccentColor.A == 0 ? Theme.Accent : AccentColor, Math.Max(1.6f, 2f * Ui.S)))
@@ -891,18 +1109,12 @@ namespace FrameForge.UI
                 g.DrawLines(pen, pts);
             }
 
-            // 末端亮点:最新一次采样,像示波器上的游标。
+            // 最新采样使用小型方形游标，不叠加光晕。
             PointF last = pts[pts.Length - 1];
             Color ac = AccentColor.A == 0 ? Theme.Accent : AccentColor;
-            float dr = Math.Max(2.2f, Ui.Fp(2.6f));
-            using (var b = new SolidBrush(Theme.Alpha(ac, Theme.Dark ? 90 : 60)))
-                g.FillEllipse(b, last.X - dr * 2.1f, last.Y - dr * 2.1f, dr * 4.2f, dr * 4.2f);
+            float dr = Math.Max(2f, Ui.Fp(2.2f));
             using (var b = new SolidBrush(ac))
-            using (var rim = new Pen(Theme.Card, Math.Max(1f, Ui.Fp(1.2f))))
-            {
-                g.FillEllipse(b, last.X - dr, last.Y - dr, dr * 2f, dr * 2f);
-                g.DrawEllipse(rim, last.X - dr, last.Y - dr, dr * 2f, dr * 2f);
-            }
+                g.FillRectangle(b, last.X - dr, last.Y - dr, dr * 2f, dr * 2f);
         }
     }
 
@@ -964,16 +1176,15 @@ namespace FrameForge.UI
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
             g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
 
-            // 提示条浮在底部图表卡上,先用卡片底色铺满整个控件矩形,
-            // 再画抗锯齿胶囊——这样圆角边缘会和背景平滑融合,没有 Region 裁剪产生的锯齿毛边。
-            using (var b = new SolidBrush(Theme.Card)) g.FillRectangle(b, ClientRectangle);
+            using (var b = new SolidBrush(Theme.Bg)) g.FillRectangle(b, ClientRectangle);
 
             int a = alpha;
-            Color bg = Theme.Dark ? Color.FromArgb(a, 38, 44, 54) : Color.FromArgb(a, 26, 29, 33);
+            Color bg = Theme.Dark ? Color.FromArgb(a, 46, 34, 27) : Color.FromArgb(a, 38, 27, 19);
             var r = new RectangleF(0, 0, Width, Height);
-            Ui.Fill(g, r, Height / 2f, bg);
+            Ui.Fill(g, r, Ui.Fp(6), bg);
+            Ui.Stroke(g, new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f), Ui.Fp(6), Color.FromArgb(a, Theme.Gold), 1f);
             TextRenderer.DrawText(g, Text ?? "", Theme.F(9.5f, FontStyle.Regular), ClientRectangle,
-                Color.FromArgb(a, 255, 255, 255),
+                Color.FromArgb(a, 246, 236, 219),
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
         }
     }
@@ -1100,7 +1311,7 @@ namespace FrameForge.UI
                 int pref = 2;
                 if (Native.DwmSetWindowAttribute(Handle, 33, ref pref, 4) != 0)
                 {
-                    using (GraphicsPath p = Ui.Round(new RectangleF(0, 0, Width, Height), Ui.Fp(12)))
+                    using (GraphicsPath p = Ui.Round(new RectangleF(0, 0, Width, Height), Ui.Fp(8)))
                         Region = new Region(p);
                 }
             }
@@ -1111,7 +1322,7 @@ namespace FrameForge.UI
                 Graphics g = e.Graphics;
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
-                using (var p = Ui.Round(new RectangleF(0, 0, Width - 1, Height - 1), Ui.Fp(12)))
+                using (var p = Ui.Round(new RectangleF(0, 0, Width - 1, Height - 1), Ui.Fp(8)))
                 using (var pen = new Pen(Theme.Border, 1f))
                     g.DrawPath(pen, p);
 

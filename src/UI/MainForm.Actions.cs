@@ -171,6 +171,7 @@ namespace FrameForge.UI
             LayoutAll();
 
             nav.Items = NavItems();
+            nav.BackColor = Theme.Bg;
             nav.SetSilent(idx);
             btnLang.LangText = I18n.IsEn ? "中" : "EN";
             tips.SetToolTip(btnLang, I18n.T("title.lang"));
@@ -267,7 +268,8 @@ namespace FrameForge.UI
                         return;
                     }
                     if (boostPage != null) boostPage.SetResult(ComposeResult(r));
-                    if (St.BoostProfile) SaveProfile(gameName, plan);
+                    if (St.BoostProfile)
+                        SaveProfile(gameName, plan, ProfileDisplayName(gamePid, gameName, s));
                     lastAutoPid = gamePid;
                     Toast(I18n.T("toast.boosted"));
                 });
@@ -462,11 +464,15 @@ namespace FrameForge.UI
             if (gamePid == lastAutoPid || gamePid == suppressAutoPid) return;
             if (BoostEngine.IsExcluded(gameName)) return;
 
-            GameProfile prof = Profiles != null ? Profiles.Find(gameName) : null;
+            GameProfile prof = Profiles != null
+                ? Profiles.Find(gameName, ProfileDisplayName(gamePid, gameName, s)) : null;
             BoostPlan plan = prof != null ? prof.Plan() : St.Plan();
-            // 有游戏策略时也沿用全局的优先级档位。主线程的理想处理器软引导跟着
-            // 高优先级一起生效(PCBoost 的第二层),这里的 IdealCpu 只是"全部线程"实验项。
-            if (prof != null) plan.PriorityLevel = St.BoostPriorityLevel;
+            // 方案 game-profile §3.2/§6 + roadmap 隐性缺陷 3：命中专属策略时档位来自
+            // prof.PriorityLevel（已落库），不再用全局 St.BoostPriorityLevel 隐性覆盖。
+            // 主线程的理想处理器软引导跟着档位一起走（PCBoost 第二层），这里的
+            // IdealCpu 仍是"全部线程"实验项，与软引导不是一回事。
+            // 进阶项安全策略：暂停后台、设备中断避让、全线程理想处理器三项在自动路径
+            // 一律强制 false，避免"用户勾了却没执行"的错觉；Affinity + Cores 照常执行。
             plan.Background = false;
             plan.Irq = false;
             plan.IdealCpu = false;
@@ -500,12 +506,33 @@ namespace FrameForge.UI
             });
         }
 
-        /// <summary>把本次加速项记到该游戏名下,下次启动自动套用。</summary>
-        private void SaveProfile(string game, BoostPlan plan)
+        /// <summary>优先取「我的游戏」里的显示名，确保旧版弹窗保存的显示名节可以回退命中。</summary>
+        private string ProfileDisplayName(int pid, string gameName, SysSample sample)
         {
-            if (Profiles == null || plan == null || game.Length == 0) return;
-            GameProfile p = Profiles.Find(game);
-            if (p == null) p = new GameProfile { Name = game };
+            string key = ProfileStore.NormalizeKey(gameName);
+            if (key.Length == 0) return "";
+            for (int i = 0; i < St.MyGames.Count; i++)
+            {
+                InstalledGame game = St.MyGames[i];
+                if (game != null && game.Name.Length > 0
+                    && string.Equals(ProfileStore.NormalizeKey(game.ProcName), key, StringComparison.Ordinal))
+                    return game.Name;
+            }
+            if (sample != null && sample.GamePid == pid && sample.GameTitle.Length > 0)
+                return sample.GameTitle;
+            return GameDb.Title(pid, key);
+        }
+
+        /// <summary>把本次加速项记到该游戏的小写进程键下,下次启动自动套用。</summary>
+        private void SaveProfile(string game, BoostPlan plan, string displayName)
+        {
+            string key = ProfileStore.NormalizeKey(game);
+            if (Profiles == null || plan == null || key.Length == 0) return;
+            GameProfile p = Profiles.Find(key, displayName);
+            if (p == null) p = new GameProfile();
+            // 旧显示名策略在写回时原位迁移；显示名仅作为展示/兼容别名保留。
+            p.Name = key;
+            if (!string.IsNullOrEmpty(displayName)) p.DisplayName = displayName;
             p.Priority = plan.Priority;
             p.PowerPlan = plan.PowerPlan;
             p.Timer = plan.Timer;
@@ -515,7 +542,22 @@ namespace FrameForge.UI
             p.Affinity = plan.Affinity;
             p.Irq = plan.Irq;
             p.Cores = plan.Cores;
+            // 方案 §6：档位随策略写回，保证下次自动加速不会退回全局档位。
+            p.PriorityLevel = Math.Max(0, Math.Min(4, plan.PriorityLevel));
             Profiles.Save(p);
+            Profiles.RemoveLegacy(p.Name, displayName);
+        }
+
+        /// <summary>
+        /// 游戏策略弹窗保存/删除后的统一刷新入口（方案 §3.6 一致性护栏）。
+        /// 两处都按名从同一份 profiles.ini 缓存重读，不额外开同步线程。
+        /// </summary>
+        public void SyncProfileChanged()
+        {
+            try { if (gamesPage != null) gamesPage.ReloadProfiles(); }
+            catch (Exception ex) { Log.Write("sync game list: " + ex.Message); }
+            try { if (boostPage != null) boostPage.SyncState(); }
+            catch (Exception ex) { Log.Write("sync boost page: " + ex.Message); }
         }
 
         private string ComposeResult(BoostResult r)

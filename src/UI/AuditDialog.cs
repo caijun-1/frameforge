@@ -43,11 +43,11 @@ namespace FrameForge.UI
             Text = I18n.T("audit.title");
             SetStyle(ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer |
                      ControlStyles.AllPaintingInWmPaint | ControlStyles.ResizeRedraw, true);
-            ClientSize = new Size(Ui.Px(640), Ui.Px(526));
+            ClientSize = new Size(Ui.Px(680), Ui.Px(600));
 
             btnClose = new FlatButton();
             btnClose.Primary = true;
-            btnClose.FontPt = 9f;
+            btnClose.FontPt = 9.5f;
             btnClose.Text = I18n.T("audit.close");
             btnClose.Click += delegate { Close(); };
             Controls.Add(btnClose);
@@ -58,8 +58,21 @@ namespace FrameForge.UI
 
         private void LayoutButton()
         {
-            int bw = Ui.Px(148), bh = Ui.Px(40);
-            btnClose.SetBounds(Width - Ui.Px(24) - bw, Height - Ui.Px(22) - bh, bw, bh);
+            int bh = Ui.Px(36);
+            int text = TextRenderer.MeasureText(btnClose.Text, Theme.F(9.5f, FontStyle.Bold)).Width;
+            int bw = Math.Max(Ui.Px(96), text + Ui.Px(32));
+            btnClose.SetBounds(Width - Ui.Px(24) - bw, Height - Ui.Px(24) - bh, bw, bh);
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            int pref = 2;
+            if (Native.DwmSetWindowAttribute(Handle, 33, ref pref, 4) != 0)
+            {
+                using (GraphicsPath p = Ui.Round(new RectangleF(0, 0, Width, Height), Ui.Fp(8)))
+                    Region = new Region(p);
+            }
         }
 
         protected override void OnKeyDown(KeyEventArgs e)
@@ -185,23 +198,21 @@ namespace FrameForge.UI
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
             using (var b = new SolidBrush(Theme.Bg)) g.FillRectangle(b, ClientRectangle);
-            using (var b = new SolidBrush(Theme.Accent))
-                g.FillRectangle(b, 0, 0, Width, Ui.Px(4));
 
             int pad = Ui.Px(24);
-            int y = Ui.Px(22);
+            Txt(g, I18n.T("audit.title"), Theme.Bold(15f), Theme.Text,
+                new Rectangle(pad, Ui.Px(24), Width - pad * 2, Ui.Px(30)),
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+            Txt(g, I18n.T("audit.sub"), Theme.Regular(9f), Theme.Sub,
+                new Rectangle(pad, Ui.Px(60), Width - pad * 2, Ui.Px(20)),
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
 
-            Txt(g, I18n.T("audit.title"), Theme.Bold(13f), Theme.Text,
-                new Rectangle(pad, y, Width - pad * 2, Ui.Px(26)), TextFormatFlags.Left);
-            y += Ui.Px(30);
-            Txt(g, I18n.T("audit.sub"), Theme.Regular(8.8f), Theme.Faint,
-                new Rectangle(pad, y, Width - pad * 2, Ui.Px(20)), TextFormatFlags.Left);
-            y += Ui.Px(28);
-
-            int rowH = Ui.Px(70);
-            var card = new Rectangle(pad, y, Width - pad * 2, rowH * rows.Count);
-            using (GraphicsPath p = Round(card, Ui.Px(12)))
-            using (var b = new SolidBrush(Theme.Card)) g.FillPath(b, p);
+            int rowH = Ui.Px(74);
+            var card = new Rectangle(pad, Ui.Px(100), Width - pad * 2, rowH * rows.Count);
+            var cardF = new RectangleF(card.X, card.Y, card.Width, card.Height);
+            Ui.Fill(g, cardF, Ui.Fp(6), Theme.Card);
+            Ui.Stroke(g, new RectangleF(card.X + 0.5f, card.Y + 0.5f, card.Width - 1f, card.Height - 1f),
+                Ui.Fp(6), Theme.Border, 1f);
 
             using (var line = new Pen(Theme.Border, 1f))
             {
@@ -210,17 +221,19 @@ namespace FrameForge.UI
                     Row it = rows[i];
                     int top = card.Top + rowH * i;
                     int inner = Ui.Px(16);
+                    int labelW = Ui.Px(190);
 
-                    Txt(g, it.Title, Theme.Bold(9.6f), Theme.Text,
-                        new Rectangle(card.Left + inner, top + Ui.Px(10),
-                            card.Width / 2, Ui.Px(20)),
-                        TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
-                    Txt(g, it.Value, Theme.Bold(9.6f), it.Warn ? Theme.Warn : Theme.Accent,
-                        new Rectangle(card.Left + card.Width / 2, top + Ui.Px(10),
-                            card.Width / 2 - inner, Ui.Px(20)),
-                        TextFormatFlags.Right | TextFormatFlags.EndEllipsis);
-                    Txt(g, it.Note, Theme.Regular(8.2f), it.Warn ? Theme.Warn : Theme.Sub,
-                        new Rectangle(card.Left + inner, top + Ui.Px(32),
+                    Txt(g, it.Title, Theme.Bold(9.5f), Theme.Text,
+                        new Rectangle(card.Left + inner, top + Ui.Px(10), labelW - inner, Ui.Px(20)),
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
+                        TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
+                    Txt(g, it.Value, Theme.Bold(9.5f), it.Warn ? Theme.Warn : Theme.Text,
+                        new Rectangle(card.Left + labelW, top + Ui.Px(10),
+                            card.Width - labelW - inner, Ui.Px(20)),
+                        TextFormatFlags.Right | TextFormatFlags.VerticalCenter |
+                        TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
+                    Txt(g, it.Note, Theme.Regular(8.8f), it.Warn ? Theme.Warn : Theme.Sub,
+                        new Rectangle(card.Left + inner, top + Ui.Px(36),
                             card.Width - inner * 2, Ui.Px(32)),
                         TextFormatFlags.Left | TextFormatFlags.WordBreak);
 
@@ -229,9 +242,17 @@ namespace FrameForge.UI
                 }
             }
 
-            y = card.Bottom + Ui.Px(10);
-            Txt(g, I18n.T("audit.note"), Theme.Regular(8f), Theme.Faint,
-                new Rectangle(pad, y, Width - pad * 2 - Ui.Px(160), Ui.Px(18)), TextFormatFlags.Left);
+            int noteY = card.Bottom + Ui.Px(16);
+            Txt(g, I18n.T("audit.note"), Theme.Regular(8.8f), Theme.Faint,
+                new Rectangle(pad, noteY, btnClose.Left - pad - Ui.Px(16), Ui.Px(32)),
+                TextFormatFlags.Left | TextFormatFlags.WordBreak);
+
+            using (var pen = new Pen(Theme.Border, 1f))
+            {
+                g.DrawLine(pen, pad, btnClose.Top - Ui.Px(16), Width - pad, btnClose.Top - Ui.Px(16));
+                using (var p = Ui.Round(new RectangleF(0, 0, Width - 1, Height - 1), Ui.Fp(8)))
+                    g.DrawPath(pen, p);
+            }
         }
 
         private static void Txt(Graphics g, string text, Font font, Color color, Rectangle rect, TextFormatFlags flags)
@@ -239,16 +260,5 @@ namespace FrameForge.UI
             TextRenderer.DrawText(g, text, font, rect, color, flags | TextFormatFlags.NoPrefix);
         }
 
-        private static GraphicsPath Round(Rectangle r, int rad)
-        {
-            var p = new GraphicsPath();
-            int d = rad * 2;
-            p.AddArc(r.X, r.Y, d, d, 180, 90);
-            p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-            p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-            p.CloseFigure();
-            return p;
-        }
     }
 }

@@ -19,20 +19,18 @@ namespace FrameForge.UI
             BackColor = Theme.Bg;
         }
 
-        /// <summary>页面底铺一层极淡的纵向渐变,卡片浮在上面才有影棚布光的柔和感。</summary>
+        /// <summary>页面铺宣纸 / 皮革底纹,和窗口标题栏共用同一套纹理。</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
             if (Width <= 0 || Height <= 0) return;
-            Graphics g = e.Graphics;
-            Color from = Theme.BgTop;
-            Color to = Theme.BgBottom;
-            using (var b = new System.Drawing.Drawing2D.LinearGradientBrush(ClientRectangle, from, to,
-                       System.Drawing.Drawing2D.LinearGradientMode.Vertical))
-                g.FillRectangle(b, ClientRectangle);
+            Theme.PaintBg(e.Graphics, ClientRectangle, Ui.Origin(this));
         }
 
         public virtual void Refresh(SysSample s) { }
+
+        /// <summary>预热钩子:页面可以在这里提前算好昂贵的外观缓存。</summary>
+        public virtual void Warm() { }
     }
 
 
@@ -136,7 +134,7 @@ namespace FrameForge.UI
 
             mainBtn = new FlatButton();
             mainBtn.Text = I18n.T("boost.apply");
-            mainBtn.FontPt = 11.5f;
+            mainBtn.FontPt = 11f;
             mainBtn.Click += delegate { Host.ApplyBoost(); };
 
             trimBtn = new FlatButton();
@@ -178,6 +176,8 @@ namespace FrameForge.UI
             realLbl.Size = 8.5f;
             realLbl.ForeColor = Theme.Faint;
             realLbl.Ellipsis = true;
+            // 参考图里实时加速状态紧跟在「未加速」右侧,同一行左对齐。
+            realLbl.Align = ContentAlignment.MiddleLeft;
             realLbl.Text = I18n.T("boost.real.off");
             lastReal = realLbl.Text;
 
@@ -193,7 +193,7 @@ namespace FrameForge.UI
             radar.Labels = new string[]
             {
                 I18n.T("mon.cpu"), I18n.T("mon.gpu"), I18n.T("mon.ram"),
-                I18n.T("mon.fps"), I18n.T("mon.temp")
+                I18n.T("mon.clock"), I18n.T("mon.temp")
             };
 
             ramArc = new ArcGauge();
@@ -312,7 +312,9 @@ namespace FrameForge.UI
             hero.Accent = Theme.Accent;
             chips.Accent = Theme.Accent;
             modes.AccentColor = Theme.Accent;
-            mainBtn.AccentColor = Theme.Accent;
+            mainBtn.AccentColor = modeIndex == 1
+                ? (Theme.Dark ? Theme.Hex("#6F1E1B") : Theme.Hex("#8B2F29"))
+                : Theme.Accent;
             editBtn.AccentColor = Theme.Accent;
             cpuRing.AccentColor = Theme.Accent;
             gpuRing.AccentColor = Theme.Accent;
@@ -464,7 +466,7 @@ namespace FrameForge.UI
                 lastGame = game;
                 lastSub = sub;
                 gameLbl.Text = game.Length > 0 ? game : I18n.T("boost.nogame");
-                gameLbl.ForeColor = game.Length > 0 ? Theme.Text : Theme.Sub;
+                gameLbl.ForeColor = Theme.Text;
                 gameSub.Text = sub;
             }
 
@@ -476,14 +478,13 @@ namespace FrameForge.UI
             else if (s.GpuName.Length > 0) gpuSub = Shorten(s.GpuName, 18);
             gpuRing.SetValue(s.Gpu < 0 ? 0 : s.Gpu / 100.0, gpuSub);
 
-            double fps = Host.Fps != null ? Host.Fps.Fps : -1;
-
             radar.SetValues(new double[]
             {
                 N01(s.Cpu / 100.0),
                 N01(s.Gpu / 100.0),
                 N01(s.RamPct / 100.0),
-                fps > 0 ? Math.Min(1.0, fps / 240.0) : 0,
+                // 参考图的第五轴是频率,和底栏「频率」一致,不再用帧率。
+                s.GpuClock > 0 ? Math.Min(1.0, s.GpuClock / 3000.0) : 0,
                 s.GpuTemp > 0 ? Math.Min(1.0, s.GpuTemp / 100.0) : 0
             });
 
@@ -505,19 +506,43 @@ namespace FrameForge.UI
             SyncRealBoost();
         }
 
-        /// <summary>实时加速状态:开关在设置页,这里只读引擎状态。</summary>
+        /// <summary>
+        /// 实时加速状态：开关在设置页，状态统一读 PagesStateHub（boost-core §A4.2）。
+        /// 仲裁者回填 DegradedReason 时显示"部分生效 + 原因"；lastReal 去重保持不变。
+        /// </summary>
         private void SyncRealBoost()
         {
-            GlobalBoost real = Host.RealBoost;
-            bool on = real != null && real.Active;
-            string name = on && real.CurrentName.Length > 0 ? real.CurrentName : "—";
-            string text = on
-                ? I18n.T("boost.real.on", name, on ? real.CurrentCount : 0)
-                : I18n.T("boost.real.off");
+            PagesStateHub hub = Host.StateHub;
+            bool on = hub != null && hub.RealBoostActive;
+            string name = on && hub.RealBoostName.Length > 0 ? hub.RealBoostName : "—";
+            bool degraded = on && (!hub.PowerEffective || !hub.TimerEffective || hub.DegradedReason.Length > 0);
+            string text;
+            if (!on) text = I18n.T("boost.real.off");
+            else if (degraded)
+                text = I18n.T("boost.real.partial", name, hub.RealBoostCount) + " · " + ReasonLabel(hub.DegradedReason);
+            else text = I18n.T("boost.real.on", name, hub.RealBoostCount);
+
             if (text == lastReal) return;
             lastReal = text;
             realLbl.Text = text;
-            realLbl.ForeColor = on ? Theme.Accent : Theme.Faint;
+            realLbl.ForeColor = !on ? Theme.Faint : (degraded ? Theme.Warn : Theme.Accent);
+        }
+
+        /// <summary>
+        /// 降级原因来自系统层（可能是 "power-denied,timer-denied" 这样的组合串）。
+        /// 按片段映射成中英文案，未知原因按通用的"部分优化项未生效"展示，不硬编码英文。
+        /// </summary>
+        private static string ReasonLabel(string reason)
+        {
+            string r = (reason ?? "").ToLowerInvariant();
+            if (r.Length == 0) return I18n.T("boost.real.reason.partial");
+            var labels = new List<string>();
+            if (r.IndexOf("power", StringComparison.Ordinal) >= 0)
+                labels.Add(I18n.T("boost.real.reason.power"));
+            if (r.IndexOf("timer", StringComparison.Ordinal) >= 0)
+                labels.Add(I18n.T("boost.real.reason.timer"));
+            if (labels.Count == 0) labels.Add(I18n.T("boost.real.reason.partial"));
+            return string.Join(" · ", labels.ToArray());
         }
 
         /// <summary>加速后的帧率对比:拿到结果才显示,平时不占位。</summary>
@@ -539,6 +564,7 @@ namespace FrameForge.UI
             bool allCores = boosting && mask == 0;
             if (allCores) mask = CpuTopology.AllMask();
             bool active = boosting && mask != 0;
+            // 只有真正参与加速的核心才亮;未加速时整条保持中性灰。
             coreMap.UsedMask = active ? mask : 0;
             coreMap.Mode = allCores ? 1 : (active ? Host.Boost.AffinityMode : 0);
 
@@ -561,6 +587,17 @@ namespace FrameForge.UI
                     string how = I18n.T(Host.Boost.AffinityMode == 1 ? "core.soft" : "core.hard");
                     cap += " · " + I18n.T("core.assigned", used, how);
                 }
+            }
+            // boost-core §B3.2 第 5 条：核心带追加当前 corePolicy 与理想核信息，
+            // 数据来自唯一状态源；系统层还没提供快照时 Hub 给默认值/跳过。
+            PagesStateHub hub = Host.StateHub;
+            if (hub != null)
+            {
+                string policyKey = "core.policy." + hub.CorePolicy;
+                string policy = I18n.T(policyKey);
+                if (policy == policyKey) policy = I18n.T("core.policy.auto");
+                cap += " · " + I18n.T("core.policy", policy);
+                if (hub.IdealCpu >= 0) cap += " · " + I18n.T("core.ideal", hub.IdealCpu.ToString());
             }
             if (coreMap.Caption != cap) coreMap.Caption = cap;
         }
@@ -595,40 +632,38 @@ namespace FrameForge.UI
         private void LayoutCards()
         {
             if (Width <= 0 || Height <= 0) return;
-            // 页面外距由主窗口统一给 20,这里不再叠加:其它页的卡片都是贴着页面排的,
-            // 加速页多一层内缩会让切页时整块内容左右跳 20 像素。
+            // 页面外距由主窗口统一给 24,这里不再叠加:其它页的卡片都是贴着页面排的,
+            // 加速页多一层内缩会让切页时整块内容左右跳 24 像素。
             int pad = 0;
-            int gap = Ui.Px(12);
-            int heroH = Math.Max(Ui.Px(160), Math.Min(Ui.Px(178), Height / 5));
-            int stripH = Ui.Px(46);
-            // 实时加速状态移到 Hero 后,模式条不再需要额外一行。
-            int modeH = Ui.Px(66);
+            int heroGap = Ui.Px(16), bodyGap = Ui.Px(10), modeGap = Ui.Px(12);
+            int heroH = Ui.Px(155);
+            int stripH = Ui.Px(45);
+            int modeH = Ui.Px(64);
             int bodyW = Width - pad * 2;
             int y = pad;
 
             hero.SetBounds(pad, y, bodyW, heroH);
-            y += heroH + gap;
+            y += heroH + heroGap;
 
-            // 底部不再额外留一条:减掉 2 个行间距就够(上方到 y 时已经隔了一个)。
-            int dashH = Math.Max(Ui.Px(200), Height - y - stripH - modeH - gap * 2 - pad);
-            int gaugeW = (int)(bodyW * 0.30f);
-            int cw = bodyW - gaugeW * 2 - gap * 2;
+            int dashH = Math.Max(Ui.Px(200), Height - y - stripH - modeH - bodyGap - modeGap);
+            int gaugeW = (int)Math.Round(bodyW * 0.30f);
+            int cw = bodyW - gaugeW * 2 - bodyGap * 2;
 
             cpuCard.SetBounds(pad, y, gaugeW, dashH);
             gpuCard.SetBounds(pad + bodyW - gaugeW, y, gaugeW, dashH);
 
-            int cx = pad + gaugeW + gap;
-            // 中列上头是雷达图,其余高度全部留给内存弧表。
-            int radarH = (int)(dashH * 0.57f);
+            int cx = pad + gaugeW + bodyGap;
+            // 默认尺寸下雷达 188、间距 10、内存 132,和参考图一致。
+            int radarH = (int)Math.Round(dashH * 0.57f);
             radarCard.SetBounds(cx, y, cw, radarH);
 
-            int bottomY = y + radarH + gap;
-            int bottomH = dashH - radarH - gap;
+            int bottomY = y + radarH + bodyGap;
+            int bottomH = dashH - radarH - bodyGap;
             ramCard.SetBounds(cx, bottomY, cw, bottomH);
 
-            y += dashH + gap;
+            y += dashH + bodyGap;
             stripCard.SetBounds(pad, y, bodyW, stripH);
-            y += stripH + gap;
+            y += stripH + modeGap;
             modeCard.SetBounds(pad, y, bodyW, modeH);
 
             // Hero 内部:左列文字,右侧是一键加速组合。
@@ -638,29 +673,30 @@ namespace FrameForge.UI
             int textW = Math.Max(Ui.Px(180), btnX - hp - Ui.Px(14));
 
             stateLbl.SetBounds(hp, Ui.Px(12), Ui.Px(120), Ui.Px(18));
-            // 常驻加速状态跟在「未加速」右边,同一行显示两个加速状态。
-            realLbl.SetBounds(hp + Ui.Px(124), Ui.Px(12), Math.Max(Ui.Px(90), textW - Ui.Px(124)), Ui.Px(18));
-            gameLbl.SetBounds(hp, Ui.Px(30), textW, Ui.Px(32));
-            gameSub.SetBounds(hp, Ui.Px(62), textW, Ui.Px(16));
-            // 状态胶囊移到标题下方:四种生效项一眼看全,也不再和"未加速"挤在同一行。
-            chips.SetBounds(hp, Ui.Px(84), textW, Ui.Px(22));
-            perfLbl.SetBounds(hp, Ui.Px(106), textW, Ui.Px(16));
-            coreMap.SetBounds(hp, Ui.Px(124), textW, Math.Max(Ui.Px(24), heroH - Ui.Px(130)));
+            // 常驻加速状态紧跟在「未加速」右侧,同一行显示两个加速状态。
+            int realW = Math.Max(Ui.Px(90), textW - Ui.Px(124));
+            realLbl.SetBounds(hp + Ui.Px(124), Ui.Px(12), realW, Ui.Px(18));
+            // 标题 / 副标题 / 标签 / 核心条各留一段均等的呼吸间距。
+            gameLbl.SetBounds(hp, Ui.Px(30), textW, Ui.Px(34));
+            gameSub.SetBounds(hp, Ui.Px(65), textW, Ui.Px(16));
+            chips.SetBounds(hp, Ui.Px(84), textW, Ui.Px(18));
+            perfLbl.SetBounds(hp, Ui.Px(103), textW, Ui.Px(13));
+            coreMap.SetBounds(hp, Ui.Px(116), textW, Math.Max(Ui.Px(34), heroH - Ui.Px(120)));
 
-            strip.SetBounds(Ui.Px(16), 0, bodyW - Ui.Px(32), stripH);
+            strip.SetBounds(Ui.Px(15), 0, bodyW - Ui.Px(30), stripH);
             // 右列:一键加速 + "自动优化"文字标签和开关并排,下面依次是内存整理与锁定游戏。
-            int btnH = Ui.Px(48);
-            int trimH = Ui.Px(28);
-            int pinH = Ui.Px(26);
+            int btnH = Ui.Px(45);
+            int trimH = Ui.Px(25);
+            int pinH = Ui.Px(22);
             int tgW = Ui.Px(54);
             int lblW = Ui.Px(60);
-            int btnBlockH = btnH + Ui.Px(8) + trimH + Ui.Px(6) + pinH;
+            int btnBlockH = btnH + Ui.Px(11) + trimH + Ui.Px(8) + pinH;
             int by0 = Math.Max(Ui.Px(8), (heroH - btnBlockH) / 2);
             mainBtn.SetBounds(btnX, by0, btnW - tgW - lblW - Ui.Px(8), btnH);
             autoLbl.SetBounds(btnX + btnW - tgW - lblW, by0, lblW, btnH);
             tgAuto.SetBounds(btnX + btnW - tgW, by0, tgW, btnH);
-            trimBtn.SetBounds(btnX, by0 + btnH + Ui.Px(8), btnW, trimH);
-            int pinY = by0 + btnH + Ui.Px(8) + trimH + Ui.Px(6);
+            trimBtn.SetBounds(btnX, by0 + btnH + Ui.Px(11), btnW, trimH);
+            int pinY = by0 + btnH + Ui.Px(11) + trimH + Ui.Px(8);
             int pinW = (btnW - Ui.Px(8)) / 2;
             pinBtn.SetBounds(btnX, pinY, pinW, pinH);
             negBtn.SetBounds(btnX + pinW + Ui.Px(8), pinY, btnW - pinW - Ui.Px(8), pinH);
@@ -683,9 +719,12 @@ namespace FrameForge.UI
             int ebH = Ui.Px(22);
             int ebRight = Ui.Px(12);
             int modesW = bodyW - mp * 2;
-            int modesY = modeH - Ui.Px(44) - Ui.Px(6);
-            modes.SetBounds(mp, modesY, modesW, Ui.Px(44));
-            editBtn.SetBounds(mp + modesW - ebRight - ebW, modesY + (Ui.Px(44) - ebH) / 2, ebW, ebH);
+            // TabBar 内文字垂直居中(中心=高/2)、下划线贴底(高-6)。可见内容重心
+            // 比控件中心低约 1/4,所以不能让控件贴卡片底——否则文字上方留白 ~29px、
+            // 下划线下方只剩 ~10px,整块看起来下沉。上移到固定小边距,让上下留白相等。
+            int modesY = Ui.Px(4);
+            modes.SetBounds(mp, modesY, modesW, Ui.Px(48));
+            editBtn.SetBounds(mp + modesW - ebRight - ebW, modesY + (Ui.Px(48) - ebH) / 2, ebW, ebH);
             // 预留位在布局里一次算定,不随模式显隐变化:切到自定义时文字不会左右跳。
             modes.LastItemInset = ebRight + ebW + Ui.Px(8);
         }
@@ -714,7 +753,7 @@ namespace FrameForge.UI
                 Color acc = Accent.A == 0 ? Theme.Accent : Accent;
                 float h = Math.Min(Height, Ui.Fp(22));
                 float y = (Height - h) / 2f;
-                float dot = Ui.Fp(5.5f);
+                float dot = Ui.Fp(5f);
                 float gap = Ui.Fp(7);
                 float x = 0;
                 Font f = Theme.F(8f, FontStyle.Regular);
@@ -727,19 +766,16 @@ namespace FrameForge.UI
                     if (x + w > Width) break;
 
                     var r = new RectangleF(x, y, w, h);
-                    // 只留下极淡的一层底,不再描边:四个胶囊排在一起时边框会互相抢眼。
-                    Ui.Fill(g, r, h / 2f, on ? Theme.Alpha(acc, Theme.Dark ? 36 : 16)
-                                               : Theme.Alpha(Theme.Track, Theme.Dark ? 100 : 70));
-
+                    // 参考图里标签没有底框,只有朱砂小方块 + 文字。
                     using (var b = new SolidBrush(on ? acc : Theme.Faint))
                     {
                         float dy = r.Y + (h - dot) / 2f;
-                        g.FillEllipse(b, r.X + Ui.Fp(8), dy, dot, dot);
+                        g.FillRectangle(b, r.X + Ui.Fp(4), dy, dot, dot);
                     }
 
                     TextRenderer.DrawText(g, Labels[i], f,
-                        Rectangle.Round(new RectangleF(r.X + Ui.Fp(8) + dot + Ui.Fp(6), r.Y, r.Width - (Ui.Fp(8) + dot + Ui.Fp(6)) - Ui.Fp(8), h)),
-                        on ? Theme.Text : Theme.Faint,
+                        Rectangle.Round(new RectangleF(r.X + Ui.Fp(4) + dot + Ui.Fp(6), r.Y, r.Width - (Ui.Fp(4) + dot + Ui.Fp(6)) - Ui.Fp(8), h)),
+                        on ? Theme.Mix(Theme.Sub, acc, 0.55f) : Theme.Faint,
                         TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
 
                     x += w + gap;
@@ -781,7 +817,10 @@ namespace FrameForge.UI
 
                 CpuCore[] cores = CpuTopology.Cores();
                 int capH = Ui.Px(15);
-                float bandH = Height - capH;
+                int capGap = Ui.Px(6);
+                // 核心条与控制条下方说明之间留固定间距,文字不再贴着色块。
+                float bandH = Height - capH - capGap;
+                float capY = Height - capH;
                 Color acc = Accent.A == 0 ? Theme.Accent : Accent;
 
                 // 每个物理核心一格;末级缓存编号变化处多留一段缝,CCD 边界一眼可见。
@@ -791,23 +830,48 @@ namespace FrameForge.UI
                     float total = 0;
                     for (int i = 1; i < cores.Length; i++)
                         total += cores[i].Llc != cores[i - 1].Llc ? gap * 3 : gap;
-                    float cell = (Width - total) / cores.Length;
-                    if (cell < Ui.Fp(2)) cell = Ui.Fp(2);
+                    float[] weights = { 1.00f, 1.10f, 0.94f, 1.04f, 0.86f, 1.10f, 0.91f, 1.00f,
+                                        1.05f, 1.04f, 0.96f, 1.10f, 1.08f, 0.96f, 1.09f, 0.94f };
+                    float weightSum = 0;
+                    for (int i = 0; i < cores.Length; i++) weightSum += weights[i % weights.Length];
+                    float unit = (Width - total) / weightSum;
+                    Color[] idleLight = {
+                        Theme.Hex("#D9D3CC"), Theme.Hex("#E2DCD5"), Theme.Hex("#E4DED8"), Theme.Hex("#E6E0DA"),
+                        Theme.Hex("#CCC6BD"), Theme.Hex("#EAE4DD"), Theme.Hex("#DFD8D1"), Theme.Hex("#E5DFD7"),
+                        Theme.Hex("#E3DCD4"), Theme.Hex("#DCD7D0"), Theme.Hex("#DBD5CE"), Theme.Hex("#DFD9D0"),
+                        Theme.Hex("#DFD8D1"), Theme.Hex("#DBD6CD"), Theme.Hex("#D3CEC5"), Theme.Hex("#D1CCC3") };
+                    Color[] idleDark = {
+                        Theme.Hex("#2B2A28"), Theme.Hex("#2E2C2B"), Theme.Hex("#302F2E"), Theme.Hex("#323030"),
+                        Theme.Hex("#222220"), Theme.Hex("#373635"), Theme.Hex("#2D2C2C"), Theme.Hex("#2E2D2A"),
+                        Theme.Hex("#312F2F"), Theme.Hex("#2B2A28"), Theme.Hex("#2B2A29"), Theme.Hex("#292827"),
+                        Theme.Hex("#2B2A29"), Theme.Hex("#2A2926"), Theme.Hex("#252422"), Theme.Hex("#272625") };
 
                     float x = 0;
-                    float radius = Math.Max(2f, cell / 3f);
+                    float radius = Math.Min(Ui.Fp(4), bandH * 0.28f);
                     for (int i = 0; i < cores.Length; i++)
                     {
                         if (i > 0) x += cores[i].Llc != cores[i - 1].Llc ? gap * 3 : gap;
+                        float cell = Math.Max(Ui.Fp(2), unit * weights[i % weights.Length]);
 
                         bool used = UsedMask != 0 && (cores[i].Mask & UsedMask) != 0;
                         Color fill;
-                        // 核心条是一条刻度带:没被加速的核心走中性灰,只有分到手的核心才上色。
-                        if (used) fill = Mode == 1 ? Theme.Alpha(acc, 150) : acc;
-                        else if (cores[i].Parked) fill = Theme.Alpha(Theme.Track, Theme.Dark ? 120 : 90);
-                        else fill = Theme.Alpha(Theme.Track, Theme.Dark ? 150 : 255);
+                        if (used)
+                        {
+                            // 正在参与加速的核心用饱和朱砂,和未使用的灰格拉开明显差距。
+                            fill = Mode == 1 ? Theme.Mix(acc, Color.White, 0.10f)
+                                             : Theme.Mix(acc, Color.White, Theme.Dark ? 0.16f : 0.04f);
+                            if (Theme.Dark) fill = Theme.Mix(fill, Color.White, 0.08f);
+                        }
+                        else fill = Theme.Dark ? idleDark[i % idleDark.Length] : idleLight[i % idleLight.Length];
 
-                        Ui.Fill(g, new RectangleF(x, 0, cell, bandH), radius, fill);
+                        var cellRect = new RectangleF(x, 0, cell, bandH);
+                        Ui.Fill(g, cellRect, radius, fill);
+                        if (used)
+                        {
+                            // 一圈很淡的高光边,让亮点更"发光"但仍贴合卡片。
+                            Ui.Stroke(g, cellRect, radius,
+                                Theme.Alpha(Color.White, Theme.Dark ? 80 : 130), 1f);
+                        }
                         x += cell;
                     }
                 }
@@ -815,31 +879,17 @@ namespace FrameForge.UI
                 if (Caption.Length > 0)
                 {
                     TextRenderer.DrawText(g, Caption, Theme.F(8f, FontStyle.Regular),
-                        new Rectangle(0, (int)bandH, Width, capH), Theme.Sub,
+                        new Rectangle(0, (int)capY, Width, capH), Theme.Sub,
                         TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine
                         | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
                 }
             }
         }
 
-        /// <summary>顶部主卡:左侧一条强调色,野兽模式下整条变红。</summary>
+        /// <summary>顶部主卡:角标和缝线由 Card 统一绘制,这里只保留模式强调色引用。</summary>
         private sealed class HeroCard : Card
         {
             public Color Accent = Color.Empty;
-
-            protected override void OnPaint(PaintEventArgs e)
-            {
-                base.OnPaint(e);
-                Graphics g = e.Graphics;
-                Color a = Accent.A == 0 ? Theme.Accent : Accent;
-
-                float barW = Math.Max(2f, Ui.Fp(3));
-                var bar = new RectangleF(Ui.Fp(1), Ui.Fp(14), barW, Math.Max(4f, Height - Ui.Fp(28)));
-                // 左侧强调条:野兽模式下整条变红,是这张卡唯一的强色,其余留白更干净。
-                using (GraphicsPath p = Ui.Round(bar, barW / 2f))
-                using (var b = new SolidBrush(a))
-                    g.FillPath(b, p);
-            }
         }
 
         /// <summary>显卡传感器条:四列小标题 + 数值。</summary>
@@ -865,7 +915,7 @@ namespace FrameForge.UI
                 {
                     var capR = new Rectangle((int)(i * w), 0, (int)w, (int)(Height * 0.44f));
                     var valR = new Rectangle((int)(i * w), (int)(Height * 0.40f), (int)w, (int)(Height * 0.60f));
-                    TextRenderer.DrawText(g, Caps[i], Theme.F(8f, FontStyle.Regular), capR, Theme.Faint,
+                    TextRenderer.DrawText(g, Caps[i], Theme.F(8f, FontStyle.Regular), capR, Theme.Sub,
                         Ui.Flags(ContentAlignment.MiddleCenter, false));
                     TextRenderer.DrawText(g, Vals.Length > i ? Vals[i] : "—", Theme.Num(11f), valR, Theme.Text,
                         Ui.Flags(ContentAlignment.MiddleCenter, false));
@@ -907,6 +957,11 @@ namespace FrameForge.UI
         private readonly Segmented style, corner;
         private readonly Slider scale;
         private readonly OverlayPreview preview;
+
+        public override void Warm()
+        {
+            if (preview != null) preview.Warm();
+        }
         private readonly Chip[] chips = new Chip[10];
         private readonly ToolTip rtssTip;
 
@@ -1227,7 +1282,7 @@ namespace FrameForge.UI
             // 与其它页的区块标题保持同一字号(行标题 9.8,区块标题 10.2)。
             l.Size = 10.2f;
             l.Style = FontStyle.Bold;
-            l.ForeColor = Theme.Sub;
+            l.ForeColor = Theme.Text;
             l.Text = text;
             return l;
         }
@@ -1554,7 +1609,7 @@ namespace FrameForge.UI
         private void LayoutCards()
         {
             if (Width <= 0 || Height <= 0) return;
-            int gap = Ui.Px(12);
+            int gap = Ui.Px(16);
             int itemH = Ui.Px(116);
             // 说明卡只留状态、快捷键和一行限制说明,不再单独占用标题行。
             int hintH = Ui.Px(124);
@@ -1565,25 +1620,23 @@ namespace FrameForge.UI
                 hintH = Math.Max(Ui.Px(116), Height - itemH - cardH - gap * 2);
             }
 
-            // 顶部一行拆成两栏:左边是设置,右边是效果预览。
-            int leftW = (int)(Width * 0.58);
+            // 预览是主工作区，设置放在右侧；窄窗口优先保留设置的可操作性。
+            int leftW = (int)(Width * 0.44);
             int rightW = Width - leftW - gap;
-            if (rightW < Ui.Px(240))
+            if (rightW < Ui.Px(260))
             {
-                // 窗口太窄时把预览收起来,优先保证设置项不被挤压。
                 leftW = Width;
                 rightW = 0;
             }
-            ovCard.SetBounds(0, 0, leftW, cardH);
-            // 注意:页面隐藏时 Control.Visible 的读值恒为 false(它看的是整条父链),
-            // 这里必须用局部变量判断,否则预览卡永远排不到位置。
-            bool showPrev = rightW >= Ui.Px(240);
+            int settingsX = rightW > 0 ? rightW + gap : 0;
+            ovCard.SetBounds(settingsX, 0, leftW, cardH);
+            bool showPrev = rightW >= Ui.Px(260);
             prevCard.Visible = showPrev;
-            if (showPrev) prevCard.SetBounds(leftW + gap, 0, rightW, cardH);
+            if (showPrev) prevCard.SetBounds(0, 0, rightW, cardH);
             itemCard.SetBounds(0, cardH + gap, Width, itemH);
             hintCard.SetBounds(0, cardH + itemH + gap * 2, Width, hintH);
 
-            int pad = Ui.Px(20);
+            int pad = Ui.Px(24);
             int right = ovCard.Width - pad;
             int toggleW = Ui.Px(48);
 
@@ -1629,7 +1682,7 @@ namespace FrameForge.UI
             rtssBtn.SetBounds(rtBtnX, Ui.Px(261) + off6, rtBtnW, Ui.Px(26));
 
             // RTSS 样式卡与自绘卡同一位置,两者按当前由谁画叠加层互斥显示。
-            rtssCard.SetBounds(0, 0, leftW, cardH);
+            rtssCard.SetBounds(settingsX, 0, leftW, cardH);
             rtssCard.Visible = rtssMode;
             ovCard.Visible = !rtssMode;
             rtssCardTitle.SetBounds(pad, Ui.Px(12), leftW - pad * 2, Ui.Px(20));
@@ -1705,55 +1758,57 @@ namespace FrameForge.UI
                 BackColor = Theme.Card;
             }
 
+            // 预览底图按控件尺寸缓存:缩放一次,重绘/切页时只做位图拷贝。
+            private Bitmap art;
+            private Size artSize;
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing && art != null) { art.Dispose(); art = null; }
+                base.Dispose(disposing);
+            }
+
+            public void Warm()
+            {
+                using (var bmp = new Bitmap(1, 1))
+                using (Graphics g = Graphics.FromImage(bmp)) DrawArt(g);
+            }
+
+            private void DrawArt(Graphics g)
+            {                Bitmap src = Theme.PlayArt;
+                if (src == null) return;
+                if (art == null || artSize.Width != Width || artSize.Height != Height)
+                {
+                    if (art != null) { art.Dispose(); art = null; }
+                    art = new Bitmap(Width, Height, PixelFormat.Format32bppPArgb);
+                    using (Graphics gg = Graphics.FromImage(art))
+                    {
+                        gg.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                        gg.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                        float scale = Math.Max((float)Width / src.Width, (float)Height / src.Height);
+                        int sw = Math.Max(1, (int)(Width / scale));
+                        int sh = Math.Max(1, (int)(Height / scale));
+                        int sx = Math.Max(0, (src.Width - sw) / 2);
+                        int sy = Math.Max(0, (src.Height - sh) / 2);
+                        gg.DrawImage(src, new Rectangle(0, 0, Width, Height), sx, sy, sw, sh, GraphicsUnit.Pixel);
+                    }
+                    artSize = new Size(Width, Height);
+                }
+                g.DrawImageUnscaled(art, 0, 0);
+            }
+
             protected override void OnPaint(PaintEventArgs e)
             {
                 Graphics g = e.Graphics;
                 Prep(g);
                 if (Width < 80 || Height < 60) return;
-
                 var r = new RectangleF(0, 0, Width - 1, Height - 1);
                 float rad = Ui.Fp(9);
                 using (GraphicsPath p = Ui.Round(r, rad))
                 {
                     g.SetClip(p);
-                    // 假想游戏画面:冷色天空 + 远山剪影 + 地面 + 一团柔光。
-                    // 柔光和远山都是为了检验白字在亮背景上是否还看得清。
-                    using (var b = new LinearGradientBrush(new RectangleF(0, 0, Width, Height),
-                               Color.FromArgb(255, 26, 36, 52), Color.FromArgb(255, 74, 84, 96),
-                               LinearGradientMode.Vertical))
-                        g.FillRectangle(b, r);
-
-                    // 柔光:用路径渐变从中心向外淡出,比实心圆更像光。
-                    float sunR = Math.Min(Width, Height) * 0.30f;
-                    float sunX = Width * 0.74f, sunY = Height * 0.30f;
-                    using (GraphicsPath sun = new GraphicsPath())
-                    {
-                        sun.AddEllipse(sunX - sunR, sunY - sunR, sunR * 2, sunR * 2);
-                        using (var pg = new PathGradientBrush(sun))
-                        {
-                            pg.CenterColor = Color.FromArgb(150, 255, 242, 214);
-                            pg.SurroundColors = new Color[] { Color.FromArgb(0, 255, 242, 214) };
-                            g.FillPath(pg, sun);
-                        }
-                    }
-
-                    // 远山与近山两层,层差拉开才有纵深。
-                    using (var b = new SolidBrush(Color.FromArgb(255, 61, 73, 89)))
-                        g.FillPolygon(b, new PointF[]
-                        {
-                            new PointF(0, Height * 0.62f), new PointF(Width * 0.30f, Height * 0.34f),
-                            new PointF(Width * 0.58f, Height * 0.60f), new PointF(Width * 0.80f, Height * 0.42f),
-                            new PointF(Width, Height * 0.58f), new PointF(Width, Height), new PointF(0, Height)
-                        });
-                    using (var b = new SolidBrush(Color.FromArgb(255, 30, 38, 50)))
-                        g.FillPolygon(b, new PointF[]
-                        {
-                            new PointF(0, Height * 0.80f), new PointF(Width * 0.22f, Height * 0.62f),
-                            new PointF(Width * 0.52f, Height * 0.80f), new PointF(Width * 0.74f, Height * 0.66f),
-                            new PointF(Width, Height * 0.82f), new PointF(Width, Height), new PointF(0, Height)
-                        });
-                    using (var b = new SolidBrush(Color.FromArgb(255, 17, 22, 30)))
-                        g.FillRectangle(b, 0, Height * 0.88f, Width, Height * 0.12f);
+                    // 预览背景直接用内置的水墨游戏画面;按尺寸缓存,切页时不再反复缩放大图。
+                    DrawArt(g);
 
                     // 顶部压一层淡黑:游戏内叠字通常在偏暗的画面上,这里还原那种对比度。
                     using (var b = new LinearGradientBrush(new RectangleF(0, 0, Width, Height * 0.42f),
@@ -2550,7 +2605,7 @@ namespace FrameForge.UI
         private void LayoutRtssButtons()
         {
             if (btnRtss == null) return;
-            int pad = Ui.Px(20);
+            int pad = Ui.Px(24);
             int right = rtssCard.ClientSize.Width - pad;
             int bw1 = Ui.Px(110), bh1 = Ui.Px(30);
             int bw2 = Ui.Px(72), bh2 = Ui.Px(26), gapB = Ui.Px(8);
@@ -2781,7 +2836,7 @@ namespace FrameForge.UI
             // 区块标题要比行标题(9.8)略大一档,层级才不会倒过来。
             l.Size = 10.2f;
             l.Style = FontStyle.Bold;
-            l.ForeColor = Theme.Sub;
+            l.ForeColor = Theme.Text;
             l.Text = text;
             l.Name = "header";
             c.Controls.Add(l);
@@ -2833,7 +2888,7 @@ namespace FrameForge.UI
         private void LayoutCards()
         {
             if (Width <= 0 || Height <= 0) return;
-            int gap = Ui.Px(12);
+            int gap = Ui.Px(16);
             int colW = (Width - gap) / 2;
             int rightX = colW + gap;
             int rightW = Width - rightX;
@@ -2843,20 +2898,20 @@ namespace FrameForge.UI
             int aboutH = Height - genH - hotH - gap * 2;
             if (aboutH < Ui.Px(166))
             {
-                // 关于卡最小 166:版本、声明、环境三行加上底部按钮正好占 158,再留 8 的呼吸。
-                // 高度不够时先让热键卡(三行 142)和常规卡(312)收,别让"打开日志"被卡片下沿切掉。
-                aboutH = Ui.Px(166);
+                // 关于卡最小 164:版本、声明、环境三行加上底部按钮正好占 158,再留 6 的呼吸。
+                // 高度不够时先让热键卡(三行 142)和常规卡(292)收,别让"打开日志"被卡片下沿切掉。
+                aboutH = Ui.Px(164);
                 hotH = Math.Max(Ui.Px(142), Height - genH - aboutH - gap * 2);
-                genH = Math.Max(Ui.Px(312), Height - hotH - aboutH - gap * 2);
+                genH = Math.Max(Ui.Px(292), Height - hotH - aboutH - gap * 2);
             }
 
             int memH = Ui.Px(160);
             int fpsH = Ui.Px(150);
-            int rtssH = Ui.Px(112);
+            int rtssH = Ui.Px(104);
             int adminH = Height - memH - fpsH - rtssH - gap * 3;
-            if (adminH < Ui.Px(184))
+            if (adminH < Ui.Px(160))
             {
-                adminH = Ui.Px(184);
+                adminH = Ui.Px(160);
                 memH = Math.Max(Ui.Px(160), Height - fpsH - rtssH - adminH - gap * 3);
             }
 
@@ -2868,7 +2923,7 @@ namespace FrameForge.UI
             rtssCard.SetBounds(rightX, memH + fpsH + gap * 2, rightW, rtssH);
             adminCard.SetBounds(rightX, memH + fpsH + rtssH + gap * 3, rightW, adminH);
 
-            int pad = Ui.Px(20);
+            int pad = Ui.Px(24);
             int toggleW = Ui.Px(48);
             int segW = Ui.Px(200);
 
@@ -2925,13 +2980,14 @@ namespace FrameForge.UI
             PlaceHeader(adminCard, pad);
             // 卡片够高才铺开权限清单;窗口太矮时只留状态、说明和按钮,不硬塞导致重叠。
             bool caps = adminH >= Ui.Px(248);
-            int adminExtra = Math.Max(0, adminH - Ui.Px(caps ? 248 : 184));
+            int adminExtra = Math.Max(0, adminH - Ui.Px(caps ? 248 : 160));
             // 重启按钮挪到状态行右侧,说明文字就能占满整行,不会被挤成省略号。
             int statusY = Ui.Px(44) + adminExtra / 8;
-            adminStatus.SetBounds(pad, statusY, rightW - pad * 2 - (btnAdmin.Visible ? bw + Ui.Px(10) : 0), Ui.Px(22));
+            // 固定让出按钮宽度:状态标签不能盖到按钮上,否则按钮只剩上下两条边。
+            adminStatus.SetBounds(pad, statusY, rightW - pad * 2 - bw - Ui.Px(10), Ui.Px(22));
             btnAdmin.SetBounds(rightW - pad - bw, statusY - Ui.Px(4), bw, bh);
 
-            int noteY = statusY + Ui.Px(32);
+            int noteY = statusY + Ui.Px(38);
             adminNote.SetBounds(pad, noteY, rightW - pad * 2, Ui.Px(36));
 
             adminLine.Visible = caps;
@@ -2955,7 +3011,7 @@ namespace FrameForge.UI
                 }
             }
 
-            int rowY2 = caps ? adminH - bh - Ui.Px(16) : Ui.Px(148) + adminExtra * 7 / 8;
+            int rowY2 = adminH - bh - Ui.Px(16);
             btnWhitelist.SetBounds(pad, rowY2, bw, bh);
             btnRestore.SetBounds(pad + bw + Ui.Px(8), rowY2, rightW - pad * 2 - bw - Ui.Px(8), bh);
 
@@ -3001,6 +3057,11 @@ namespace FrameForge.UI
         private readonly Segmented mode, presetGroup;
         private readonly Chip[] chips = new Chip[Filter.PresetKeys.Length];
         private readonly FilterPreview preview;
+
+        public override void Warm()
+        {
+            if (preview != null) preview.Warm();
+        }
         private readonly Slider sIntensity, sBright, sContrast, sSat, sWarm, sTint, sDark, sVibrance;
         private readonly FlatButton resetBtn, iccAdd, iccRename, iccRemove;
         private readonly TextLabel iccEmpty;
@@ -3256,7 +3317,7 @@ namespace FrameForge.UI
             // 与其它页的区块标题保持同一字号(行标题 9.8,区块标题 10.2)。
             l.Size = 10.2f;
             l.Style = FontStyle.Bold;
-            l.ForeColor = Theme.Sub;
+            l.ForeColor = Theme.Text;
             l.Text = text;
             return l;
         }
@@ -3538,7 +3599,7 @@ namespace FrameForge.UI
         private void LayoutChips()
         {
             if (Width <= 0) return;
-            int pad = Ui.Px(20);
+            int pad = Ui.Px(24);
             bool icc = group == 2;
 
             iccAdd.Visible = icc;
@@ -3636,24 +3697,37 @@ namespace FrameForge.UI
             return iccChips.Count == 0 ? 0 : row + 1;
         }
 
+        /// <summary>按当前分组实际可见的芯片行数计算预设卡高度,换行后不会压到下方卡片。</summary>
+        private int PresetHeight(int width)
+        {
+            int pad = Ui.Px(24);
+            if (group == 2)
+            {
+                int iccRowCount = IccRows(width - pad * 2);
+                // 导入按钮那一行 46~74,条目从 88 开始;一行条目时 142 高,每多一行加 38。
+                return Ui.Px(142 + (iccRowCount > 1 ? (iccRowCount - 1) * 38 : 0));
+            }
+            int perRow = group == 1 ? 4 : 5;
+            int shown = 0;
+            for (int i = 0; i < chips.Length; i++)
+                if (Filter.IsGamePreset(i) == (group == 1)) shown++;
+            int rows = Math.Max(1, (shown + perRow - 1) / perRow);
+            int top = Ui.Px(36) + (group == 1 ? Ui.Px(10) : 0);
+            return top + rows * Ui.Px(24) + (rows - 1) * Ui.Px(3) + Ui.Px(14);
+        }
+
         private void LayoutCards()
         {
             if (Width <= 0 || Height <= 0) return;
-            int gap = Ui.Px(12);
-            int modeH = Ui.Px(300);
-            // 预设区只保留紧凑选择器,省下的高度全部给 16:9 场景预览。
-            int presetH = Ui.Px(120);
-            if (group == 2)
-            {
-                int iccRowCount = IccRows(Width - Ui.Px(20) * 2);
-                // 导入按钮那一行 46~74,条目从 88 开始;一行条目时 142 高,每多一行加 38。
-                presetH = Ui.Px(142 + (iccRowCount > 1 ? (iccRowCount - 1) * 38 : 0));
-            }
-            // 底部多留一个间距,自定义卡不要顶着页面下沿。
+            int gap = Ui.Px(16);
+            int modeH = Ui.Px(316);
+            // 预设卡高度按实际芯片行数计算:固定 108 时三行预设会压到下面的自定义卡上。
+            int presetH = PresetHeight(Width);
+            // 自定义卡至少容纳四行滑杆(含标题下方按钮让出的首行高度)。
             int customH = Height - modeH - presetH - gap * 3;
-            if (customH < Ui.Px(190))
+            if (customH < Ui.Px(192))
             {
-                customH = Ui.Px(190);
+                customH = Ui.Px(192);
                 modeH = Math.Max(Ui.Px(220), Height - presetH - customH - gap * 3);
             }
 
@@ -3661,7 +3735,7 @@ namespace FrameForge.UI
             presetCard.SetBounds(0, modeH + gap, Width, presetH);
             customCard.SetBounds(0, modeH + presetH + gap * 2, Width, customH);
 
-            int pad = Ui.Px(20);
+            int pad = Ui.Px(24);
             // 英文的 Popular games 比中文长,分组条按语言留宽度,否则最后一项会被截断。
             int segW = I18n.IsEn ? Ui.Px(348) : Ui.Px(252), segH = Ui.Px(32);
             modeTitle.SetBounds(pad, Ui.Px(12), Width - pad * 2 - segW - Ui.Px(12), Ui.Px(24));
@@ -3669,7 +3743,7 @@ namespace FrameForge.UI
 
             int prevY = Ui.Px(48);
             int prevH = Math.Max(Ui.Px(140), modeH - prevY - Ui.Px(14));
-            int prevW = Math.Min((int)((Width - pad * 2) * 0.56), (int)(prevH * 16.0 / 9.0));
+            int prevW = Math.Min((int)((Width - pad * 2) * 0.64), (int)(prevH * 16.0 / 9.0));
             preview.SetBounds(pad, prevY, prevW, prevH);
             int noteX = pad + prevW + Ui.Px(18);
             int noteW = Math.Max(Ui.Px(120), Width - noteX - pad);
@@ -3690,7 +3764,7 @@ namespace FrameForge.UI
             int rows = (all.Length + 1) / 2;
             int colGap = Ui.Px(26);
             int colW = (Width - pad * 2 - colGap) / 2;
-            int sh = Ui.Px(34), sy = Ui.Px(28);
+            int sh = Ui.Px(32), sy = Ui.Px(40);
             // 间距按卡片剩余高度分摊,避免自定义卡底部留出大片空白。
             int sgap = (customH - sy - sh * rows - Ui.Px(12)) / (rows - 1);
             if (sgap > Ui.Px(16)) sgap = Ui.Px(16);
@@ -3714,7 +3788,40 @@ namespace FrameForge.UI
         // 亮部、暗部、肤色、绿色植被的变化都能直接看出来,而不是凭渐变条猜。
         private static Bitmap scene;
 
+        // 按控件尺寸预缩放的底图:拖分界线/重绘时不再反复缩放大图。
+        private Bitmap cover;
+        private Size coverSize;
+
         public FilterPreview() { Cursor = Cursors.VSplit; }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && cover != null) { cover.Dispose(); cover = null; }
+            base.Dispose(disposing);
+        }
+
+        public void Warm() { Cover(); }
+
+        private Bitmap Cover()
+        {
+            Bitmap src = Scene();            if (src == null || Width < 8 || Height < 8) return null;
+            if (cover != null && coverSize.Width == Width && coverSize.Height == Height) return cover;
+            if (cover != null) { cover.Dispose(); cover = null; }
+            cover = new Bitmap(Width, Height, PixelFormat.Format32bppPArgb);
+            using (Graphics g = Graphics.FromImage(cover))
+            {
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                float scale = Math.Max((float)Width / src.Width, (float)Height / src.Height);
+                int sw = Math.Max(1, (int)(Width / scale));
+                int sh = Math.Max(1, (int)(Height / scale));
+                int sx = Math.Max(0, (src.Width - sw) / 2);
+                int sy = Math.Max(0, (src.Height - sh) / 2);
+                g.DrawImage(src, new Rectangle(0, 0, Width, Height), sx, sy, sw, sh, GraphicsUnit.Pixel);
+            }
+            coverSize = new Size(Width, Height);
+            return cover;
+        }
 
         public void SetMatrix(float[] m)
         {
@@ -3773,7 +3880,7 @@ namespace FrameForge.UI
             bool split = !IsIdentity(matrix);
             float splitX = Width * splitRatio;
             var r = new RectangleF(0, 0, Width - 1, Height - 1);
-            using (GraphicsPath p = Ui.Round(r, Ui.Fp(10)))
+            using (GraphicsPath p = Ui.Round(r, Ui.Fp(8)))
             {
                 if (split)
                 {
@@ -3825,7 +3932,7 @@ namespace FrameForge.UI
         /// </summary>
         private void DrawScene(Graphics g, GraphicsPath path, float[] m)
         {
-            Bitmap src = Scene();
+            Bitmap src = Cover();
             if (src == null) return;
             if (m == null || m.Length < 25) m = Filter.Identity();
 
@@ -3846,6 +3953,7 @@ namespace FrameForge.UI
                 using (var ia = new ImageAttributes())
                 {
                     ia.SetColorMatrix(cm, ColorMatrixFlag.Default, ColorAdjustType.Bitmap);
+                    // 底图已经按控件尺寸缩放好,这里只做 1:1 贴图 + 颜色矩阵。
                     g.DrawImage(src, new Rectangle(0, 0, Width, Height),
                         0, 0, src.Width, src.Height, GraphicsUnit.Pixel, ia);
                 }
@@ -3859,6 +3967,8 @@ namespace FrameForge.UI
         /// </summary>
         private static Bitmap Scene()
         {
+            // 优先用内置的水墨游戏画面;资源缺失时才退回程序生成的场景。
+            if (Theme.PlayArt != null) return Theme.PlayArt;
             if (scene != null) return scene;
             const int W = 480, H = 270;
             var bmp = new Bitmap(W * 2, H * 2, PixelFormat.Format32bppArgb);
@@ -4212,7 +4322,7 @@ namespace FrameForge.UI
             // 三处 Header 统一到 10.2:区块标题比行标题大,视觉层级才立得住。
             l.Size = 10.2f;
             l.Style = FontStyle.Bold;
-            l.ForeColor = Theme.Sub;
+            l.ForeColor = Theme.Text;
             l.Text = text;
             return l;
         }
@@ -4261,34 +4371,49 @@ namespace FrameForge.UI
         private void LayoutCards()
         {
             if (Width <= 0 || Height <= 0) return;
-            int gap = Ui.Px(12);
-            int optH = Ui.Px(64);
-            int avail = Height - optH - gap * 2;
-            // 详情里多了一张帧率曲线,给它留出空间;列表仍保证至少 120px。
-            int detailH = Math.Min(Ui.Px(400), avail * 72 / 100);
-            int listH = avail - detailH;
-            if (listH < Ui.Px(120)) { listH = Ui.Px(120); detailH = Math.Max(Ui.Px(120), avail - listH); }
-
+            int gap = Ui.Px(16), optH = Ui.Px(60);
             optCard.SetBounds(0, 0, Width, optH);
-            detailCard.SetBounds(0, optH + gap, Width, detailH);
-            listCard.SetBounds(0, optH + gap + detailH + gap, Width, listH);
 
-            int pad = Ui.Px(20);
-            tgAuto.SetBounds(pad, Ui.Px(20), Ui.Px(48), Ui.Px(26));
-            autoLbl.SetBounds(pad + Ui.Px(58), Ui.Px(21), Math.Max(Ui.Px(80), Width / 2 - pad * 2 - Ui.Px(58)), Ui.Px(24));
+            bool columns = Width >= Ui.Px(760);
+            int detailW = Width, listW = Width;
+            int detailH, listH;
+            if (columns)
+            {
+                listW = Math.Max(Ui.Px(300), Math.Min(Ui.Px(360), Width * 34 / 100));
+                detailW = Width - listW - gap;
+                detailH = listH = Height - optH - gap;
+                detailCard.SetBounds(0, optH + gap, detailW, detailH);
+                listCard.SetBounds(detailW + gap, optH + gap, listW, listH);
+            }
+            else
+            {
+                int avail = Height - optH - gap * 2;
+                detailH = Math.Min(Ui.Px(400), avail * 72 / 100);
+                listH = avail - detailH;
+                if (listH < Ui.Px(120)) { listH = Ui.Px(120); detailH = Math.Max(Ui.Px(120), avail - listH); }
+                detailCard.SetBounds(0, optH + gap, Width, detailH);
+                listCard.SetBounds(0, optH + gap + detailH + gap, Width, listH);
+            }
+
+            int pad = Ui.Px(24);
+            tgAuto.SetBounds(pad, Ui.Px(16), Ui.Px(48), Ui.Px(26));
+            autoLbl.SetBounds(pad + Ui.Px(58), Ui.Px(17), Math.Max(Ui.Px(80), Width / 2 - pad * 2 - Ui.Px(58)), Ui.Px(24));
             int sw = Math.Max(Ui.Px(160), Math.Min(Ui.Px(300), Width / 2 - pad));
-            sMin.SetBounds(Width - pad - sw, Ui.Px(7), sw, Ui.Px(50));
-            detailTitle.SetBounds(pad, Ui.Px(12), Ui.Px(200), Ui.Px(20));
-            int bw = Ui.Px(96), bh = Ui.Px(26);
-            btnDelete.SetBounds(Width - pad - bw, Ui.Px(9), bw, bh);
-            view.SetBounds(pad, Ui.Px(38), Width - pad * 2, detailH - Ui.Px(50));
+            sMin.SetBounds(Width - pad - sw, Ui.Px(3), sw, Ui.Px(50));
 
-            listTitle.SetBounds(pad, Ui.Px(12), Ui.Px(110), Ui.Px(20));
-            listSub.SetBounds(pad + Ui.Px(110), Ui.Px(14), Ui.Px(120), Ui.Px(16));
-            int cw = Ui.Px(96);
-            btnClear.SetBounds(Width - pad - cw, Ui.Px(9), cw, bh);
-            btnExport.SetBounds(Width - pad - cw * 2 - Ui.Px(8), Ui.Px(9), cw, bh);
-            list.SetBounds(pad, Ui.Px(38), Width - pad * 2, listH - Ui.Px(50));
+            detailTitle.SetBounds(pad, Ui.Px(12), Ui.Px(200), Ui.Px(20));
+            int bw = Ui.Px(96), bh = Ui.Px(28);
+            btnDelete.SetBounds(detailW - pad - bw, Ui.Px(9), bw, bh);
+            view.SetBounds(pad, Ui.Px(42), detailW - pad * 2, detailH - Ui.Px(54));
+
+            int cw = columns ? Ui.Px(80) : Ui.Px(88);
+            int listTitleW = columns ? Math.Max(Ui.Px(56), listW - pad * 2 - cw * 2 - Ui.Px(24)) : Ui.Px(110);
+            listTitle.SetBounds(pad, Ui.Px(12), listTitleW, Ui.Px(20));
+            listSub.Visible = !columns;
+            listSub.SetBounds(pad + Ui.Px(110), Ui.Px(14), Math.Max(Ui.Px(60), listW - pad * 2 - Ui.Px(310)), Ui.Px(16));
+            btnClear.SetBounds(listW - pad - cw, Ui.Px(9), cw, bh);
+            btnExport.SetBounds(listW - pad - cw * 2 - Ui.Px(8), Ui.Px(9), cw, bh);
+            list.SetBounds(pad, Ui.Px(42), listW - pad * 2, listH - Ui.Px(54));
         }
     }
 
@@ -4362,9 +4487,9 @@ namespace FrameForge.UI
         private void Chart(Graphics g, Rectangle r)
         {
             var box = new RectangleF(r.X, r.Y, r.Width, r.Height);
-            Ui.Fill(g, box, Ui.Fp(10), Theme.Bg);
+            Ui.Fill(g, box, Ui.Fp(6), Theme.Bg);
             Ui.Stroke(g, new RectangleF(box.X + 0.5f, box.Y + 0.5f, box.Width - 1f, box.Height - 1f),
-                Ui.Fp(10), Theme.Border, 1f);
+                Ui.Fp(6), Theme.Border, 1f);
 
             int pad = Ui.Px(14);
             TextRenderer.DrawText(g, I18n.T("report.chart"), Theme.Bold(8.6f),
@@ -4403,8 +4528,8 @@ namespace FrameForge.UI
         private void Hero(Graphics g, int x, int y, int w, int h, string caption, string value, string unit)
         {
             var r = new RectangleF(x, y, w, h);
-            Ui.Fill(g, r, Ui.Fp(10), Theme.Bg);
-            Ui.Stroke(g, new RectangleF(r.X + 0.5f, r.Y + 0.5f, r.Width - 1f, r.Height - 1f), Ui.Fp(10), Theme.Border, 1f);
+            Ui.Fill(g, r, Ui.Fp(6), Theme.Bg);
+            Ui.Stroke(g, new RectangleF(r.X + 0.5f, r.Y + 0.5f, r.Width - 1f, r.Height - 1f), Ui.Fp(6), Theme.Border, 1f);
 
             int pad = Ui.Px(14);
             TextRenderer.DrawText(g, caption, Theme.Regular(8.4f),
@@ -4439,8 +4564,8 @@ namespace FrameForge.UI
         private void Tile(Graphics g, int x, int y, int w, int h, string caption, string value, string peak)
         {
             var r = new RectangleF(x, y, w, h);
-            Ui.Fill(g, r, Ui.Fp(10), Theme.Bg);
-            Ui.Stroke(g, new RectangleF(r.X + 0.5f, r.Y + 0.5f, r.Width - 1f, r.Height - 1f), Ui.Fp(10), Theme.Border, 1f);
+            Ui.Fill(g, r, Ui.Fp(6), Theme.Bg);
+            Ui.Stroke(g, new RectangleF(r.X + 0.5f, r.Y + 0.5f, r.Width - 1f, r.Height - 1f), Ui.Fp(6), Theme.Border, 1f);
 
             int pad = Ui.Px(14);
             int bottom = y + h - Ui.Px(7);
@@ -4586,7 +4711,7 @@ namespace FrameForge.UI
     {
         private readonly Card topCard, listCard;
         private readonly TextLabel title, sub, status, hintLbl;
-        private readonly FlatButton scanBtn, addBtn, playBtn, pinBtn, delBtn;
+        private readonly FlatButton scanBtn, addBtn, playBtn, pinBtn, delBtn, optBtn;
         private readonly GamesList list;
 
         private bool scanning;
@@ -4633,14 +4758,16 @@ namespace FrameForge.UI
             scanBtn.Click += delegate { Scan(); };
 
             addBtn = new FlatButton();
-            addBtn.Primary = true;
+            addBtn.Primary = false;
             addBtn.FontPt = 9.2f;
             addBtn.Text = I18n.T("games.add");
             addBtn.Click += delegate { AddManual(); };
 
-            list = new GamesList();
+            list = new GamesList(Host);
             list.SelectionChanged += delegate { SyncActions(); };
+            // §3.3：双击=启动保持不变，优化设置走行内图标与底部按钮。
             list.Activated += delegate { Launch(); };
+            list.OptimizeActivated += delegate { OpenOptimize(); };
 
             playBtn = new FlatButton();
             playBtn.Primary = true;
@@ -4660,6 +4787,13 @@ namespace FrameForge.UI
             delBtn.Text = I18n.T("games.remove");
             delBtn.Click += delegate { RemoveSel(); };
 
+            // §3.3 主入口：底部操作栏增加"优化设置"，选中态沿用 SyncActions 范式。
+            optBtn = new FlatButton();
+            optBtn.Primary = false;
+            optBtn.FontPt = 9.2f;
+            optBtn.Text = I18n.T("games.opt.entry");
+            optBtn.Click += delegate { OpenOptimize(); };
+
             topCard.Controls.Add(title);
             topCard.Controls.Add(sub);
             topCard.Controls.Add(status);
@@ -4671,6 +4805,7 @@ namespace FrameForge.UI
             listCard.Controls.Add(playBtn);
             listCard.Controls.Add(pinBtn);
             listCard.Controls.Add(delBtn);
+            listCard.Controls.Add(optBtn);
 
             Controls.Add(topCard);
             Controls.Add(listCard);
@@ -4681,7 +4816,10 @@ namespace FrameForge.UI
 
             Reload();
 
-            if (lastScan == DateTime.MinValue) Scan();
+            // 以「是否已有游戏」为准,而不是仅看时间戳:只要本地存过游戏就直接显示,
+            // 绝不自动重扫(即便扫描时间因延迟保存丢失也不重扫)。只有列表为空这个
+            // 真正没扫过的场景才自动扫一次。手动点「重新扫描」始终可用。
+            if (Host.St.MyGames.Count == 0) Scan();
         }
 
         protected override void OnResize(EventArgs e)
@@ -4695,18 +4833,18 @@ namespace FrameForge.UI
             int w = Width, h = Height;
             if (w <= 0 || h <= 0) return;
 
-            int gap = Ui.Px(12);
-            int topH = Ui.Px(98);
+            int gap = Ui.Px(16);
+            int topH = Ui.Px(92);
             topCard.SetBounds(0, 0, w, topH);
             listCard.SetBounds(0, topH + gap, w, h - topH - gap);
 
-            int pad = Ui.Px(20);
+            int pad = Ui.Px(24);
             int bh = Ui.Px(30), bw = Ui.Px(108);
             int textW = w - pad * 2 - bw * 2 - Ui.Px(20);
             if (textW < Ui.Px(120)) textW = Ui.Px(120);
             title.SetBounds(pad, Ui.Px(14), textW, Ui.Px(24));
             sub.SetBounds(pad, Ui.Px(40), textW, Ui.Px(18));
-            status.SetBounds(pad, Ui.Px(66), w - pad * 2, Ui.Px(20));
+            status.SetBounds(pad, Ui.Px(62), w - pad * 2, Ui.Px(18));
 
             int rx = w - pad;
             addBtn.SetBounds(rx - bw, Ui.Px(22), bw, bh);
@@ -4718,15 +4856,17 @@ namespace FrameForge.UI
             list.SetBounds(pad, Ui.Px(14), w - pad * 2, innerH);
 
             int by = Ui.Px(14) + innerH + Ui.Px(8);
-            int abw = Ui.Px(96), abh = Ui.Px(28);
-            int ax = w - pad - abw;
-            delBtn.SetBounds(ax, by, abw, abh);
-            pinBtn.SetBounds(ax - abw - Ui.Px(8), by, abw, abh);
-            playBtn.SetBounds(ax - abw * 2 - Ui.Px(16), by, abw, abh);
+            // 左侧是低频次级操作，右侧是唯一主操作“启动游戏”，中间保留提示。
+            int abw = Ui.Px(84), abh = Ui.Px(30);
+            int gapB = Ui.Px(8);
+            delBtn.SetBounds(pad, by, abw, abh);
+            pinBtn.SetBounds(pad + abw + gapB, by, abw, abh);
+            playBtn.SetBounds(w - pad - abw, by, abw, abh);
+            optBtn.SetBounds(w - pad - abw * 2 - gapB, by, abw, abh);
 
-            int hintW = playBtn.Left - pad - Ui.Px(12);
-            if (hintW < 0) hintW = 0;
-            hintLbl.SetBounds(pad, by, hintW, abh);
+            int hintX = pinBtn.Right + Ui.Px(12);
+            int hintW = Math.Max(0, optBtn.Left - hintX - Ui.Px(12));
+            hintLbl.SetBounds(hintX, by, hintW, abh);
         }
 
         public override void Refresh(SysSample s)
@@ -4758,10 +4898,27 @@ namespace FrameForge.UI
             playBtn.Enabled = g != null;
             pinBtn.Enabled = g != null;
             delBtn.Enabled = g != null;
+            optBtn.Enabled = g != null;
 
             bool on = g != null && g.ProcName.Length > 0
                 && string.Equals(Host.St.BoostPin, g.ProcName, StringComparison.OrdinalIgnoreCase);
             pinBtn.Text = I18n.T(on ? "games.pinned" : "games.pin");
+        }
+
+        /// <summary>策略弹窗保存/删除后的列表刷新入口，由 MainForm.SyncProfileChanged 统一调用（§3.6）。</summary>
+        public void ReloadProfiles()
+        {
+            Reload();
+            SyncActions();
+        }
+
+        /// <summary>打开单游戏策略弹窗；双击=启动的行为不变（§3.3）。</summary>
+        private void OpenOptimize()
+        {
+            InstalledGame g = list.Selected;
+            if (g == null) return;
+            bool changed = GameProfileDialog.Edit(this, Host, g);
+            if (changed) Host.SyncProfileChanged();
         }
 
         private void UpdateStatus(int count)
@@ -4783,7 +4940,9 @@ namespace FrameForge.UI
             else if (count == 0)
                 status.Text = I18n.T("games.never", n);
             else
-                status.Text = "";
+                // 有已保存的游戏但扫描时间缺失(旧配置/延迟保存丢失):
+                // 显示数量,别留空白让人误以为没扫描过。
+                status.Text = I18n.T("games.count.plain", n);
         }
 
         /// <summary>后台扫描,结果回 UI 线程合并;不阻塞界面、不重复扫。</summary>
@@ -4842,8 +5001,9 @@ namespace FrameForge.UI
                     if (Host.St.UpsertMyGame(found[i].Name, found[i].ExePath, found[i].Source)) added++;
                 }
             }
-            // 扫描时间本身也要落盘,否则下次启动又会重扫一遍。
-            Host.SaveSettingsSoon();
+            // 扫描时间和结果立即同步落盘,不能只靠 700ms 延迟定时器:
+            // 用户扫完快速关窗/切页重建时定时器可能没触发,下次启动又重扫一遍。
+            Host.St.Save();
             if (added > 0)
             {
                 Host.SyncGameLibrary();
@@ -4922,11 +5082,27 @@ namespace FrameForge.UI
             if (g == null) return;
             string proc = g.ProcName;
 
+            // §4：移除游戏时若有专属策略，二次确认是否一并删除；默认"否"保留，便于重装后继续套用。
+            bool profileRemoved = false;
+            GameProfile prof = Host.Profiles != null ? Host.Profiles.Find(g.ProcName, g.Name) : null;
+            if (prof != null)
+            {
+                DialogResult ask = MessageBox.Show(this,
+                    I18n.T("games.opt.remove.ask", g.Name),
+                    I18n.T("games.opt.remove.title"),
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+                if (ask == DialogResult.Yes)
+                {
+                    Host.Profiles.RemoveAll(g.ProcName, g.Name);
+                    profileRemoved = true;
+                }
+            }
+
             if (!Host.St.RemoveMyGame(g.ExePath)) return;
             if (string.Equals(Host.St.BoostPin, proc, StringComparison.OrdinalIgnoreCase)) Host.St.BoostPin = "";
             Host.SaveSettingsSoon();
             Host.SyncGameLibrary();
-            Reload();
+            if (profileRemoved) Host.SyncProfileChanged(); else Reload();
             Host.Toast(I18n.T("games.removed", g.Name));
         }
     }
@@ -4934,14 +5110,21 @@ namespace FrameForge.UI
     /// <summary>我的游戏列表:图标 + 名称 + exe 路径 + 来源/锁定标记,滚轮滚动。</summary>
     internal sealed class GamesList : Ctl
     {
+        private readonly MainForm host;
+        private readonly ToolTip tips = new ToolTip();
         private InstalledGame[] items = new InstalledGame[0];
         private int sel = -1;
         private int scroll;
         private int hover = -1;
         private string pinName = "";
+        private string lastTip = "";
+        // 行内图标点击后 modal 弹窗会吃掉第二次点击的时序，加一道短时护栏避免误触发启动。
+        private DateTime lastOptimizeAt = DateTime.MinValue;
 
         public event Action SelectionChanged;
         public event Action Activated;
+        /// <summary>§3.3：行内"优化设置"图标点击。</summary>
+        public event Action OptimizeActivated;
 
         public string PinName
         {
@@ -4954,13 +5137,21 @@ namespace FrameForge.UI
             get { return sel >= 0 && sel < items.Length ? items[sel] : null; }
         }
 
-        public GamesList()
+        public GamesList(MainForm host)
         {
+            this.host = host;
             BackColor = Theme.Card;
             Cursor = Cursors.Hand;
         }
 
         private int RowH() { return Ui.Px(56); }
+
+        /// <summary>§3.5：状态徽标数据源统一按显示名查 ProfileStore，ProcName 只用于 pin。</summary>
+        private GameProfile ProfileOf(InstalledGame g)
+        {
+            return g != null && host != null && host.Profiles != null
+                ? host.Profiles.Find(g.Name) : null;
+        }
 
         /// <summary>换一批数据,尽量把选中项留在原来那一款上。</summary>
         public void SetItems(InstalledGame[] arr, string keepProc)
@@ -5076,22 +5267,53 @@ namespace FrameForge.UI
                     | TextFormatFlags.PathEllipsis);
 
                 TextRenderer.DrawText(g, SourceLabel(it.Source), Theme.Regular(8f),
-                    new Rectangle(Width - Ui.Px(78), y + Ui.Px(7), Ui.Px(66), Ui.Px(18)),
+                    new Rectangle(Width - Ui.Px(80), y + Ui.Px(5), Ui.Px(76), Ui.Px(18)),
                     Theme.Faint,
                     TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+
+                // §3.3/§3.5：右侧 84px 预留区同时承载行内优化入口与策略徽标。
+                // 图标用自绘"滑杆"而非字体图标，任何系统字体/主题下都不会变成方块。
+                int ix = Width - Ui.Px(80);
+                int iy = y + Ui.Px(30);
+                int isz = Ui.Px(14);
+                bool icoHot = i == hover;
+                Color icoColor = icoHot ? Theme.Accent : Theme.Sub;
+                Ui.Fill(g, new RectangleF(ix - Ui.Fp(2), iy - Ui.Fp(2), isz + Ui.Fp(4), isz + Ui.Fp(4)),
+                    Ui.Fp(5), Theme.Alpha(icoColor, icoHot ? 34 : 14));
+                using (var pen = new Pen(icoColor, 1f))
+                {
+                    g.DrawLine(pen, ix + Ui.Px(2), iy + Ui.Px(5), ix + isz - Ui.Px(2), iy + Ui.Px(5));
+                    g.DrawLine(pen, ix + Ui.Px(2), iy + isz - Ui.Px(5), ix + isz - Ui.Px(2), iy + isz - Ui.Px(5));
+                }
+                using (var b = new SolidBrush(icoColor))
+                {
+                    g.FillEllipse(b, ix + isz / 2 - Ui.Fp(2), iy + Ui.Px(3), Ui.Fp(4), Ui.Fp(4));
+                    g.FillEllipse(b, ix + isz / 3 - Ui.Fp(2), iy + isz - Ui.Px(7), Ui.Fp(4), Ui.Fp(4));
+                }
+
                 if (pinned)
                 {
                     TextRenderer.DrawText(g, I18n.T("games.pinned"), Theme.Regular(8f),
-                        new Rectangle(Width - Ui.Px(78), y + Ui.Px(28), Ui.Px(66), Ui.Px(18)),
+                        new Rectangle(Width - Ui.Px(64), y + Ui.Px(28), Ui.Px(30), Ui.Px(18)),
                         Theme.Accent,
                         TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
                 }
+
+                GameProfile prof = ProfileOf(it);
+                bool own = prof != null;
+                var badgeRect = new RectangleF(Width - Ui.Px(34), y + Ui.Px(29), Ui.Px(32), Ui.Px(17));
+                if (own) Ui.Fill(g, badgeRect, Ui.Fp(6), Theme.Alpha(Theme.Accent, 34));
+                TextRenderer.DrawText(g, I18n.T(own ? "games.opt.badge.own" : "games.opt.badge.global"),
+                    Theme.Regular(8f), Rectangle.Round(badgeRect),
+                    own ? Theme.Accent : Theme.Faint,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
             }
         }
 
         protected override void OnMouseLeave(EventArgs e)
         {
             base.OnMouseLeave(e);
+            SetTip("");
             if (hover < 0) return;
             hover = -1;
             Invalidate();
@@ -5102,6 +5324,7 @@ namespace FrameForge.UI
             base.OnMouseMove(e);
             int idx = (e.Y + scroll) / RowH();
             if (idx < 0 || idx >= items.Length) idx = -1;
+            UpdateTip(e, idx);
             if (idx == hover) return;
             hover = idx;
             Invalidate();
@@ -5112,10 +5335,21 @@ namespace FrameForge.UI
             base.OnMouseDown(e);
             if (e.Button != MouseButtons.Left) return;
             int idx = (e.Y + scroll) / RowH();
-            if (idx < 0 || idx >= items.Length || idx == sel) return;
-            sel = idx;
-            Invalidate();
-            if (SelectionChanged != null) SelectionChanged();
+            if (idx < 0 || idx >= items.Length) return;
+
+            bool onIcon = IsOptimizeHit(idx, e.X, e.Y);
+            if (idx != sel)
+            {
+                sel = idx;
+                Invalidate();
+                if (SelectionChanged != null) SelectionChanged();
+            }
+            // 行内图标即入口；双击=启动仍由 OnMouseDoubleClick 处理，二者互不改写。
+            if (onIcon && OptimizeActivated != null)
+            {
+                lastOptimizeAt = DateTime.UtcNow;
+                OptimizeActivated();
+            }
         }
 
         protected override void OnMouseDoubleClick(MouseEventArgs e)
@@ -5124,7 +5358,43 @@ namespace FrameForge.UI
             if (e.Button != MouseButtons.Left) return;
             int idx = (e.Y + scroll) / RowH();
             if (idx < 0 || idx >= items.Length) return;
+            if (IsOptimizeHit(idx, e.X, e.Y)) return;
+            if ((DateTime.UtcNow - lastOptimizeAt).TotalSeconds < 1.0) return;
             if (Activated != null) Activated();
+        }
+
+        private bool IsOptimizeHit(int idx, int x, int y)
+        {
+            if (idx < 0 || idx >= items.Length) return false;
+            int top = idx * RowH() - scroll + Ui.Px(28);
+            int left = Width - Ui.Px(82);
+            int size = Ui.Px(18);
+            return x >= left && x <= left + size && y >= top && y <= top + size;
+        }
+
+        /// <summary>悬停行内图标给出入口说明；悬停徽标给出上次保存时间（§3.5）。</summary>
+        private void UpdateTip(MouseEventArgs e, int idx)
+        {
+            if (idx < 0) { SetTip(""); return; }
+            if (IsOptimizeHit(idx, e.X, e.Y))
+            {
+                InstalledGame g = items[idx];
+                string n = g != null && g.Name.Length > 0 ? g.Name : I18n.T("games.opt.unnamed");
+                SetTip(I18n.T("games.opt.entry.tip", n));
+                return;
+            }
+            GameProfile p = ProfileOf(items[idx]);
+            SetTip(p != null && p.LastUsed != DateTime.MinValue
+                ? I18n.T("games.opt.header.saved", p.LastUsed.ToString("yyyy-MM-dd HH:mm"))
+                : "");
+        }
+
+        private void SetTip(string text)
+        {
+            if (text == lastTip) return;
+            lastTip = text;
+            tips.SetToolTip(this, text);
+            if (text.Length == 0) tips.Hide(this);
         }
 
         protected override void OnMouseWheel(MouseEventArgs e)

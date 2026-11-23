@@ -9,7 +9,10 @@ namespace FrameForge.Sys
     /// <summary>某个游戏记住的加速项。只存开关,不存系统状态。</summary>
     public class GameProfile
     {
+        // Name 是主键：新策略统一为小写进程名（不含 .exe）；旧策略可暂时保留显示名。
         public string Name = "";
+        // 只用于展示和旧显示名查询兼容，不参与新策略的主键生成。
+        public string DisplayName = "";
         public bool Priority = true;
         public bool PowerPlan = true;
         public bool Timer = true;
@@ -19,6 +22,9 @@ namespace FrameForge.Sys
         public bool Affinity;
         public bool Irq;
         public int Cores;
+        // v1.4.7 方案 §6：档位落库，消除"命中游戏策略却沿用全局档位"的隐性覆盖。
+        // 旧 profiles.ini 没有这一行时由 Apply() 回落到 4。
+        public int PriorityLevel = 4;
         public DateTime LastUsed = DateTime.MinValue;
 
         public BoostPlan Plan()
@@ -33,6 +39,8 @@ namespace FrameForge.Sys
             p.Affinity = Affinity;
             p.Irq = Irq;
             p.Cores = Cores;
+            // 方案 §3.2/§6：命中专属策略时档位随策略生效，不再由 MaybeAutoBoost 改写。
+            p.PriorityLevel = PriorityLevel;
             return p;
         }
     }
@@ -90,23 +98,69 @@ namespace FrameForge.Sys
                 case "affinity": p.Affinity = Bool(v, false); break;
                 case "irq": p.Irq = Bool(v, false); break;
                 case "cores": p.Cores = Int(v, 0); break;
+                // §6.2 向下兼容：老文件无 prioritylevel 行时保持默认 4。
+                case "prioritylevel": p.PriorityLevel = Math.Max(0, Math.Min(4, Int(v, 4))); break;
+                case "display": p.DisplayName = v; break;
                 case "last": p.LastUsed = Date(v); break;
             }
         }
 
+        /// <summary>统一进程主键：去空白、转小写并去掉末尾的 .exe。</summary>
+        public static string NormalizeKey(string name)
+        {
+            string key = (name ?? "").Trim().ToLowerInvariant();
+            if (key.EndsWith(".exe", StringComparison.Ordinal)) key = key.Substring(0, key.Length - 4);
+            return key;
+        }
+
+        /// <summary>先按进程主键查，再兼容旧的显示名节名及新策略的显示名别名。</summary>
         public GameProfile Find(string name)
         {
-            if (string.IsNullOrEmpty(name)) return null;
+            return Find(name, null);
+        }
+
+        /// <summary>运行时传进程名与可用于回退的显示名；主键命中始终优先。</summary>
+        public GameProfile Find(string processName, string displayName)
+        {
+            GameProfile hit = FindKey(processName);
+            if (hit != null) return hit;
+            return FindDisplay(!string.IsNullOrEmpty(displayName) ? displayName : processName);
+        }
+
+        private GameProfile FindKey(string name)
+        {
+            string key = NormalizeKey(name);
+            if (key.Length == 0) return null;
             for (int i = 0; i < items.Count; i++)
-                if (string.Equals(items[i].Name, name, StringComparison.OrdinalIgnoreCase)) return items[i];
+                if (string.Equals(NormalizeKey(items[i].Name), key, StringComparison.Ordinal)) return items[i];
+            return null;
+        }
+
+        private static bool IsLegacyDisplay(GameProfile p, string displayName)
+        {
+            if (p == null) return false;
+            string display = NormalizeKey(displayName);
+            string name = NormalizeKey(p.Name);
+            string alias = NormalizeKey(p.DisplayName);
+            // [a] display=Shared 已属于进程 a，不能被同名显示的进程 b 接管。
+            // 只有旧 [Title] 或 [Title] display=Title 才允许显示名回退。
+            return display.Length > 0 && name == display && (alias.Length == 0 || alias == name);
+        }
+
+        private GameProfile FindDisplay(string displayName)
+        {
+            for (int i = 0; i < items.Count; i++)
+                if (IsLegacyDisplay(items[i], displayName)) return items[i];
             return null;
         }
 
         /// <summary>有则更新、无则新增,然后整份落盘。</summary>
         public void Save(GameProfile p)
         {
-            if (p == null || p.Name.Length == 0) return;
-            GameProfile old = Find(p.Name);
+            if (p == null) return;
+            p.Name = NormalizeKey(p.Name);
+            if (p.Name.Length == 0) return;
+            GameProfile old = FindKey(p.Name);
             if (old == null) items.Add(p);
             else items[items.IndexOf(old)] = p;
             p.LastUsed = DateTime.Now;
@@ -121,6 +175,34 @@ namespace FrameForge.Sys
             WriteAll();
         }
 
+        /// <summary>删除进程主键与它的旧显示名节，避免删除后旧节“复活”。</summary>
+        public void RemoveAll(string processName, string displayName)
+        {
+            string key = NormalizeKey(processName);
+            bool changed = false;
+            for (int i = items.Count - 1; i >= 0; i--)
+            {
+                if (NormalizeKey(items[i].Name) != key && !IsLegacyDisplay(items[i], displayName)) continue;
+                items.RemoveAt(i);
+                changed = true;
+            }
+            if (changed) WriteAll();
+        }
+
+        /// <summary>迁移保存后清掉旧显示名节，不碰其他进程主键。</summary>
+        public void RemoveLegacy(string processName, string displayName)
+        {
+            string key = NormalizeKey(processName);
+            bool changed = false;
+            for (int i = items.Count - 1; i >= 0; i--)
+            {
+                if (NormalizeKey(items[i].Name) == key || !IsLegacyDisplay(items[i], displayName)) continue;
+                items.RemoveAt(i);
+                changed = true;
+            }
+            if (changed) WriteAll();
+        }
+
         private void WriteAll()
         {
             try
@@ -133,6 +215,8 @@ namespace FrameForge.Sys
                     GameProfile p = items[i];
                     sb.AppendLine();
                     sb.AppendLine("[" + p.Name.Replace('[', '_').Replace(']', '_') + "]");
+                    if (p.DisplayName.Length > 0)
+                        sb.AppendLine("display=" + p.DisplayName.Replace('\r', ' ').Replace('\n', ' '));
                     sb.AppendLine("priority=" + B(p.Priority));
                     sb.AppendLine("power=" + B(p.PowerPlan));
                     sb.AppendLine("timer=" + B(p.Timer));
@@ -142,6 +226,8 @@ namespace FrameForge.Sys
                     sb.AppendLine("affinity=" + B(p.Affinity));
                     sb.AppendLine("irq=" + B(p.Irq));
                     sb.AppendLine("cores=" + p.Cores.ToString(CultureInfo.InvariantCulture));
+                    // §6.2：整份重写时补写新键；节名转义与其余字段保持不变。
+                    sb.AppendLine("prioritylevel=" + p.PriorityLevel.ToString(CultureInfo.InvariantCulture));
                     sb.AppendLine("last=" + p.LastUsed.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
                 }
                 SafeFile.WriteAllText(FilePath, sb.ToString(), new UTF8Encoding(false));

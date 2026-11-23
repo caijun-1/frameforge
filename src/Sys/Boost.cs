@@ -72,7 +72,7 @@ namespace FrameForge.Sys
     /// 4) 关闭 Game DVR 与全屏优化;5) 整理内存;6) 进阶:暂停后台进程。
     /// 所有改动都会记录原值,「还原」或退出时逐项恢复。
     /// </summary>
-    public sealed class BoostEngine : IDisposable
+    public sealed class BoostEngine : IDisposable, ISystemResourceOwner
     {
         public const string SchemeHigh = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
         public const string SchemeBalanced = "381b4222-f694-41f0-9685-ff5bb260df2e";
@@ -92,6 +92,20 @@ namespace FrameForge.Sys
         private string prevScheme = "";
         private uint prevPriority;
         private bool timerSet;
+
+        // SCTL v2 / boost-core §A3：本引擎对全局资源的持有标记与仲裁回调。
+        private bool powerAcquired;
+        private bool timerAcquired;
+        private bool needPower;
+        private bool needTimer;
+        private Transaction currentTx;
+
+        // 看门狗跟随父进程生命周期；异常退出后下一次加速允许重新拉起。
+        private static readonly object WatchdogLock = new object();
+        private static Process watchdogProcess;
+
+        // 核心调度策略层：Auto 保持零回归，非 Auto 只做候选过滤。
+        private readonly ICoreScheduler coreScheduler = new CoreScheduler();
 
         public bool Active;
         public int GamePid = -1;
@@ -116,13 +130,47 @@ namespace FrameForge.Sys
         public int SuspendedCount { get { return suspended.Count; } }
 
         /// <summary>核心独占的实际方式:0 未生效 / 1 软亲和 / 2 硬亲和。</summary>
-        public int AffinityMode { get { return affinity.Mode; } }
+        public int AffinityMode
+        {
+            get
+            {
+                CoreSchedulerState state = coreScheduler.SnapshotState();
+                return state.AffinityMode != 0 ? state.AffinityMode : affinity.Mode;
+            }
+        }
         /// <summary>游戏当前占用的核心掩码,未启用核心独占时为 0。</summary>
-        public long AffinityMask { get { return affinity.Mask; } }
+        public long AffinityMask
+        {
+            get
+            {
+                CoreSchedulerState state = coreScheduler.SnapshotState();
+                return state.AffinityMask != 0 ? state.AffinityMask : affinity.Mask;
+            }
+        }
 
         public static bool IsAdmin
         {
             get { return MemEngine.IsAdmin; }
+        }
+
+        // ---------------- ISystemResourceOwner（boost-core §A3.2） ----------------
+
+        public OwnerKind Kind() { return OwnerKind.ONE_SHOT; }
+        public bool Needs(ResourceKind r)
+        {
+            return r == ResourceKind.PowerScheme ? needPower : needTimer;
+        }
+        public void OnGranted(ResourceKind r, uint refCount)
+        {
+            Log.Write("boost arbiter granted " + r + " ref=" + refCount);
+        }
+        public void OnShared(ResourceKind r, uint refCount)
+        {
+            Log.Write("boost arbiter shared " + r + " ref=" + refCount);
+        }
+        public void OnReleased(ResourceKind r)
+        {
+            Log.Write("boost arbiter released " + r);
         }
 
         // =================================================================
@@ -691,32 +739,96 @@ namespace FrameForge.Sys
             if (plan == null || !plan.Any) { r.Error = "empty"; return r; }
             if (gamePid <= 0) { r.Error = "nogame"; return r; }
             if (Active) Restore();
+            if (!BoostJournal.RecoverBeforeNew(OwnerKind.ONE_SHOT, true))
+            {
+                r.Error = "pending-recovery";
+                return r;
+            }
 
             GamePid = gamePid;
             GameName = gameName ?? "";
             StartedAt = DateTime.Now;
             steerCores = plan.Cores;
+            needPower = plan.PowerPlan;
+            needTimer = plan.Timer;
 
+            // ===== 阶段一：在任何系统改动之前捕获全部 old 并落 PREPARED journal（§3.4 先记后改） =====
+            int gameSid = -1;
+            try { using (Process gp = Process.GetProcessById(gamePid)) gameSid = gp.SessionId; }
+            catch { }
+            CorePolicy policy = CoreConfig.Policy();
+            bool willSteer = plan.Priority && !plan.IdealCpu && policy != CorePolicy.SingleCcd;
+            bool willIdealAll = plan.IdealCpu && policy == CorePolicy.Auto;
+            bool useSchedulerAffinity = plan.Affinity && policy == CorePolicy.SingleCcd;
+
+            Transaction tx = BoostJournal.NewTransaction(
+                OwnerKind.ONE_SHOT, gamePid, GameName, gameSid);
+            BackgroundProc[] suspendCandidates = null;
+            BuildPreparedActions(tx, plan, gamePid, GameName, gameSid, policy,
+                willSteer, useSchedulerAffinity, out suspendCandidates);
+            currentTx = tx;
+            tx.State = TxState.PREPARED;
+            BoostJournal.Save(tx);
+            tx.State = TxState.APPLYING;
+
+            // ===== 阶段二：逐类改动，每个确认点原子落盘 =====
             string priorityFail = "";
             if (plan.Priority)
             {
                 int applied;
-                if (ApplyPriority(gamePid, plan.PriorityLevel, out priorityFail, out applied))
+                if (ApplyPriority(gamePid, plan.PriorityLevel, tx, out priorityFail, out applied))
                 {
                     r.PriorityOk = 1;
-                    // 记录"实际生效"的档位:反作弊只允许较高的普通优先级时,
-                    // 界面要如实写「高于正常」,不能还挂着用户选的「高」。
+                    // 反作弊只允许较高的普通优先级时,界面要如实写「高于正常」。
                     PriorityLevel = applied;
+                    Confirm(tx, ActionKind.PRIORITY_CLASS, true, "",
+                        PriorityClassFor(applied).ToString(CultureInfo.InvariantCulture));
                 }
+                else Confirm(tx, ActionKind.PRIORITY_CLASS, false, priorityFail, "");
             }
-            // PCBoost 的两层一起落地:先把前台游戏提到高优先级,再立刻把主线程
-            // 软引导到当前最空闲的核心;之后由 SteerIfDue() 每 2 分钟重新评估。
-            if (plan.Priority)
+
+            // ideal 双写修复（§B3.2 第 2 条）：TrySteer 与 ApplyIdealCpu 只保留一个写入者。
+            if (willSteer)
             {
-                try { TrySteer(plan.Cores); }
-                catch (Exception ex) { Log.Write("boost steer: " + ex.Message); }
+                try
+                {
+                    TrySteer(plan.Cores, policy);
+                    bool ok = SteerCpu >= 0;
+                    Confirm(tx, ActionKind.IDEAL_CPU, ok, ok ? "" : "ideal-refused",
+                        ok ? SteerCpu.ToString(CultureInfo.InvariantCulture) : "");
+                }
+                catch (Exception ex)
+                { Log.Write("boost steer: " + ex.Message); Confirm(tx, ActionKind.IDEAL_CPU, false, ex.Message, ""); }
             }
-            if (plan.Affinity)
+            else if (willIdealAll)
+            {
+                try
+                {
+                    r.IdealOk = ApplyIdealCpu(gamePid, plan.Cores, tx);
+                    IdealApplied = r.IdealOk > 0;
+                }
+                catch (Exception ex)
+                { Log.Write("boost ideal: " + ex.Message); Confirm(tx, ActionKind.IDEAL_CPU, false, ex.Message, ""); }
+            }
+
+            // 核心调度策略层：不新建执行器，SingleCcd 走 AffinityEngine 的显式 mask。
+            if (useSchedulerAffinity)
+            {
+                try
+                {
+                    ProcessTelemetry tel = MakeTelemetry(gamePid, GameName, plan);
+                    CorePlan cp = coreScheduler.Plan(CpuTopology.Snapshot(), tel, policy);
+                    ProcessGuard guard = BoostJournal.MakeGuard(gamePid, GameName, gameSid);
+                    CoreApplyResult cr = coreScheduler.Apply(cp, guard);
+                    r.AffinityOk = cr.Ok ? 1 : 0;
+                    r.AffinityCores = CpuTopology.CoreCount(cr.Mask);
+                    r.AffinityMoved = cr.Moved;
+                    Confirm(tx, ActionKind.AFFINITY_MASK, cr.Ok, cr.Error, "");
+                    if (cp.GameMask != 0) coreScheduler.SnapshotCoreActions();
+                }
+                catch (Exception ex) { Log.Write("boost core scheduler: " + ex.Message); }
+            }
+            else if (plan.Affinity)
             {
                 try
                 {
@@ -724,19 +836,15 @@ namespace FrameForge.Sys
                     r.AffinityOk = a.Ok ? 1 : 0;
                     r.AffinityCores = a.Cores;
                     r.AffinityMoved = a.Moved;
+                    Confirm(tx, ActionKind.AFFINITY_MASK, a.Ok, a.Error, "");
+                    // 被挪走的进程原掩码在 Apply 时才知道，补记进同一事务（status 已确认）。
+                    AppendMovedAffinityActions(tx, gamePid, GameName, gameSid);
+                    BoostJournal.Save(tx);
                 }
-                catch (Exception ex) { Log.Write("boost affinity: " + ex.Message); }
+                catch (Exception ex)
+                { Log.Write("boost affinity: " + ex.Message); Confirm(tx, ActionKind.AFFINITY_MASK, false, ex.Message, ""); }
             }
-            if (plan.IdealCpu)
-            {
-                try
-                {
-                    // 实验项:只建议线程去哪颗核,绝不改亲和性掩码,失败也不影响其它项。
-                    r.IdealOk = ApplyIdealCpu(gamePid, plan.Cores);
-                    IdealApplied = r.IdealOk > 0;
-                }
-                catch (Exception ex) { Log.Write("boost ideal: " + ex.Message); }
-            }
+
             if (plan.Irq)
             {
                 try
@@ -745,27 +853,49 @@ namespace FrameForge.Sys
                     r.IrqOk = q.Ok ? 1 : 0;
                     r.IrqDevices = q.Set;
                     r.IrqNeedReboot = q.Ok;
+                    Confirm(tx, ActionKind.IRQ_AFFINITY, q.Ok, q.Error, "");
                 }
-                catch (Exception ex) { Log.Write("boost irq: " + ex.Message); }
+                catch (Exception ex)
+                { Log.Write("boost irq: " + ex.Message); Confirm(tx, ActionKind.IRQ_AFFINITY, false, ex.Message, ""); }
             }
-            if (plan.PowerPlan && ApplyPowerPlan()) r.PowerOk = 1;
-            if (plan.Timer && ApplyTimer()) r.TimerOk = 1;
-            if (plan.Dvr && ApplyDvr()) r.DvrOk = 1;
+            if (plan.PowerPlan)
+            {
+                bool ok = ApplyPowerPlan();
+                if (ok) r.PowerOk = 1;
+                Confirm(tx, ActionKind.POWER_SCHEME, ok, ok ? "" : "power-refused", "");
+            }
+            if (plan.Timer)
+            {
+                bool ok = ApplyTimer();
+                if (ok) r.TimerOk = 1;
+                Confirm(tx, ActionKind.TIMER_RESOLUTION, ok, ok ? "" : "timer-refused", "");
+            }
+            if (plan.Dvr)
+            {
+                bool ok = ApplyDvr();
+                if (ok) r.DvrOk = 1;
+                Confirm(tx, ActionKind.REG_DWORD, ok, ok ? "" : "dvr-refused", "");
+            }
             if (plan.Memory)
             {
                 try
                 {
-                    // 游戏正在跑:只归还后台进程的空闲工作集,不动系统文件缓存和待命列表。
-                    OptimizeResult m = MemEngine.Optimize(OptimizeLevel.Standard, gamePid, null, false);
-                    r.MemReleased = m.Released;
-                    // 一个字节都没释放时不算生效,免得结果里出现虚的「已整理」。
-                    r.MemoryOk = m.Released > 0 ? 1 : 0;
+                    // A-9：与实时加速共享节流窗口，避免反复挤压游戏工作集。
+                    if (SystemResourceArbiter.TryNoteMemoryTrim())
+                    {
+                        OptimizeResult m = MemEngine.Optimize(OptimizeLevel.Standard, gamePid, null, false);
+                        r.MemReleased = m.Released;
+                        r.MemoryOk = m.Released > 0 ? 1 : 0;
+                    }
+                    Confirm(tx, ActionKind.MEMORY_TRIM, true, "",
+                        r.MemReleased.ToString(CultureInfo.InvariantCulture));
                 }
-                catch (Exception ex) { Log.Write("boost memory: " + ex.Message); }
+                catch (Exception ex)
+                { Log.Write("boost memory: " + ex.Message); Confirm(tx, ActionKind.MEMORY_TRIM, false, ex.Message, ""); }
             }
-            if (plan.Background)
+            if (plan.Background && suspendCandidates != null)
             {
-                try { r.Suspended = SuspendBackground(gamePid); }
+                try { r.Suspended = SuspendBackground(gamePid, suspendCandidates, tx); }
                 catch (Exception ex) { Log.Write("boost suspend: " + ex.Message); }
             }
 
@@ -789,9 +919,11 @@ namespace FrameForge.Sys
             if (plan.Irq && r.IrqOk == 0) r.Skipped.Add("boost.skip.irq");
             if (plan.IdealCpu && r.IdealOk == 0) r.Skipped.Add("boost.skip.ideal");
 
-            // 先把原始值落到磁盘再返回:进程中途被杀或重启,下次启动还能自愈。
-            try { BoostJournal.Save(Snapshot()); }
-            catch (Exception ex) { Log.Write("journal save: " + ex.Message); }
+            // COMMITTED：原子落盘；此后 journal 即"待还原凭据"。
+            tx.Res = SystemResourceArbiter.Instance.Snapshot();
+            tx.State = TxState.COMMITTED;
+            BoostJournal.Save(tx);
+            StartWatchdog();
 
             Log.Write("boost apply pid=" + gamePid + " ok=" + (r.Ok ? "1" : "0")
                 + " prio=" + r.PriorityOk + (priorityFail.Length > 0 ? "(" + priorityFail + ")" : "")
@@ -800,9 +932,308 @@ namespace FrameForge.Sys
                 + " suspended=" + r.Suspended
                 + " affinity=" + r.AffinityOk + "/" + r.AffinityCores + "c/" + r.AffinityMoved + "p"
                 + " irq=" + r.IrqOk + "/" + r.IrqDevices + "d"
-                + " ideal=" + r.IdealOk + "t");
+                + " ideal=" + r.IdealOk + "t"
+                + " tx=" + tx.TxId + " actions=" + tx.Actions.Count);
             return r;
         }
+
+        // =================================================================
+        //  SCTL v2 事务辅助（§3.4 先记后改 / 逐动作确认点）
+        // =================================================================
+
+        private const string IrqPolicyRel = @"\Device Parameters\Interrupt Management\Affinity Policy";
+        private const string IrqEnumRoot = @"SYSTEM\CurrentControlSet\Enum\PCI";
+
+        private static readonly string[][] DvrSpecs = new string[][]
+        {
+            new string[] { GameConfigStore, "GameDVR_Enabled", "0" },
+            new string[] { GameConfigStore, "GameDVR_FSEBehaviorMode", "2" },
+            new string[] { GameConfigStore, "GameDVR_HonorUserFSEBehaviorMode", "1" },
+            new string[] { GameConfigStore, "GameDVR_DXGIHonorFSEWindowsCompatible", "1" },
+            new string[] { GameDvrKey, "AppCaptureEnabled", "0" }
+        };
+
+        /// <summary>阶段一：把 9 类改动的 old 值全部捕获成 PENDING action，尚未改动系统。</summary>
+        private void BuildPreparedActions(Transaction tx, BoostPlan plan, int pid, string name,
+            int sid, CorePolicy policy, bool buildIdeal, bool useSchedulerAffinity,
+            out BackgroundProc[] suspendCandidates)
+        {
+            ProcessGuard guard = BoostJournal.MakeGuard(pid, name, sid);
+
+            if (plan.Priority)
+            {
+                uint oldClass = PeekPriority(pid);
+                BoostJournal.NewAction(tx, ActionKind.PRIORITY_CLASS, guard,
+                    oldClass.ToString(CultureInfo.InvariantCulture),
+                    PriorityClassFor(plan.PriorityLevel).ToString(CultureInfo.InvariantCulture)).Owner = OwnerKind.ONE_SHOT;
+            }
+            if (buildIdeal)
+            {
+                JournalAction ia = BoostJournal.NewAction(tx, ActionKind.IDEAL_CPU, guard,
+                    Native.MAXIMUM_PROCESSORS.ToString(CultureInfo.InvariantCulture),
+                    Native.MAXIMUM_PROCESSORS.ToString(CultureInfo.InvariantCulture));
+                ia.Target.Tid = MainThreadIdFor(pid);
+            }
+            if (useSchedulerAffinity)
+            {
+                ProcessTelemetry tel = MakeTelemetry(pid, name, plan);
+                CorePlan cp = coreScheduler.Plan(CpuTopology.Snapshot(), tel, policy);
+                long wanted = cp.GameMask != 0 ? cp.GameMask : CpuTopology.AllMask();
+                BoostJournal.NewAction(tx, ActionKind.AFFINITY_MASK, guard, HexStr(PeekAffinity(pid)), HexStr(wanted));
+            }
+            else if (plan.Affinity)
+            {
+                int used;
+                long wanted = CpuTopology.GameMask(plan.Cores, out used);
+                if (wanted == 0) wanted = CpuTopology.AllMask();
+                BoostJournal.NewAction(tx, ActionKind.AFFINITY_MASK, guard, HexStr(PeekAffinity(pid)), HexStr(wanted));
+            }
+            if (plan.Irq) CaptureIrqActions(tx, plan.Cores);
+
+            if (plan.PowerPlan)
+            {
+                string cur = ActiveSchemeGuid();
+                BoostJournal.NewAction(tx, ActionKind.POWER_SCHEME, new ProcessGuard(),
+                    cur, SchemeHigh).Owner = OwnerKind.ONE_SHOT;
+            }
+            if (plan.Timer)
+            {
+                JournalAction ta = BoostJournal.NewAction(tx, ActionKind.TIMER_RESOLUTION,
+                    new ProcessGuard(), "1", "1");
+                ta.RequiresLiveOwner = true;
+                ta.Owner = OwnerKind.ONE_SHOT;
+            }
+            if (plan.Dvr)
+            {
+                for (int i = 0; i < DvrSpecs.Length; i++)
+                {
+                    object oldValue = PeekDword(DvrSpecs[i][0], DvrSpecs[i][1]);
+                    int ov = oldValue == null ? 0 : Convert.ToInt32(oldValue, CultureInfo.InvariantCulture);
+                    int nv = int.Parse(DvrSpecs[i][2], CultureInfo.InvariantCulture);
+                    JournalAction ra = BoostJournal.NewAction(tx, ActionKind.REG_DWORD, new ProcessGuard(),
+                        BoostJournal.Base64Int(ov), BoostJournal.Base64Int(nv));
+                    ra.Path = DvrSpecs[i][0];
+                    ra.Name = DvrSpecs[i][1];
+                    ra.Existed = oldValue != null;
+                    ra.KindOfValue = ValueKind.DWORD;
+                }
+            }
+            if (plan.Memory)
+            {
+                BoostJournal.NewAction(tx, ActionKind.MEMORY_TRIM, new ProcessGuard(), "", "").Revertible = false;
+            }
+
+            suspendCandidates = null;
+            if (plan.Background)
+            {
+                suspendCandidates = Candidates(pid, 6);
+                for (int i = 0; i < suspendCandidates.Length; i++)
+                {
+                    BackgroundProc b = suspendCandidates[i];
+                    int procSid = sid;
+                    try { using (Process bp = Process.GetProcessById(b.Pid)) procSid = bp.SessionId; }
+                    catch { }
+                    BoostJournal.NewAction(tx, ActionKind.SUSPEND_PROCESS,
+                        BoostJournal.MakeGuard(b.Pid, b.Name, procSid), "RUNNING", "SUSPENDED");
+                }
+            }
+        }
+
+        /// <summary>把同类 PENDING action 标为已确认/失败并原子落盘——这就是逐动作确认点。</summary>
+        private static void Confirm(Transaction tx, ActionKind kind, bool ok,
+            string note, string newIfConfirmed)
+        {
+            string now = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+            for (int i = 0; i < tx.Actions.Count; i++)
+            {
+                JournalAction a = tx.Actions[i];
+                if (a.Kind != kind || a.Status != ActionStatus.PENDING) continue;
+                if (ok)
+                {
+                    a.Status = ActionStatus.APPLIED_CONFIRMED;
+                    a.AppliedUtc = now;
+                    a.VerifiedUtc = now;
+                    if (newIfConfirmed.Length > 0) a.New = newIfConfirmed;
+                }
+                else
+                {
+                    a.Status = ActionStatus.FAILED;
+                    a.Note = note ?? "";
+                }
+            }
+            BoostJournal.Save(tx);
+        }
+
+        private static ProcessTelemetry MakeTelemetry(int pid, string name, BoostPlan plan)
+        {
+            var tel = new ProcessTelemetry();
+            tel.Pid = pid;
+            tel.Name = name ?? "";
+            tel.MainTid = MainThreadIdFor(pid);
+            tel.Cores = plan == null ? 0 : plan.Cores;
+            // 本项目无逐游戏 CPU 受限采样数据，默认视为 CPU 受限；GPU 受限场景由用户关闭策略。
+            tel.CpuBound = true;
+            tel.AntiCheatDenied = false;
+            try
+            {
+                using (Process p = Process.GetProcessById(pid)) tel.StartTime = p.StartTime.Ticks;
+            }
+            catch { tel.StartTime = 0; }
+            return tel;
+        }
+
+        /// <summary>硬亲和管理者把别人的进程挪走后，把它们的原掩码补记进同一事务。</summary>
+        private void AppendMovedAffinityActions(Transaction tx, int pid, string name, int sid)
+        {
+            AffinitySnapshot snap = affinity.Snapshot();
+            if (snap == null || snap.Moved == null) return;
+            for (int i = 0; i < snap.Moved.Count; i++)
+            {
+                MaskSnapshot m = snap.Moved[i];
+                ProcessGuard g = BoostJournal.MakeGuard(m.Pid, m.Name, -1);
+                JournalAction a = BoostJournal.NewAction(tx, ActionKind.AFFINITY_MASK, g,
+                    HexStr(m.Mask), HexStr(m.Mask & ~snap.GameMask));
+                a.Status = ActionStatus.APPLIED_CONFIRMED;
+                a.AppliedUtc = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+            }
+        }
+
+        /// <summary>IRQ 原值在改动前从 HKLM 读取；只记录真正写入的设备。</summary>
+        private static void CaptureIrqActions(Transaction tx, int cores)
+        {
+            if (!IsAdmin) return;
+            int used;
+            long game = CpuTopology.GameMask(cores, out used);
+            long avoid = CpuTopology.AllMask() & ~game;
+            if (avoid == 0) return;
+            byte[] newBytes = MaskBytes(avoid);
+            IrqDevice[] devs = InterruptEngine.Enumerate();
+            for (int i = 0; i < devs.Length; i++)
+            {
+                string path = IrqEnumRoot + "\\" + devs[i].Key + IrqPolicyRel;
+                bool existed = false;
+                bool hadPolicy = false, hadMask = false;
+                int policy = -1;
+                byte[] oldMask = new byte[0];
+                try
+                {
+                    using (RegistryKey k = Registry.LocalMachine.OpenSubKey(path))
+                    {
+                        existed = k != null;
+                        if (k != null)
+                        {
+                            object pv = k.GetValue("DevicePolicy", null);
+                            if (pv != null)
+                            {
+                                hadPolicy = true;
+                                policy = Convert.ToInt32(pv, CultureInfo.InvariantCulture);
+                            }
+                            object mv = k.GetValue("AssignmentSetOverride", null);
+                            if (mv is byte[])
+                            {
+                                hadMask = true;
+                                oldMask = (byte[])mv;
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex) { Log.Write("boost irq peek: " + ex.Message); }
+
+                JournalAction a = BoostJournal.NewAction(tx, ActionKind.IRQ_AFFINITY, new ProcessGuard(),
+                    BoostJournal.Base64(oldMask), BoostJournal.Base64(newBytes));
+                a.Path = path;
+                a.Name = BoostJournal.EncodeIrqMeta(policy, hadPolicy, hadMask);
+                a.Existed = existed;
+                a.CreatedKey = !existed;
+                a.Owner = OwnerKind.ONE_SHOT;
+            }
+        }
+
+        private static byte[] MaskBytes(long mask)
+        {
+            int n = Environment.Is64BitOperatingSystem ? 8 : 4;
+            byte[] b = new byte[n];
+            ulong u = (ulong)mask;
+            for (int i = 0; i < n; i++) b[i] = (byte)(u >> (i * 8));
+            return b;
+        }
+
+        private static uint PeekPriority(int pid)
+        {
+            IntPtr h = Native.OpenProcess(Native.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+            if (h == IntPtr.Zero) return Native.NORMAL_PRIORITY_CLASS;
+            try { return Native.GetPriorityClass(h); }
+            catch { return Native.NORMAL_PRIORITY_CLASS; }
+            finally { Native.CloseHandle(h); }
+        }
+
+        private static long PeekAffinity(int pid)
+        {
+            IntPtr h = Native.OpenProcess(Native.PROCESS_QUERY_INFORMATION, false, pid);
+            if (h == IntPtr.Zero) return 0;
+            try
+            {
+                IntPtr procMask, sysMask;
+                if (!Native.GetProcessAffinityMask(h, out procMask, out sysMask)) return 0;
+                return procMask.ToInt64();
+            }
+            catch { return 0; }
+            finally { Native.CloseHandle(h); }
+        }
+
+        private static object PeekDword(string path, string name)
+        {
+            try
+            {
+                using (RegistryKey k = Registry.CurrentUser.OpenSubKey(path))
+                    return k == null ? null : k.GetValue(name, null);
+            }
+            catch { return null; }
+        }
+
+        private static string HexStr(long value)
+        {
+            return value.ToString("X", CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>看门狗跟随父进程；意外退出后，下一次加速可以重新拉起。</summary>
+        public static void EnsureWatchdog()
+        {
+            lock (WatchdogLock)
+            {
+                try
+                {
+                    if (watchdogProcess != null)
+                    {
+                        if (!watchdogProcess.HasExited) return;
+                        watchdogProcess.Dispose();
+                        watchdogProcess = null;
+                    }
+                    string exe = Process.GetCurrentProcess().MainModule.FileName;
+                    string args = "--watchdog " + Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture);
+                    var psi = new ProcessStartInfo(exe, args);
+                    psi.UseShellExecute = false;
+                    psi.CreateNoWindow = true;
+                    psi.WindowStyle = ProcessWindowStyle.Hidden;
+                    watchdogProcess = Process.Start(psi);
+                    if (watchdogProcess != null) Log.Write("watchdog started pid=" + watchdogProcess.Id);
+                }
+                catch (Exception ex)
+                {
+                    watchdogProcess = null;
+                    Log.Write("watchdog start: " + ex.Message);
+                }
+            }
+        }
+
+        private static void StartWatchdog()
+        {
+            EnsureWatchdog();
+        }
+
+        // Reconcile 及 selftest 用的内部入口（不改动原有私有方法语义）。
+        internal static int MainThreadIdFor(int pid) { return MainThreadId(pid); }
+        internal static bool SetIdealFor(int tid, int cpu) { return SetIdeal(tid, cpu); }
 
         /// <summary>
         /// 调整游戏进程优先级。带反作弊的游戏经常直接拒绝这类请求,所以这里把
@@ -810,12 +1241,12 @@ namespace FrameForge.Sys
         /// 返回成功但优先级没变的情况是存在的,不能据此谎报"已优化"。
         /// failKey 为空表示失败原因不明,由调用方用通用的「优先级」文案。
         /// </summary>
-        private bool ApplyPriority(int pid, int level, out string failKey, out int applied)
+        private bool ApplyPriority(int pid, int level, Transaction tx, out string failKey, out int applied)
         {
             failKey = "";
             applied = level;
             bool denied;
-            if (TrySetPriority(pid, level, out denied)) return true;
+            if (TrySetPriority(pid, level, tx, out denied)) return true;
 
             // 游戏刚启动时保护组件可能还没装好,隔半秒再试一次。
             // 自动加速跑在线程池里,不会卡住界面。
@@ -823,12 +1254,12 @@ namespace FrameForge.Sys
             {
                 try { System.Threading.Thread.Sleep(400); }
                 catch { }
-                if (TrySetPriority(pid, level, out denied)) return true;
+                if (TrySetPriority(pid, level, tx, out denied)) return true;
             }
 
             // 不少带反作弊的游戏只拦「高」,会放过「高于正常」。退一档再试,
             // 至少让优先级真的比默认值高,而不是整项作废。
-            if (level >= 4 && TrySetPriority(pid, 3, out denied))
+            if (level >= 4 && TrySetPriority(pid, 3, tx, out denied))
             {
                 applied = 3;
                 Log.Write("boost priority: high denied, fell back to above normal");
@@ -860,7 +1291,38 @@ namespace FrameForge.Sys
             return "boost.prio." + level;
         }
 
-        private bool TrySetPriority(int pid, int level, out bool denied)
+        private static void NotePriorityAttempt(Transaction tx, int pid, uint cls)
+        {
+            if (tx == null) return;
+            for (int i = tx.Actions.Count - 1; i >= 0; i--)
+            {
+                JournalAction a = tx.Actions[i];
+                if (a.Kind != ActionKind.PRIORITY_CLASS || a.Target == null || a.Target.Pid != pid) continue;
+                a.New = cls.ToString(CultureInfo.InvariantCulture);
+                a.NewClass = (int)cls;
+                a.Status = ActionStatus.PENDING;
+                BoostJournal.Save(tx);
+                return;
+            }
+        }
+
+        private static void NoteIdealAttempt(Transaction tx, int pid, int tid, int cpu)
+        {
+            if (tx == null) return;
+            for (int i = tx.Actions.Count - 1; i >= 0; i--)
+            {
+                JournalAction a = tx.Actions[i];
+                if (a.Kind != ActionKind.IDEAL_CPU || a.Target == null || a.Target.Pid != pid) continue;
+                a.Target.Tid = tid;
+                a.New = cpu.ToString(CultureInfo.InvariantCulture);
+                a.NewClass = cpu;
+                a.Status = ActionStatus.PENDING;
+                BoostJournal.Save(tx);
+                return;
+            }
+        }
+
+        private bool TrySetPriority(int pid, int level, Transaction tx, out bool denied)
         {
             denied = false;
             uint cls = PriorityClassFor(level);
@@ -876,6 +1338,7 @@ namespace FrameForge.Sys
                 }
 
                 uint before = Native.GetPriorityClass(h);
+                NotePriorityAttempt(tx, pid, cls);
                 if (!Native.SetPriorityClass(h, cls))
                 {
                     denied = Marshal.GetLastWin32Error() == 5;
@@ -902,10 +1365,11 @@ namespace FrameForge.Sys
         /// 只调用 SetThreadIdealProcessor,绝不修改亲和性掩码;权限不足或被反作弊
         /// 忽略时静默返回 0,不影响其它加速项。
         /// </summary>
-        private int ApplyIdealCpu(int pid, int cores)
+        private int ApplyIdealCpu(int pid, int cores, Transaction tx)
         {
             int ideal = IdealProcessor(cores);
             int ok = 0;
+            ProcessGuard processGuard = BoostJournal.MakeGuard(pid, GameName, -1);
             IntPtr snap = Native.CreateToolhelp32Snapshot(Native.TH32CS_SNAPTHREAD, 0);
             if (snap == IntPtr.Zero || snap == new IntPtr(-1)) return 0;
             try
@@ -916,18 +1380,52 @@ namespace FrameForge.Sys
                 do
                 {
                     if (e.th32OwnerProcessID != (uint)pid) continue;
-                    IntPtr th = Native.OpenThread(Native.THREAD_SET_INFORMATION, false, (int)e.th32ThreadID);
+                    int tid = (int)e.th32ThreadID;
+                    IntPtr th = Native.OpenThread(Native.THREAD_SET_INFORMATION, false, tid);
                     if (th == IntPtr.Zero) continue;
+                    JournalAction action = null;
                     try
                     {
-                        if (Native.SetThreadIdealProcessor(th, (uint)ideal) != 0xFFFFFFFF) ok++;
+                        var guard = new ProcessGuard();
+                        guard.Pid = processGuard.Pid;
+                        guard.Name = processGuard.Name;
+                        guard.SessionId = processGuard.SessionId;
+                        guard.StartTime = processGuard.StartTime;
+                        guard.Tid = tid;
+                        action = BoostJournal.NewAction(tx, ActionKind.IDEAL_CPU, guard,
+                            Native.MAXIMUM_PROCESSORS.ToString(CultureInfo.InvariantCulture),
+                            ideal.ToString(CultureInfo.InvariantCulture));
+                        action.NewClass = ideal;
+                        // 每个线程都先落 PENDING，再写系统；崩溃后可按实际 new 对账。
+                        BoostJournal.Save(tx);
+                        uint previous = Native.SetThreadIdealProcessor(th, (uint)ideal);
+                        if (previous != 0xFFFFFFFF)
+                        {
+                            ok++;
+                            action.Old = previous.ToString(CultureInfo.InvariantCulture);
+                            action.Status = ActionStatus.APPLIED_CONFIRMED;
+                            action.AppliedUtc = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+                            action.VerifiedUtc = action.AppliedUtc;
+                        }
+                        else
+                        {
+                            action.Status = ActionStatus.FAILED;
+                            action.Note = "ideal-refused";
+                        }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        if (action != null) { action.Status = ActionStatus.FAILED; action.Note = ex.Message; }
+                    }
                     finally { Native.CloseHandle(th); }
                 }
                 while (Native.Thread32Next(snap, ref e));
             }
-            finally { Native.CloseHandle(snap); }
+            finally
+            {
+                Native.CloseHandle(snap);
+                BoostJournal.Save(tx);
+            }
             return ok;
         }
 
@@ -967,14 +1465,46 @@ namespace FrameForge.Sys
         public void SteerIfDue()
         {
             if (!Active || GamePid <= 0) return;
-            if ((DateTime.UtcNow - lastSteer).TotalSeconds < SteerSeconds) return;
+            // P1-B：再平衡周期可配（coreRebalanceSeconds），默认 120 与原 SteerSeconds 一致。
+            if ((DateTime.UtcNow - lastSteer).TotalSeconds < CoreConfig.RebalanceSeconds()) return;
             if (Interlocked.CompareExchange(ref steerBusy, 1, 0) != 0) return;
             lastSteer = DateTime.UtcNow;
             int pid = GamePid;
             int cores = steerCores;
+            CorePolicy policy = CoreConfig.Policy();
+            ICoreScheduler scheduler = coreScheduler;
             ThreadPool.QueueUserWorkItem(delegate
             {
-                try { SteerOnce(pid, cores); }
+                try
+                {
+                    // P1：非 Auto 策略把再平衡决策交给策略层；返回 null 表示滞后不迁移。
+                    if (policy == CorePolicy.Auto)
+                    {
+                        SteerOnce(pid, cores, policy);
+                    }
+                    else
+                    {
+                        CpuTopologySnapshot topo = CpuTopology.Snapshot();
+                        ProcessTelemetry tel = MakeTelemetry(pid, GameName, null);
+                        CorePlan current = new CorePlan();
+                        current.Policy = policy;
+                        current.Cores = cores;
+                        current.IdealCpu = SteerCpu;
+                        current.Reason = "rebalance";
+                        CorePlan next = scheduler.Rebalance(topo, tel, current);
+                        if (next != null && next.IdealCpu >= 0)
+                        {
+                            int tid = MainThreadIdFor(pid);
+                            if (tid > 0 && SetIdealFor(tid, next.IdealCpu))
+                            {
+                                SteerCpu = next.IdealCpu;
+                                IdealApplied = true;
+                                scheduler.MarkIdealApplied(policy, next.IdealCpu);
+                                Log.Write("boost steer rebalance pid=" + pid + " cpu=" + next.IdealCpu);
+                            }
+                        }
+                    }
+                }
                 catch (Exception ex) { Log.Write("boost steer: " + ex.Message); }
                 finally { Interlocked.Exchange(ref steerBusy, 0); }
             });
@@ -983,9 +1513,14 @@ namespace FrameForge.Sys
         /// <summary>同步执行一次软引导(加速时首帧用,调用方已在后台线程)。</summary>
         private void TrySteer(int cores)
         {
+            TrySteer(cores, CorePolicy.Auto);
+        }
+
+        private void TrySteer(int cores, CorePolicy policy)
+        {
             steerCores = cores;
             lastSteer = DateTime.UtcNow;
-            SteerOnce(GamePid, cores);
+            SteerOnce(GamePid, cores, policy);
         }
 
         /// <summary>
@@ -995,9 +1530,17 @@ namespace FrameForge.Sys
         /// </summary>
         private int SteerOnce(int pid, int cores)
         {
-            int cpu = PickIdleCore(cores);
+            return SteerOnce(pid, cores, CorePolicy.Auto);
+        }
+
+        private int SteerOnce(int pid, int cores, CorePolicy policy)
+        {
+            int cpu = PickIdleCore(cores, policy);
+            // P0-B：>64 核或采样失败时返回 -1（跳过），不再退化成 CPU 0。
+            if (cpu < 0) return -1;
             int tid = MainThreadId(pid);
             if (tid <= 0) return -1;
+            NoteIdealAttempt(currentTx, pid, tid, cpu);
             if (!SetIdeal(tid, cpu)) return -1;
 
             if (SteerCpu != cpu) Log.Write("boost steer pid=" + pid + " cpu=" + cpu);
@@ -1012,13 +1555,19 @@ namespace FrameForge.Sys
         /// </summary>
         private static int PickIdleCore(int cores)
         {
+            return PickIdleCore(cores, CorePolicy.Auto);
+        }
+
+        private static int PickIdleCore(int cores, CorePolicy policy)
+        {
             long[] idle1, busy1, idle2, busy2;
-            if (Native.CpuCoreTimes(out idle1, out busy1) <= 0) return 0;
+            // P0-B：Native.CpuCoreTimes 已改为动态容量；任一次采样失败即放弃本轮引导。
+            if (Native.CpuCoreTimes(out idle1, out busy1) <= 0) return -1;
             try { Thread.Sleep(SteerSampleMs); } catch { }
-            if (Native.CpuCoreTimes(out idle2, out busy2) <= 0) return 0;
+            if (Native.CpuCoreTimes(out idle2, out busy2) <= 0) return -1;
 
             int n = Math.Min(Math.Min(idle1.Length, busy1.Length), Math.Min(idle2.Length, busy2.Length));
-            if (n <= 0) return 0;
+            if (n <= 0) return -1;
 
             // 启用核心独占时只在游戏自己的核里挑,不会把主线程送到被排除的核上。
             long gameMask = 0;
@@ -1029,15 +1578,19 @@ namespace FrameForge.Sys
                 gameMask = CpuTopology.GameMask(cores, out used);
             }
 
+            double hysteresis = CoreConfig.Hysteresis();
             int best = -1;
             double bestLoad = 2;
             for (int i = 0; i < all.Length; i++)
             {
                 CpuCore c = all[i];
                 if (c.Parked) continue;
+                // P1-A：PCoreFirst 只在 P 核候选中挑最闲核。
+                if (policy == CorePolicy.PCoreFirst && c.Efficient) continue;
                 if (gameMask != 0 && (c.Mask & gameMask) == 0) continue;
                 int idx = c.Index;
-                if (idx < 0 || idx >= n) continue;
+                // SetThreadIdealProcessor 只支持 0..63；>63 的核不参与本轮引导。
+                if (idx < 0 || idx >= n || idx >= 64) continue;
 
                 long di = idle2[idx] - idle1[idx];
                 long db = busy2[idx] - busy1[idx];
@@ -1045,10 +1598,10 @@ namespace FrameForge.Sys
                 if (total <= 0) total = 1;
                 double load = (double)db / total;
 
-                if (best < 0 || load < bestLoad - 0.0005) { best = idx; bestLoad = load; }
-                else if (best == 0 && idx != 0 && Math.Abs(load - bestLoad) <= 0.0005) best = idx;
+                if (best < 0 || load < bestLoad - hysteresis) { best = idx; bestLoad = load; }
+                else if (best == 0 && idx != 0 && Math.Abs(load - bestLoad) <= hysteresis) best = idx;
             }
-            return best < 0 ? 0 : best;
+            return best < 0 ? -1 : best;
         }
 
         /// <summary>进程里 TID 最小的线程就是主线程(游戏逻辑与渲染提交都压在它上面)。</summary>
@@ -1092,8 +1645,16 @@ namespace FrameForge.Sys
                 string cur = ActiveSchemeGuid();
                 if (cur.Length == 0) return false;
                 if (string.Equals(cur, SchemeHigh, StringComparison.OrdinalIgnoreCase)) return true;
-                prevScheme = cur;
-                return SetScheme(SchemeHigh);
+                // §A3：所有电源改动进仲裁者原子 Acquire；只有 holder 记原值。
+                string captured = cur;
+                AcquireResult ar = SystemResourceArbiter.Instance.Acquire(this, ResourceKind.PowerScheme,
+                    delegate { return captured; },
+                    delegate { return SetScheme(SchemeHigh); });
+                if (!ar.Ok) return false;
+                // SHARED 同样持有一个引用，停止时必须对称 Release。
+                powerAcquired = true;
+                if (ar.State == AcquireState.GRANTED) prevScheme = ar.Old;
+                return true;
             }
             catch (Exception ex) { Log.Write("boost power: " + ex.Message); return false; }
         }
@@ -1102,8 +1663,14 @@ namespace FrameForge.Sys
         {
             try
             {
-                if (Native.timeBeginPeriod(1) == 0) { timerSet = true; return true; }
-                Log.Write("boost timer: timeBeginPeriod(1) refused");
+                // §A2/A3：timer 引用计数收敛到仲裁者，Begin/End 严格配对。
+                AcquireResult ar = SystemResourceArbiter.Instance.Acquire(this, ResourceKind.TimerResolution,
+                    delegate { return "1"; },
+                    delegate { return Native.timeBeginPeriod(1) == 0; });
+                if (!ar.Ok) return false;
+                timerAcquired = true;
+                timerSet = ar.State == AcquireState.GRANTED;
+                return true;
             }
             catch (Exception ex) { Log.Write("boost timer: " + ex.Message); }
             return false;
@@ -1125,24 +1692,61 @@ namespace FrameForge.Sys
 
         private int SuspendBackground(int gamePid)
         {
-            BackgroundProc[] list = Candidates(gamePid, 6);
+            return SuspendBackground(gamePid, Candidates(gamePid, 6), null);
+        }
+
+        /// <summary>使用 PREPARED 阶段已捕获的候选列表，挂起成功即原子落确认点。</summary>
+        private int SuspendBackground(int gamePid, BackgroundProc[] list, Transaction tx)
+        {
+            if (list == null) return 0;
             int done = 0;
-            foreach (BackgroundProc b in list)
+            for (int i = 0; i < list.Length; i++)
             {
+                BackgroundProc b = list[i];
                 IntPtr h = Native.OpenProcess(Native.PROCESS_SUSPEND_RESUME, false, b.Pid);
-                if (h == IntPtr.Zero) continue;
+                if (h == IntPtr.Zero)
+                {
+                    MarkSuspend(tx, b.Pid, false, "open-failed");
+                    continue;
+                }
                 try
                 {
                     if (Native.NtSuspendProcess(h) == 0)
                     {
                         suspended.Add(new Suspended { Pid = b.Pid, Name = b.Name, WorkingSet = b.WorkingSet });
                         done++;
+                        MarkSuspend(tx, b.Pid, true, "");
                     }
+                    else MarkSuspend(tx, b.Pid, false, "suspend-refused");
                 }
-                catch { }
+                catch (Exception ex) { MarkSuspend(tx, b.Pid, false, ex.Message); }
                 finally { Native.CloseHandle(h); }
             }
             return done;
+        }
+
+        private static void MarkSuspend(Transaction tx, int pid, bool ok, string note)
+        {
+            if (tx == null) return;
+            string now = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+            for (int i = 0; i < tx.Actions.Count; i++)
+            {
+                JournalAction a = tx.Actions[i];
+                if (a.Kind != ActionKind.SUSPEND_PROCESS || a.Target == null
+                    || a.Target.Pid != pid || a.Status != ActionStatus.PENDING) continue;
+                if (ok)
+                {
+                    a.Status = ActionStatus.APPLIED_CONFIRMED;
+                    a.AppliedUtc = now;
+                    a.VerifiedUtc = now;
+                }
+                else
+                {
+                    a.Status = ActionStatus.FAILED;
+                    a.Note = note ?? "";
+                }
+            }
+            BoostJournal.Save(tx);
         }
 
         // =================================================================
@@ -1152,13 +1756,16 @@ namespace FrameForge.Sys
         public void Restore()
         {
             if (!Active) return;
+            Transaction tx = BoostJournal.Load();
+            if (tx == null) tx = currentTx;
 
-            // 还原失败不能只是"什么也没发生":用户的电源计划、注册表就停在加速状态了。
-            // 记进日志,并且保留日志文件,下次启动还能再还原一次。
+            // 同进程快速路径：先把内存态原值拨回去；随后统一走 Reconcile 做一致性复核
+            // 并复用它的"未决项为 0 才清日志"判定（消除内存版/磁盘版两套 Restore 分叉）。
             bool clean = true;
+            bool timerEnded = false;
             try { irq.Restore(); }
             catch (Exception ex) { clean = false; Log.Write("boost restore irq: " + ex.Message); }
-            try { affinity.Restore(); }
+            try { affinity.Restore(); clean &= coreSchedulerRestored(); }
             catch (Exception ex) { clean = false; Log.Write("boost restore affinity: " + ex.Message); }
 
             for (int i = suspended.Count - 1; i >= 0; i--)
@@ -1176,16 +1783,44 @@ namespace FrameForge.Sys
             }
             suspended.Clear();
 
-            if (timerSet)
+            if (timerAcquired)
             {
-                try { Native.timeEndPeriod(1); }
+                // I3：只有 holder 且引用计数归零时才 End；幂等由仲裁者保证。
+                SystemResourceArbiter.Instance.Release(this, ResourceKind.TimerResolution,
+                    delegate(string old) { Native.timeEndPeriod(1); timerEnded = true; return true; });
+                timerAcquired = false;
+                timerSet = false;
+            }
+            else if (timerSet)
+            {
+                try { Native.timeEndPeriod(1); timerEnded = true; }
                 catch (Exception ex) { clean = false; Log.Write("boost restore timer: " + ex.Message); }
                 timerSet = false;
+            }
+            if (timerEnded && tx != null)
+            {
+                BoostJournal.MarkReverted(tx, ActionKind.TIMER_RESOLUTION);
+                BoostJournal.Save(tx);
             }
 
             if (!RestoreRegistry()) clean = false;
 
-            if (prevScheme.Length > 0)
+            if (powerAcquired)
+            {
+                SystemResourceArbiter.Instance.Release(this, ResourceKind.PowerScheme,
+                    delegate(string old)
+                    {
+                        // 幂等读回：current == new(SchemeHigh) 才写回 old。
+                        string cur = ActiveSchemeGuid();
+                        if (string.Equals(cur, SchemeHigh, StringComparison.OrdinalIgnoreCase))
+                            return SetScheme(old);
+                        Log.Write("boost restore power: current changed by user, skipped");
+                        return true;
+                    });
+                powerAcquired = false;
+                prevScheme = "";
+            }
+            else if (prevScheme.Length > 0)
             {
                 try { SetScheme(prevScheme); }
                 catch (Exception ex) { clean = false; Log.Write("boost restore power plan: " + ex.Message); }
@@ -1197,16 +1832,19 @@ namespace FrameForge.Sys
                 IntPtr h = IntPtr.Zero;
                 try
                 {
-                    h = Native.OpenProcess(Native.PROCESS_SET_INFORMATION, false, GamePid);
-                    if (h != IntPtr.Zero) Native.SetPriorityClass(h, prevPriority);
+                    // PID 复用防护：名字不一致绝不写回旧档位。
+                    if (string.Equals(Native.ProcessName(GamePid), GameName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        h = Native.OpenProcess(Native.PROCESS_SET_INFORMATION, false, GamePid);
+                        if (h != IntPtr.Zero) Native.SetPriorityClass(h, prevPriority);
+                    }
                 }
                 catch (Exception ex) { Log.Write("boost restore priority: " + ex.Message); }
                 finally { if (h != IntPtr.Zero) Native.CloseHandle(h); }
                 prevPriority = 0;
             }
 
-            // 软引导只是调度提示,进程退出就没了;还原时主动把主线程指回「任意核心」,
-            // 避免游戏还在跑却一直被钉在之前挑的那颗核上。
+            // 软引导只是调度提示,进程退出就没了;还原时主动把主线程指回「任意核心」。
             if (GamePid > 0)
             {
                 int tid = MainThreadId(GamePid);
@@ -1216,45 +1854,108 @@ namespace FrameForge.Sys
             SteerCpu = -1;
             steerBusy = 0;
 
+            int restoredPid = GamePid;
+            string restoredName = GameName;
             Active = false;
             StartedAt = DateTime.MinValue;
             GamePid = -1;
             GameName = "";
             PriorityLevel = -1;
             IdealApplied = false;
-            // 全部恢复完成才删日志:删早了中途崩溃就再也没机会自愈。
-            if (clean)
+            needPower = false;
+            needTimer = false;
+
+            // S3：统一入口。快速路径已还原的值会被对账判为 current==old → noop；
+            // 清日志与否完全由 ReconcileReport.Clean 决定。
+            if (tx != null)
             {
-                try { BoostJournal.Clear(); } catch { }
+                var ctx = new ReconcileContext();
+                ctx.IsSameProcess = true;
+                ctx.IsAdmin = IsAdmin;
+                ReconcileReport rep = BoostJournal.Reconcile(tx, ctx);
+                clean = clean && rep.Clean;
+                Log.Write("boost restore reconcile: reverted=" + rep.Reverted + " noop=" + rep.Noop
+                    + " conflict=" + rep.Conflict + " failed=" + rep.Failed);
             }
-            else
+            else if (!clean)
             {
                 Log.Write("boost restore incomplete, journal kept for next start");
             }
+            if (!clean) Log.Write("boost restore incomplete (pid=" + restoredPid + " " + restoredName + ")");
             Log.Write(clean ? "boost restore" : "boost restore (incomplete)");
+            currentTx = null;
         }
 
-        /// <summary>把当前这次改动整理成可落盘的原始值,供崩溃后恢复。</summary>
-        internal BoostJournal.State Snapshot()
+        private bool coreSchedulerRestored()
         {
-            var st = new BoostJournal.State();
-            st.GamePid = GamePid;
-            st.GameName = GameName;
-            st.PrevScheme = prevScheme;
-            foreach (RegSaved s in regSaved)
+            try { coreScheduler.Restore(); return true; }
+            catch (Exception ex) { Log.Write("boost restore core scheduler: " + ex.Message); return false; }
+        }
+
+        /// <summary>
+        /// SCTL v2 §3.3：把当前这次改动的 9 类状态整理成事务快照。
+        /// Apply 走 BuildPreparedActions（改动前捕获）；此处保留为"当前值"快照，
+        /// 供诊断/自检对照，不参与 Apply 的先记后改路径。
+        /// </summary>
+        internal Transaction Snapshot()
+        {
+            int sid = -1;
+            try { using (Process p = Process.GetProcessById(GamePid)) sid = p.SessionId; }
+            catch { }
+            Transaction tx = BoostJournal.NewTransaction(
+                OwnerKind.ONE_SHOT, GamePid, GameName, sid);
+            ProcessGuard guard = BoostJournal.MakeGuard(GamePid, GameName, sid);
+
+            if (PriorityLevel >= 0)
+                BoostJournal.NewAction(tx, ActionKind.PRIORITY_CLASS, guard,
+                    prevPriority.ToString(CultureInfo.InvariantCulture),
+                    PriorityClassFor(PriorityLevel).ToString(CultureInfo.InvariantCulture));
+            if (IdealApplied)
+                BoostJournal.NewAction(tx, ActionKind.IDEAL_CPU, guard,
+                    Native.MAXIMUM_PROCESSORS.ToString(CultureInfo.InvariantCulture),
+                    SteerCpu.ToString(CultureInfo.InvariantCulture));
+            if (AffinityMask != 0)
+                BoostJournal.NewAction(tx, ActionKind.AFFINITY_MASK, guard,
+                    HexStr(affinity.Snapshot().OriginalGameMask), HexStr(AffinityMask));
+            for (int i = 0; i < affinity.Snapshot().Moved.Count; i++)
             {
-                var e = new BoostJournal.Entry();
-                e.Path = s.Path;
-                e.Name = s.Name;
-                e.Exists = s.Exists;
-                if (s.Exists)
-                {
-                    try { e.Value = Convert.ToInt32(s.Value, CultureInfo.InvariantCulture); }
-                    catch { e.Exists = false; }
-                }
-                st.Reg.Add(e);
+                MaskSnapshot m = affinity.Snapshot().Moved[i];
+                BoostJournal.NewAction(tx, ActionKind.AFFINITY_MASK,
+                    BoostJournal.MakeGuard(m.Pid, m.Name, -1), HexStr(m.Mask), HexStr(m.Mask & ~AffinityMask));
             }
-            return st;
+            if (prevScheme.Length > 0)
+                BoostJournal.NewAction(tx, ActionKind.POWER_SCHEME, new ProcessGuard(), prevScheme, SchemeHigh);
+            if (timerSet)
+            {
+                JournalAction ta = BoostJournal.NewAction(tx, ActionKind.TIMER_RESOLUTION,
+                    new ProcessGuard(), "1", "1");
+                ta.RequiresLiveOwner = true;
+            }
+            for (int i = 0; i < regSaved.Count; i++)
+            {
+                RegSaved s = regSaved[i];
+                int ov = 0;
+                if (s.Value != null)
+                {
+                    try { ov = Convert.ToInt32(s.Value, CultureInfo.InvariantCulture); } catch { ov = 0; }
+                }
+                JournalAction ra = BoostJournal.NewAction(tx, ActionKind.REG_DWORD, new ProcessGuard(),
+                    BoostJournal.Base64Int(ov), BoostJournal.Base64Int(ov));
+                ra.Path = s.Path;
+                ra.Name = s.Name;
+                ra.Existed = s.Exists;
+                ra.KindOfValue = ValueKind.DWORD;
+            }
+            for (int i = 0; i < suspended.Count; i++)
+            {
+                Suspended s = suspended[i];
+                BoostJournal.NewAction(tx, ActionKind.SUSPEND_PROCESS,
+                    BoostJournal.MakeGuard(s.Pid, s.Name, sid), "RUNNING", "SUSPENDED");
+            }
+            BoostJournal.NewAction(tx, ActionKind.MEMORY_TRIM, new ProcessGuard(), "", "").Revertible = false;
+            tx.State = TxState.COMMITTED;
+            tx.Res = SystemResourceArbiter.Instance.Snapshot();
+            return tx;
         }
 
         private class RegSaved

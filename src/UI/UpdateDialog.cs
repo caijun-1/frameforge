@@ -38,7 +38,7 @@ namespace FrameForge.UI
             KeyPreview = true;
 
             float s = Ui.S;
-            ClientSize = new Size((int)(460 * s), (int)(242 * s));
+            ClientSize = new Size((int)(500 * s), (int)(270 * s));
 
             btnLater = new FlatButton();
             btnLater.Primary = false;
@@ -81,6 +81,7 @@ namespace FrameForge.UI
             btnInstall.Enabled = false;
             btnLater.Enabled = false;
             btnInstall.Text = I18n.T("upd.downloading", 0);
+            LayoutButtons();
 
             Thread t = new Thread(delegate()
             {
@@ -102,7 +103,10 @@ namespace FrameForge.UI
                 if (IsDisposed || !IsHandleCreated) return;
                 BeginInvoke((MethodInvoker)delegate
                 {
-                    if (!IsDisposed) btnInstall.Text = text;
+                    if (IsDisposed) return;
+                    btnInstall.Text = text;
+                    LayoutButtons();
+                    btnInstall.Invalidate();
                 });
             }
             catch (Exception) { }
@@ -129,6 +133,7 @@ namespace FrameForge.UI
                     btnInstall.Enabled = true;
                     btnLater.Enabled = true;
                     btnInstall.Text = I18n.T("upd.retry");
+                    LayoutButtons();
                     Invalidate();
                 });
             }
@@ -138,10 +143,18 @@ namespace FrameForge.UI
         private void LayoutButtons()
         {
             int pad = Ui.Px(24);
-            int bh = Ui.Px(36), bwOpen = Ui.Px(132), bwLater = Ui.Px(92);
+            int bh = Ui.Px(36);
             int bottom = Height - pad - bh;
-            btnInstall.SetBounds(Width - pad - bwOpen, bottom, bwOpen, bh);
-            btnLater.SetBounds(Width - pad - bwOpen - Ui.Px(10) - bwLater, bottom, bwLater, bh);
+            int laterW = ButtonWidth(btnLater.Text, 88);
+            int installW = ButtonWidth(btnInstall.Text, 132);
+            btnInstall.SetBounds(Width - pad - installW, bottom, installW, bh);
+            btnLater.SetBounds(btnInstall.Left - Ui.Px(12) - laterW, bottom, laterW, bh);
+        }
+
+        private static int ButtonWidth(string text, int minimum)
+        {
+            int textW = TextRenderer.MeasureText(text, Theme.F(9.5f, FontStyle.Bold)).Width;
+            return Math.Max(Ui.Px(minimum), textW + Ui.Px(32));
         }
 
         protected override void OnResize(EventArgs e)
@@ -164,7 +177,7 @@ namespace FrameForge.UI
             int pref = 2;
             if (Native.DwmSetWindowAttribute(Handle, 33, ref pref, 4) != 0)
             {
-                using (GraphicsPath p = Ui.Round(new RectangleF(0, 0, Width, Height), Ui.Fp(12)))
+                using (GraphicsPath p = Ui.Round(new RectangleF(0, 0, Width, Height), Ui.Fp(8)))
                     Region = new Region(p);
             }
         }
@@ -176,28 +189,30 @@ namespace FrameForge.UI
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
 
-            using (GraphicsPath p = Ui.Round(new RectangleF(0, 0, Width - 1, Height - 1), Ui.Fp(12)))
+            using (GraphicsPath p = Ui.Round(new RectangleF(0, 0, Width - 1, Height - 1), Ui.Fp(8)))
             using (Pen pen = new Pen(Theme.Border, 1f))
                 g.DrawPath(pen, p);
 
             int pad = Ui.Px(24);
 
-            Rectangle titleRect = new Rectangle(pad, Ui.Px(22), Width - pad * 2, Ui.Px(26));
-            TextRenderer.DrawText(g, I18n.T("upd.title"), Theme.F(11.5f, FontStyle.Bold),
+            Rectangle titleRect = new Rectangle(pad, Ui.Px(24), Width - pad * 2, Ui.Px(30));
+            TextRenderer.DrawText(g, I18n.T("upd.title"), Theme.F(15f, FontStyle.Bold),
                 titleRect, Theme.Text, Ui.Flags(ContentAlignment.MiddleLeft, false));
 
-            Rectangle bodyRect = new Rectangle(pad, Ui.Px(58), Width - pad * 2, Ui.Px(24));
+            Rectangle bodyRect = new Rectangle(pad, Ui.Px(62), Width - pad * 2, Ui.Px(24));
             TextRenderer.DrawText(g, I18n.T("upd.body", current, latest), Theme.F(9.5f, FontStyle.Regular),
-                bodyRect, Theme.Sub, Ui.Flags(ContentAlignment.MiddleLeft, false));
+                bodyRect, Theme.Sub,
+                Ui.Flags(ContentAlignment.MiddleLeft, false) | TextFormatFlags.EndEllipsis);
 
-            Rectangle noteRect = new Rectangle(pad, Ui.Px(88), Width - pad * 2, Ui.Px(44));
-            TextRenderer.DrawText(g, I18n.T(canInstall ? "upd.note" : "upd.note.web"), Theme.F(8.6f, FontStyle.Regular),
-                noteRect, Theme.Faint, Ui.Flags(ContentAlignment.TopLeft, true));
+            // 说明与错误各自占固定区域，长英文不会挤压底部按钮。
+            Rectangle noteRect = new Rectangle(pad, Ui.Px(96), Width - pad * 2, Ui.Px(52));
+            TextRenderer.DrawText(g, I18n.T(canInstall ? "upd.note" : "upd.note.web"), Theme.F(8.8f, FontStyle.Regular),
+                noteRect, Theme.Sub, Ui.Flags(ContentAlignment.TopLeft, true));
 
             if (error.Length > 0)
             {
-                Rectangle errRect = new Rectangle(pad, Ui.Px(134), Width - pad * 2, Ui.Px(40));
-                TextRenderer.DrawText(g, error, Theme.F(8.6f, FontStyle.Regular),
+                Rectangle errRect = new Rectangle(pad, Ui.Px(158), Width - pad * 2, Ui.Px(36));
+                TextRenderer.DrawText(g, error, Theme.F(8.8f, FontStyle.Regular),
                     errRect, Theme.Danger, Ui.Flags(ContentAlignment.TopLeft, true));
             }
         }

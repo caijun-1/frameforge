@@ -52,6 +52,12 @@ $cscArgs = @(
     ("/win32manifest:" + (Join-Path $root "app.manifest")),
     ("/win32icon:" + (Join-Path $root "app.ico")),
     ("/resource:" + (Join-Path $root "app.ico") + ",app.ico"),
+    # 水墨底图与表盘小剑:嵌入 exe,运行时按窗口尺寸缩放裁切。
+    ("/resource:" + (Join-Path $root "assets\ref\bg_light.png") + ",bg_light.png"),
+    ("/resource:" + (Join-Path $root "assets\ref\bg_dark.png") + ",bg_dark.png"),
+    ("/resource:" + (Join-Path $root "assets\ref\icon_sword.png") + ",icon_sword.png"),
+    # 滤镜与叠加层预览用的游戏画面。
+    ("/resource:" + (Join-Path $root "assets\ref\scene_play.png") + ",scene_play.png"),
     ("/r:System.Management.dll"),
     # RTSS 安装流程要解压 zip:csc 默认不引用这两个程序集。
     ("/r:System.IO.Compression.dll"),

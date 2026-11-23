@@ -14,6 +14,25 @@ namespace FrameForge.Sys
         public string Error = "";
     }
 
+    /// <summary>SCTL v2 §3.3：单个被挪走进程的亲和性原值快照。</summary>
+    public class MaskSnapshot
+    {
+        public int Pid;
+        public string Name = "";
+        public long Mask;
+    }
+
+    /// <summary>供 BoostEngine.Snapshot / journal 序列化的只读视图。</summary>
+    public class AffinitySnapshot
+    {
+        public int GamePid;
+        public string GameName = "";
+        public long GameMask;
+        public long OriginalGameMask;
+        public int Mode;
+        public readonly List<MaskSnapshot> Moved = new List<MaskSnapshot>();
+    }
+
     /// <summary>
     /// 核心独占:把游戏绑定到一组完整物理核心,再把其他可访问的进程挪到剩余核心。
     /// 所有被改动的进程都记录了原掩码,还原时按进程名核对后写回,
@@ -43,6 +62,23 @@ namespace FrameForge.Sys
 
         public int Cores { get { return CpuTopology.CoreCount(gameMask); } }
 
+        /// <summary>SCTL v2：暴露 saved / originalGameMask 的只读快照，供 journal 序列化。</summary>
+        public AffinitySnapshot Snapshot()
+        {
+            var snap = new AffinitySnapshot();
+            snap.GamePid = gamePid;
+            snap.GameName = gameName;
+            snap.GameMask = gameMask;
+            snap.OriginalGameMask = originalGameMask;
+            snap.Mode = mode;
+            for (int i = 0; i < saved.Count; i++)
+            {
+                MaskSaved s = saved[i];
+                snap.Moved.Add(new MaskSnapshot { Pid = s.Pid, Name = s.Name, Mask = s.Mask });
+            }
+            return snap;
+        }
+
         public AffinityResult Apply(int pid, string name, int coresWanted)
         {
             var r = new AffinityResult();
@@ -61,7 +97,24 @@ namespace FrameForge.Sys
             int cores;
             long wanted = CpuTopology.GameMask(coresWanted, out cores);
             if (wanted == 0) { r.Error = "notopology"; return r; }
+            return ApplyCore(pid, name, wanted);
+        }
 
+        /// <summary>
+        /// CoreScheduler SingleCcd 用：按策略算出的显式 mask 绑定，不重造执行器。
+        /// </summary>
+        public AffinityResult ApplyWithMask(int pid, string name, long explicitMask)
+        {
+            var r = new AffinityResult();
+            if (pid <= 0) { r.Error = "nopid"; return r; }
+            if (explicitMask == 0) { r.Error = "notopology"; return r; }
+            Restore();
+            return ApplyCore(pid, name, explicitMask);
+        }
+
+        private AffinityResult ApplyCore(int pid, string name, long wanted)
+        {
+            var r = new AffinityResult();
             IntPtr h = Native.OpenProcess(Native.PROCESS_SET_INFORMATION | Native.PROCESS_QUERY_INFORMATION
                 | Native.PROCESS_SET_LIMITED_INFORMATION, false, pid);
             if (h == IntPtr.Zero)
@@ -175,8 +228,16 @@ namespace FrameForge.Sys
                 try
                 {
                     h = Native.OpenProcess(Native.PROCESS_SET_INFORMATION | Native.PROCESS_QUERY_INFORMATION, false, s.Pid);
-                    if (h != IntPtr.Zero && string.Equals(Native.ProcessName(s.Pid), s.Name, StringComparison.OrdinalIgnoreCase))
-                        Native.SetProcessAffinityMask(h, new IntPtr(s.Mask));
+                    if (h == IntPtr.Zero || !string.Equals(Native.ProcessName(s.Pid), s.Name, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    // 当前值指纹对账：current==old 幂等跳过；current!=我们写入的 new 则视为他人改动，跳过。
+                    IntPtr pm, sm;
+                    if (!Native.GetProcessAffinityMask(h, out pm, out sm)) continue;
+                    long cur = pm.ToInt64();
+                    if (cur == s.Mask) continue;
+                    long expectedNew = s.Mask & ~gameMask;
+                    if (expectedNew != 0 && cur != expectedNew) continue;
+                    Native.SetProcessAffinityMask(h, new IntPtr(s.Mask));
                 }
                 catch { }
                 finally { if (h != IntPtr.Zero) Native.CloseHandle(h); }
@@ -193,9 +254,18 @@ namespace FrameForge.Sys
                     if (h != IntPtr.Zero
                         && string.Equals(Native.ProcessName(gamePid), gameName, StringComparison.OrdinalIgnoreCase))
                     {
-                        // 软亲和:清空默认 CPU Sets 即恢复;硬亲和:写回原掩码。
+                        // 软亲和:清空默认 CPU Sets 即恢复;硬亲和:先按指纹对账再写回原掩码。
                         if (mode == 1) Native.SetProcessDefaultCpuSets(h, null, 0);
-                        else if (originalGameMask != 0) Native.SetProcessAffinityMask(h, new IntPtr(originalGameMask));
+                        else if (originalGameMask != 0)
+                        {
+                            IntPtr pm, sm;
+                            if (Native.GetProcessAffinityMask(h, out pm, out sm))
+                            {
+                                long cur = pm.ToInt64();
+                                if (cur != originalGameMask && cur == gameMask)
+                                    Native.SetProcessAffinityMask(h, new IntPtr(originalGameMask));
+                            }
+                        }
                     }
                 }
                 catch { }

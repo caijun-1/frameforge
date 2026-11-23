@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 using FrameForge.Sys;
 
@@ -34,7 +35,7 @@ namespace FrameForge.UI
             SetStyle(ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer |
                      ControlStyles.AllPaintingInWmPaint | ControlStyles.ResizeRedraw, true);
 
-            int w = Ui.Px(640), h = Ui.Px(700);
+            int w = Ui.Px(680), h = Ui.Px(700);
             Size = new Size(w, h);
             Rectangle wa = Screen.PrimaryScreen.WorkingArea;
             Location = new Point(wa.Left + Math.Max(0, (wa.Width - w) / 2),
@@ -42,10 +43,13 @@ namespace FrameForge.UI
 
             btnList = new FlatButton();
             btnList.Primary = false;
+            btnList.FontPt = 9.5f;
             btnList.Text = I18n.T("report.open");
             btnList.Click += delegate { Close(); if (openRecords != null) openRecords(); };
 
             btnClose = new FlatButton();
+            btnClose.Primary = true;
+            btnClose.FontPt = 9.5f;
             btnClose.Text = I18n.T("report.close");
             btnClose.Click += delegate { Close(); };
 
@@ -56,10 +60,18 @@ namespace FrameForge.UI
 
         private void LayoutButtons()
         {
-            int bw = Ui.Px(148), bh = Ui.Px(42), gap = Ui.Px(10);
-            int y = Height - Ui.Px(18) - bh;
-            btnClose.SetBounds(Width - Ui.Px(22) - bw, y, bw, bh);
-            btnList.SetBounds(Width - Ui.Px(22) - bw * 2 - gap, y, bw, bh);
+            int bh = Ui.Px(36);
+            int y = Height - Ui.Px(24) - bh;
+            int closeW = ButtonWidth(btnClose, 88);
+            int listW = ButtonWidth(btnList, 112);
+            btnClose.SetBounds(Width - Ui.Px(24) - closeW, y, closeW, bh);
+            btnList.SetBounds(btnClose.Left - Ui.Px(12) - listW, y, listW, bh);
+        }
+
+        private static int ButtonWidth(FlatButton button, int minimum)
+        {
+            int text = TextRenderer.MeasureText(button.Text, Theme.F(9.5f, FontStyle.Bold)).Width;
+            return Math.Max(Ui.Px(minimum), text + Ui.Px(32));
         }
 
         protected override void OnResize(EventArgs e)
@@ -68,42 +80,48 @@ namespace FrameForge.UI
             if (btnClose != null) LayoutButtons();
         }
 
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            int pref = 2;
+            if (Native.DwmSetWindowAttribute(Handle, 33, ref pref, 4) != 0)
+            {
+                using (GraphicsPath p = Ui.Round(new RectangleF(0, 0, Width, Height), Ui.Fp(8)))
+                    Region = new Region(p);
+            }
+        }
+
         protected override void OnPaint(PaintEventArgs e)
         {
             Graphics g = e.Graphics;
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
             using (var b = new SolidBrush(Theme.Bg)) g.FillRectangle(b, ClientRectangle);
 
-            // 顶部一条强调色,作为"刚打完一局"的视觉提示
-            using (var b = new SolidBrush(Theme.Accent))
-                g.FillRectangle(b, 0, 0, Width, Ui.Px(4));
-
             int pad = Ui.Px(24);
-            int y = Ui.Px(24);
-
-            // 行高要留够:SingleLine 下矩形比字形略矮就会裁掉文字底部(高 DPI 下尤其明显)。
-            Txt(g, I18n.T("report.title"), Theme.Bold(11f), Theme.Sub,
-                new Rectangle(pad, y, Width - pad * 2, Ui.Px(26)), TextFormatFlags.Left);
-            y += Ui.Px(28);
+            Txt(g, I18n.T("report.title"), Theme.Bold(15f), Theme.Text,
+                new Rectangle(pad, Ui.Px(24), Width - pad * 2, Ui.Px(30)),
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+            Txt(g, I18n.T("report.sub"), Theme.Regular(8.8f), Theme.Sub,
+                new Rectangle(pad, Ui.Px(58), Width - pad * 2, Ui.Px(18)),
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
             int ico = Ui.Px(30);
-            AppIcons.DrawApp(g, rec.IconPath, new Rectangle(pad, y + Ui.Px(5), ico, ico), Theme.Accent, AppGlyph.Chart);
-
-            Txt(g, Safe(rec.DisplayName), Theme.Bold(21f), Theme.Text,
-                new Rectangle(pad + ico + Ui.Px(12), y, Width - pad * 2 - ico - Ui.Px(12), Ui.Px(40)),
-                TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
-            y += Ui.Px(42);
+            int gameY = Ui.Px(88);
+            AppIcons.DrawApp(g, rec.IconPath, new Rectangle(pad, gameY + Ui.Px(1), ico, ico), Theme.Accent, AppGlyph.Chart);
+            Txt(g, Safe(rec.DisplayName), Theme.Bold(18f), Theme.Text,
+                new Rectangle(pad + ico + Ui.Px(12), gameY, Width - pad * 2 - ico - Ui.Px(12), Ui.Px(32)),
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
             string when = rec.Start.ToString("yyyy-MM-dd HH:mm") + "   ·   "
                 + I18n.T("report.duration") + " " + rec.Duration;
-            Txt(g, when, Theme.Regular(9f), Theme.Faint,
-                new Rectangle(pad, y, Width - pad * 2, Ui.Px(18)), TextFormatFlags.Left);
-            y += Ui.Px(26);
+            Txt(g, when, Theme.Regular(8.8f), Theme.Faint,
+                new Rectangle(pad, Ui.Px(124), Width - pad * 2, Ui.Px(18)),
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
 
-            // ---- 三个大数字 ----
-            int heroH = Ui.Px(104);
-            Rectangle hero = new Rectangle(pad, y, Width - pad * 2, heroH);
+            // ---- 三项核心读数 ----
+            int heroH = Ui.Px(90);
+            Rectangle hero = new Rectangle(pad, Ui.Px(158), Width - pad * 2, heroH);
             Tile(g, hero);
             int third = hero.Width / 3;
             BigStat(g, new Rectangle(hero.Left, hero.Top, third, heroH),
@@ -116,50 +134,55 @@ namespace FrameForge.UI
             {
                 int x = hero.Left + third * i;
                 using (var p = new Pen(Theme.Border, 1f))
-                    g.DrawLine(p, x, hero.Top + Ui.Px(18), x, hero.Bottom - Ui.Px(18));
+                    g.DrawLine(p, x, hero.Top + Ui.Px(16), x, hero.Bottom - Ui.Px(16));
             }
-            y += heroH + Ui.Px(12);
 
             // ---- 帧率曲线 ----
-            int chartH = Ui.Px(140);
-            Chart(g, new Rectangle(pad, y, Width - pad * 2, chartH));
-            y += chartH + Ui.Px(12);
+            Chart(g, new Rectangle(pad, Ui.Px(264), Width - pad * 2, Ui.Px(120)));
 
             // ---- 六个指标 ----
-            int gap = Ui.Px(10);
+            int gap = Ui.Px(12);
             int tw = (Width - pad * 2 - gap * 2) / 3;
-            int th = Ui.Px(78);
-            Stat(g, pad, y, tw, th, I18n.T("report.stat.cpu"), Pct(rec.CpuAvg), Pct(rec.CpuMax));
-            Stat(g, pad + tw + gap, y, tw, th, I18n.T("report.stat.gpu"), Pct(rec.GpuAvg), Pct(rec.GpuMax));
-            Stat(g, pad + (tw + gap) * 2, y, tw, th, I18n.T("report.stat.temp"), Temp(rec.GpuTempAvg), Temp(rec.GpuTempMax));
-            y += th + gap;
-            Stat(g, pad, y, tw, th, I18n.T("report.stat.ram"), Mb(rec.RamAvg), Mb(rec.RamMax));
-            Stat(g, pad + tw + gap, y, tw, th, I18n.T("report.stat.vram"), Mb(rec.VramMax), "");
-            Stat(g, pad + (tw + gap) * 2, y, tw, th, I18n.T("report.stat.power"),
+            int th = Ui.Px(70);
+            int statsY = Ui.Px(400);
+            Stat(g, pad, statsY, tw, th, I18n.T("report.stat.cpu"), Pct(rec.CpuAvg), Pct(rec.CpuMax));
+            Stat(g, pad + tw + gap, statsY, tw, th, I18n.T("report.stat.gpu"), Pct(rec.GpuAvg), Pct(rec.GpuMax));
+            Stat(g, pad + (tw + gap) * 2, statsY, tw, th, I18n.T("report.stat.temp"), Temp(rec.GpuTempAvg), Temp(rec.GpuTempMax));
+            statsY += th + gap;
+            Stat(g, pad, statsY, tw, th, I18n.T("report.stat.ram"), Mb(rec.RamAvg), Mb(rec.RamMax));
+            Stat(g, pad + tw + gap, statsY, tw, th, I18n.T("report.stat.vram"), Mb(rec.VramMax), "");
+            Stat(g, pad + (tw + gap) * 2, statsY, tw, th, I18n.T("report.stat.power"),
                 I18n.T("report.w", rec.Power.ToString("0")), "");
-            y += th + Ui.Px(12);
 
             // ---- 能耗 ----
             string energy = I18n.T("report.energy", rec.Wh.ToString("0.0"))
                 + "      ·      " + I18n.T("report.co2", rec.Co2.ToString("0"));
-            Rectangle eRect = new Rectangle(pad, y, Width - pad * 2, Ui.Px(44));
+            Rectangle eRect = new Rectangle(pad, Ui.Px(568), Width - pad * 2, Ui.Px(40));
             Tile(g, eRect);
             Txt(g, energy, Theme.Regular(9.5f), Theme.Sub,
                 new Rectangle(eRect.Left + Ui.Px(16), eRect.Top, eRect.Width - Ui.Px(32), eRect.Height),
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
             if (rec.Exe.Length > 0)
             {
                 string exe = rec.Exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? rec.Exe : rec.Exe + ".exe";
-                Txt(g, I18n.T("report.exe", exe), Theme.Regular(8.2f), Theme.Faint,
-                    new Rectangle(pad, Height - Ui.Px(70), Width - pad * 2, Ui.Px(16)), TextFormatFlags.Left);
+                Txt(g, I18n.T("report.exe", exe), Theme.Regular(8.5f), Theme.Faint,
+                    new Rectangle(pad, btnList.Top, btnList.Left - pad - Ui.Px(16), btnList.Height),
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            }
+
+            using (var pen = new Pen(Theme.Border, 1f))
+            {
+                g.DrawLine(pen, pad, btnClose.Top - Ui.Px(16), Width - pad, btnClose.Top - Ui.Px(16));
+                using (var p = Ui.Round(new RectangleF(0, 0, Width - 1, Height - 1), Ui.Fp(8)))
+                    g.DrawPath(pen, p);
             }
         }
 
         private void Tile(Graphics g, Rectangle r)
         {
-            Ui.Fill(g, new RectangleF(r.X, r.Y, r.Width, r.Height), Ui.Fp(12), Theme.Card);
-            Ui.Stroke(g, new RectangleF(r.X + 0.5f, r.Y + 0.5f, r.Width - 1f, r.Height - 1f), Ui.Fp(12), Theme.Border, 1f);
+            Ui.Fill(g, new RectangleF(r.X, r.Y, r.Width, r.Height), Ui.Fp(6), Theme.Card);
+            Ui.Stroke(g, new RectangleF(r.X + 0.5f, r.Y + 0.5f, r.Width - 1f, r.Height - 1f), Ui.Fp(6), Theme.Border, 1f);
         }
 
         private void BigStat(Graphics g, Rectangle r, string caption, string value, string unit)
@@ -171,26 +194,26 @@ namespace FrameForge.UI
             int unitW = unit.Length > 0 ? Ui.Px(46) : 0;
             int avail = r.Width - pad * 2 - unitW;
             // 时长这种长一点的数值按可用宽度自动缩小字号,避免被卡片边缘裁掉。
-            Font big = Theme.Num(30f);
+            Font big = Theme.Num(28f);
             Size need = TextRenderer.MeasureText(value, big);
             if (need.Width > avail && need.Width > 0)
             {
-                float size = 30f * avail / need.Width;
+                float size = 28f * avail / need.Width;
                 if (size < 14f) size = 14f;
                 big = Theme.Num(size);
             }
             Txt(g, value, big, Theme.Text,
-                new Rectangle(r.Left + pad, r.Top + Ui.Px(32), avail, Ui.Px(46)),
+                new Rectangle(r.Left + pad, r.Top + Ui.Px(30), avail, Ui.Px(44)),
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
             if (unitW > 0)
             {
-                Txt(g, unit, Theme.Regular(9f), Theme.Faint,
-                    new Rectangle(r.Right - pad - unitW, r.Top + Ui.Px(46), unitW, Ui.Px(20)),
+                Txt(g, unit, Theme.Regular(9.5f), Theme.Faint,
+                    new Rectangle(r.Right - pad - unitW, r.Top + Ui.Px(44), unitW, Ui.Px(20)),
                     TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
             }
         }
 
-        /// <summary>本局帧率曲线:面积 + 折线,再叠一条平均线。</summary>
+        /// <summary>本局帧率曲线:淡色平涂 + 细折线,再叠一条平均线。</summary>
         private void Chart(Graphics g, Rectangle r)
         {
             Tile(g, r);
@@ -224,7 +247,64 @@ namespace FrameForge.UI
                 new Rectangle(r.Left + pad, r.Top + Ui.Px(10), r.Width - pad * 2, Ui.Px(18)),
                 TextFormatFlags.Right);
 
-            FpsChart.Plot(g, plot, series);
+            PlotFlat(g, plot, series);
+        }
+
+        private static void PlotFlat(Graphics g, Rectangle plot, double[] series)
+        {
+            double min = series[0], max = series[0], sum = 0;
+            int maxAt = 0;
+            for (int i = 0; i < series.Length; i++)
+            {
+                double v = series[i];
+                if (v < min) min = v;
+                if (v > max) { max = v; maxAt = i; }
+                sum += v;
+            }
+            double avg = sum / series.Length;
+
+            double span = Math.Max(max - min, Math.Max(max * 0.06, 4));
+            double lo = Math.Max(0, min - span * 0.35);
+            double hi = max + span * 0.25;
+
+            g.SetClip(plot);
+            using (var grid = new Pen(Theme.Border, 1f) { DashStyle = DashStyle.Dash })
+            {
+                for (int i = 0; i < 3; i++)
+                {
+                    float gy = plot.Top + (float)i * plot.Height / 2f;
+                    g.DrawLine(grid, plot.Left, gy, plot.Right, gy);
+                }
+            }
+
+            int n = series.Length;
+            var pts = new PointF[n];
+            for (int i = 0; i < n; i++)
+            {
+                float fx = plot.Left + (float)i * (plot.Width - 1) / Math.Max(1, n - 1);
+                float fy = plot.Bottom - (float)((series[i] - lo) / (hi - lo)) * (plot.Height - 1);
+                pts[i] = new PointF(fx, fy);
+            }
+
+            using (var area = new GraphicsPath())
+            {
+                area.AddLines(pts);
+                area.AddLine(pts[n - 1], new PointF(pts[n - 1].X, plot.Bottom));
+                area.AddLine(new PointF(pts[n - 1].X, plot.Bottom), new PointF(pts[0].X, plot.Bottom));
+                area.CloseFigure();
+                using (var b = new SolidBrush(Theme.Alpha(Theme.Accent, Theme.Dark ? 26 : 18)))
+                    g.FillPath(b, area);
+            }
+            using (var line = new Pen(Theme.Accent, Math.Max(1.25f, Ui.Fp(1.5f))) { LineJoin = LineJoin.Round })
+                g.DrawLines(line, pts);
+
+            float ay = plot.Bottom - (float)((avg - lo) / (hi - lo)) * (plot.Height - 1);
+            using (var p = new Pen(Theme.Sub, Math.Max(1f, Ui.Fp(1))) { DashStyle = DashStyle.Dash })
+                g.DrawLine(p, plot.Left, ay, plot.Right, ay);
+
+            using (var b = new SolidBrush(Theme.Accent))
+                g.FillEllipse(b, pts[maxAt].X - Ui.Fp(3), pts[maxAt].Y - Ui.Fp(3), Ui.Fp(6), Ui.Fp(6));
+            g.ResetClip();
         }
 
         private void Stat(Graphics g, int x, int y, int w, int h, string caption, string avg, string max)
@@ -232,7 +312,7 @@ namespace FrameForge.UI
             Rectangle r = new Rectangle(x, y, w, h);
             Tile(g, r);
             int pad = Ui.Px(14);
-            Txt(g, caption, Theme.Regular(8.6f), Theme.Sub,
+            Txt(g, caption, Theme.Regular(8.8f), Theme.Sub,
                 new Rectangle(x + pad, y + Ui.Px(10), w - pad * 2, Ui.Px(16)), TextFormatFlags.Left);
             Txt(g, avg, Theme.Num(16f), Theme.Text,
                 new Rectangle(x + pad, y + Ui.Px(28), w - pad * 2, Ui.Px(26)),
@@ -240,7 +320,7 @@ namespace FrameForge.UI
             if (max.Length > 0)
             {
                 string tail = I18n.T("report.max") + " " + max;
-                Txt(g, tail, Theme.Regular(8.2f), Theme.Faint,
+                Txt(g, tail, Theme.Regular(8.5f), Theme.Faint,
                     new Rectangle(x + pad, y + h - Ui.Px(24), w - pad * 2, Ui.Px(16)), TextFormatFlags.Left);
             }
         }

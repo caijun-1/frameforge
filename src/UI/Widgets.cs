@@ -148,12 +148,12 @@ namespace FrameForge.UI
                 Rectangle.Round(new RectangleF(labelLeft, 0, Width - labelLeft, labelH)), Enabled ? Theme.Sub : Theme.Faint,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
             TextRenderer.DrawText(g, shown + Unit, Theme.F(9.5f, FontStyle.Bold),
-                new Rectangle(0, 0, Width, (int)labelH), Enabled ? Theme.Accent : Theme.Faint,
+                new Rectangle(0, 0, Width, (int)labelH), live ? Theme.Text : Theme.Faint,
                 TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
 
             float cy = labelH + (Height - labelH) / 2f;
             float left = Ui.Fp(2), right = Width - Ui.Fp(2);
-            var track = new RectangleF(left, cy - Ui.Fp(3), right - left, Ui.Fp(6));
+            var track = new RectangleF(left, cy - Ui.Fp(2), right - left, Ui.Fp(4));
             Ui.Fill(g, track, track.Height / 2f, Theme.Track);
 
             double t = (val - Min) / (double)Math.Max(1, Max - Min);
@@ -161,27 +161,25 @@ namespace FrameForge.UI
             bool bipolar = Min < 0 && Max > 0;
             float from = bipolar ? left + (right - left) * (float)((0 - Min) / (double)(Max - Min)) : left;
             float to = left + (right - left) * (float)t;
-            var filled = new RectangleF(Math.Min(from, to), cy - Ui.Fp(3), Math.Abs(to - from), Ui.Fp(6));
+            var filled = new RectangleF(Math.Min(from, to), cy - Ui.Fp(2), Math.Abs(to - from), Ui.Fp(4));
             if (filled.Width > 0.5f)
                 Ui.Fill(g, filled, filled.Height / 2f, live ? Theme.Accent : Theme.Track);
 
-            float knob = Ui.Fp(14);
-            float stroke = Math.Max(2f, Ui.Fp(2.6));
+            float knob = Ui.Fp(12);
+            float stroke = Math.Max(1.6f, Ui.Fp(2));
             // 夹紧时要把描边和投影的余量留出来:贴到 0 / Width 时圆环外半圈会被控件边界裁平。
             float inset = stroke / 2f + 1f;
             float kx = left + (float)((right - left) * t) - knob / 2f;
             if (kx < inset) kx = inset;
             if (kx > Width - knob - inset) kx = Width - knob - inset;
             var kr = new RectangleF(kx, cy - knob / 2f, knob, knob);
-            using (var sh = new SolidBrush(Color.FromArgb(Theme.Dark ? 90 : 26, 15, 23, 42)))
-                g.FillEllipse(sh, kr.X, kr.Y + Ui.Fp(1.2f), kr.Width, kr.Height);
             using (var b = new SolidBrush(Theme.Card)) g.FillEllipse(b, kr);
             using (var pen = new Pen(!live ? Theme.Faint : hover || drag ? Theme.AccentHover : Theme.Accent, stroke))
                 g.DrawEllipse(pen, kr);
         }
     }
 
-    /// <summary>可选中的圆角胶囊,用于滤镜预设与显示项开关。</summary>
+    /// <summary>紧凑型选项块，用于滤镜预设与显示项开关。</summary>
     public class Chip : Ctl
     {
         public bool Selected;
@@ -197,30 +195,13 @@ namespace FrameForge.UI
         {
             Graphics g = e.Graphics;
             Prep(g);
-            float rad = Ui.Fp(9);
+            float rad = Ui.Fp(6);
             var r = new RectangleF(0, 0, Width - 1, Height - 1);
-            Color fill;
-            Color fg;
-            if (Selected)
-            {
-                fill = hover ? Theme.AccentHover : Theme.Accent;
-                fg = Color.White;
-            }
-            else
-            {
-                fill = hover ? Theme.Hover : Theme.Card;
-                fg = Theme.Sub;
-            }
-            if (Selected)
-            {
-                // 选中态用实心强调色:胶囊本身不需要再叠一层渐变。
-                Ui.Fill(g, r, rad, fill);
-            }
-            else
-            {
-                Ui.Fill(g, r, rad, fill);
-                Ui.Stroke(g, r, rad, Theme.Border, 1f);
-            }
+            Color fill = Selected ? Theme.Alpha(Theme.Accent, Theme.Dark ? 28 : 12)
+                : (hover ? Theme.Hover : Theme.Card);
+            Color fg = Selected ? Theme.Text : (hover ? Theme.Text : Theme.Sub);
+            Ui.Fill(g, r, rad, fill);
+            Ui.Stroke(g, r, rad, Selected ? Theme.Accent : Theme.Border, 1f);
             TextRenderer.DrawText(g, Text ?? "", Theme.F(FontPt, Selected ? FontStyle.Bold : FontStyle.Regular),
                 ClientRectangle, fg,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
@@ -320,7 +301,7 @@ namespace FrameForge.UI
             Prep(g);
             // 圆弧下移、半径按高度收一点,外圈刻度才不会顶出控件上沿。
             float rad = Math.Min(Width * 0.42f, Height * 0.52f);
-            float thick = Math.Max(2f, rad * 0.10f);
+            float thick = Math.Max(2f, rad * 0.14f);
             float cx = Width / 2f, cy = Height * 0.72f;
 
             // 外圈刻度(上半圆),让弧表有机械仪表盘的味道。
@@ -340,7 +321,7 @@ namespace FrameForge.UI
             }
 
             var arc = new RectangleF(cx - rad, cy - rad, rad * 2f, rad * 2f);
-            using (var pen = new Pen(Theme.Mix(Theme.Track, Theme.Sub, Theme.Dark ? 0.12 : 0.28), thick))
+            using (var pen = new Pen(Theme.Dark ? Theme.Hex("#343334") : Theme.Hex("#B8B3AA"), thick))
             {
                 pen.StartCap = LineCap.Round;
                 pen.EndCap = LineCap.Round;
@@ -350,13 +331,7 @@ namespace FrameForge.UI
             Color acc = AccentColor.A == 0 ? Theme.Accent : AccentColor;
             if (disp > 0.001)
             {
-                // 单色弧:去掉光晕与同色渐变,刻度盘上的颜色只表示这一段用量。
-                using (var pen = new Pen(acc, thick))
-                {
-                    pen.StartCap = LineCap.Round;
-                    pen.EndCap = LineCap.Round;
-                    g.DrawArc(pen, arc, 180f, (float)(180.0 * disp));
-                }
+                RingGauge.GradientArc(g, arc, 180f, (float)(180.0 * disp), thick, acc, false);
 
                 // 弧尖亮点:像仪表指针的针尖,一眼看出读到哪。
                 double ea = (180.0 + 180.0 * disp) * Math.PI / 180.0;
@@ -387,7 +362,7 @@ namespace FrameForge.UI
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
 
             TextRenderer.DrawText(g, sub, Theme.F(8.5f, FontStyle.Regular),
-                Rectangle.Round(new RectangleF(0, cy - rad * 0.05f, Width, Ui.Fp(18))), Theme.Faint,
+                Rectangle.Round(new RectangleF(0, cy - rad * 0.05f, Width, Ui.Fp(18))), Theme.Sub,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
         }
     }
@@ -421,9 +396,10 @@ namespace FrameForge.UI
             Prep(g);
             int n = Labels.Length;
             if (n < 3) return;
-            float cx = Width / 2f, cy = Height / 2f;
-            // 半径要给轴标签留出位置,否则最上面的标签会被控件上沿切掉。
-            float rad = Math.Max(Ui.Fp(30f), Math.Min(Width * 0.40f, Math.Min(Width / 2f - Ui.Fp(42), Height / 2f - Ui.Fp(26))));
+            float cx = Width / 2f, cy = Height * 0.485f;
+            // 外圈约占上卡高度的七成,轴标签与 pentagon 之间保留固定留白。
+            float rad = Math.Max(Ui.Fp(30f), Math.Min(Width * 0.43f,
+                Math.Min(Width / 2f - Ui.Fp(42), Height * 0.35f)));
             Color acc = AccentColor.A == 0 ? Theme.Accent : AccentColor;
 
             // 网格圈 + 轴线
@@ -458,7 +434,7 @@ namespace FrameForge.UI
             for (int i = 0; i < n; i++)
                 dp[i] = P(cx, cy, rad * (float)(i < vals.Length ? vals[i] : 0), 360.0 / n * i);
             // 一块平涂的数据面:没有外发光,边缘和轴线负责说明形状。
-            using (var fill = new SolidBrush(Theme.Alpha(acc, Theme.Dark ? 58 : 40)))
+            using (var fill = new SolidBrush(Theme.Alpha(acc, Theme.Dark ? 36 : 26)))
             using (var pen = new Pen(acc, Math.Max(1.5f, Ui.Fp(2))))
             {
                 pen.LineJoin = LineJoin.Round;
@@ -582,16 +558,14 @@ namespace FrameForge.UI
                 pts[i] = new PointF(x, v);
             }
 
-            // 面积渐变:顶部强调色,向下淡出。
+            // 平涂的浅色面积只用于衬托曲线，不使用廉价的发光渐变。
             using (var path = new GraphicsPath())
             {
                 path.AddLines(pts);
                 path.AddLine(pts[pts.Length - 1].X, plot.Bottom, pts[0].X, plot.Bottom);
                 path.CloseFigure();
-                using (var lg = new LinearGradientBrush(
-                    new Rectangle(plot.Left, plot.Top, Math.Max(1, plot.Width), Math.Max(1, plot.Height)),
-                    Color.FromArgb(96, Theme.Accent), Color.FromArgb(0, Theme.Accent), 90f))
-                    g.FillPath(lg, path);
+                using (var fill = new SolidBrush(Color.FromArgb(Theme.Dark ? 22 : 16, Theme.Accent)))
+                    g.FillPath(fill, path);
             }
 
             using (var p = new Pen(Theme.Accent, 2f))
@@ -610,9 +584,9 @@ namespace FrameForge.UI
                 g.DrawLine(p, plot.Left, ay, plot.Right, ay);
             }
 
-            // 峰值点
+            // 峰值使用小型方形遥测游标，和导航选中态保持同一种视觉语言。
             using (var b = new SolidBrush(Theme.Accent))
-                g.FillEllipse(b, pts[maxAt].X - Ui.Px(3), pts[maxAt].Y - Ui.Px(3), Ui.Px(6), Ui.Px(6));
+                g.FillRectangle(b, pts[maxAt].X - Ui.Px(3), pts[maxAt].Y - Ui.Px(3), Ui.Px(6), Ui.Px(6));
         }
     }
 }

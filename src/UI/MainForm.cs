@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using FrameForge.Sys;
@@ -25,6 +26,8 @@ namespace FrameForge.UI
         public SessionTracker Tracker;
         /// <summary>加速前后帧率对比,只记录数据,不做系统修改。</summary>
         public PerfCompare Perf = new PerfCompare();
+        /// <summary>全页唯一 UI 状态源（boost-core §A4.2）：页面只读它，不各自去读引擎。</summary>
+        public readonly PagesStateHub StateHub = new PagesStateHub();
 
         private const int WM_NCHITTEST = 0x0084;
         private const int WM_NCCALCSIZE = 0x0083;
@@ -55,6 +58,8 @@ namespace FrameForge.UI
         private Timer saveTimer;
         private Timer updateTimer;
         private Timer captureTimer;
+        // 必须留一个强引用,否则预热定时器会被 GC 回收、页面又变回首次切换时才构建。
+        private Timer warmTimer;
         private bool captureGuard;
         private NotifyIcon tray;
         private Icon appIcon;
@@ -109,7 +114,7 @@ namespace FrameForge.UI
             Rectangle wa = Screen.PrimaryScreen.WorkingArea;
             float maxW = wa.Width / Ui.S - 32;
             float maxH = wa.Height / Ui.S - 32;
-            ClientSize = new Size(Ui.Px(Math.Min(1020f, maxW)), Ui.Px(Math.Min(720f, maxH)));
+            ClientSize = new Size(Ui.Px(Math.Min(1020f, maxW)), Ui.Px(Math.Min(703f, maxH)));
             Location = new Point(wa.Left + Math.Max(0, (wa.Width - Width) / 2),
                 wa.Top + Math.Max(0, (wa.Height - Height) / 2));
 
@@ -157,7 +162,7 @@ namespace FrameForge.UI
             LayoutAll();
         }
 
-        private int TitleH() { return Ui.Px(52); }
+        private int TitleH() { return Ui.Px(56); }
 
         /// <summary>以句柄的真实 DPI 计算缩放系数,失败时退回 DeviceDpi。</summary>
         private float DpiScale()
@@ -187,6 +192,7 @@ namespace FrameForge.UI
             tips = new ToolTip();
 
             nav = new Segmented();
+            nav.BackColor = Theme.Bg;
             nav.Items = NavItems();
             nav.SetSilent(0);
             nav.Changed += delegate { ShowPage(nav.Selected); };
@@ -237,6 +243,22 @@ namespace FrameForge.UI
             pages[0] = first;
             Controls.Add(first);
             ShowPage(0);
+
+            // 启动后逐页预建:第一次切换不再卡在页面构造和首次布局上。
+            warmTimer = new Timer();
+            Timer warm = warmTimer;
+            warm.Interval = 260;
+            warm.Tick += delegate
+            {
+                if (IsDisposed || Disposing) { warm.Stop(); warm.Dispose(); return; }
+                int next = -1;
+                for (int i = 1; i < pageDirty.Length; i++)
+                    if (pageDirty[i]) { next = i; break; }
+                if (next < 0) { warm.Stop(); warm.Dispose(); return; }
+                try { RebuildPage(next); }
+                catch (Exception ex) { Log.Write("warm: " + ex.Message); }
+            };
+            warm.Start();
         }
 
         /// <summary>按导航序号新建页面,并同步对应的缓存字段。</summary>
@@ -284,6 +306,17 @@ namespace FrameForge.UI
             pageDirty[i] = false;
             // 新页面拿到尺寸后才会在 OnResize 里摆好内部卡片;不摆位就是一张 0x0 的白板。
             LayoutAll();
+            // 顺手把卡片外观也算好,首次切过去只剩贴图。
+            WarmCards(p);
+            try { p.Warm(); } catch { }
+        }
+
+        private static void WarmCards(Control c)
+        {
+            Card card = c as Card;
+            if (card != null) card.WarmFace();
+            if (c.Controls.Count == 0) return;
+            for (int i = 0; i < c.Controls.Count; i++) WarmCards(c.Controls[i]);
         }
 
         /// <summary>把除当前页以外的页面标记为待重建,真正切过去时再建。</summary>
@@ -508,6 +541,8 @@ namespace FrameForge.UI
             Perf.Feed(Boost != null && Boost.Active, Fps.Fps, Fps.Low1);
             UpdateTrayTip(s);
 
+            // boost-core §A4.2：一跳只取一次状态快照，加速页与后续页面统一读 StateHub。
+            StateHub.RefreshFromEngines(this);
             CheckBoostAlive();
             MaybeAutoBoost(s);
             // PCBoost 第二层:加速期间每 2 分钟重新把游戏主线程软引导到最空闲的核心。
@@ -518,7 +553,8 @@ namespace FrameForge.UI
             // 免得整窗高频重绘白占 CPU。窗口收进托盘或最小化时没人看,直接跳过;
             // 重新显示时会补刷一次,不会看到过期数据。
             DateTime now = DateTime.UtcNow;
-            double gap = activePage == 0 ? 0.2 : 1.0;
+            // 加速页要跟帧率,叠加层要跟实时数值;其余页面基本是静态的,两秒一次足够。
+            double gap = activePage == 0 ? 0.2 : (activePage == 3 ? 1.0 : 2.0);
             if (Visible && WindowState != FormWindowState.Minimized &&
                 (now - lastPageRefresh).TotalSeconds >= gap)
             {
@@ -589,55 +625,55 @@ namespace FrameForge.UI
         private void LayoutAll()
         {
             if (pages == null || toast == null) return;
+            Theme.PrepareBackground(ClientSize);
+            int w = ClientSize.Width, h = ClientSize.Height;
             int th = TitleH();
-            int bh = Ui.Px(34);
-            int by = (th - bh) / 2;
-            int gap = Ui.Px(2);
-            int x = Width - Ui.Px(12) - bh;
+            int pad = Ui.Px(19), btn = Ui.Px(32), gap = Ui.Px(4);
+            int by = (th - btn) / 2;
 
-            btnClose.SetBounds(x, by, bh, bh); x -= bh + gap;
-            btnMin.SetBounds(x, by, bh, bh); x -= bh + gap;
-            btnTheme.SetBounds(x, by, bh, bh); x -= bh + gap;
-            btnLang.SetBounds(x, by, bh, bh);
+            int closeX = w - pad - btn;
+            btnClose.SetBounds(closeX, by, btn, btn);
+            btnMin.SetBounds(closeX - btn - gap, by, btn, btn);
+            btnTheme.SetBounds(closeX - (btn + gap) * 2, by, btn, btn);
+            btnLang.SetBounds(closeX - (btn + gap) * 3, by, btn, btn);
 
-            int navW = Ui.Px(I18n.IsEn ? 660 : 530);
-            int limit = Width - Ui.Px(480);
+            // 导航居中，左右留出品牌区和窗口按钮，窄窗口时按可用宽度收缩。
+            int limit = btnLang.Left - Ui.Px(16) - Ui.Px(230);
+            int navW = Math.Min(Ui.Px(556), Ui.Px(220 + w / 3));
             if (navW > limit) navW = limit;
             if (navW < Ui.Px(220)) navW = Ui.Px(220);
-            nav.SetBounds((Width - navW) / 2, by, navW, bh);
+            nav.SetBounds((w - navW) / 2, Ui.Px(10), navW, Ui.Px(36));
 
-            // 页面的外边距和卡片内边距统一到 20:切页时内容左边缘不会左右跳。
-            int pad = Ui.Px(20);
-            int top = th + Ui.Px(10);
-            int pw = Width - pad * 2;
-            int ph = Height - top - Ui.Px(20);
+            int top = th + Ui.Px(7);
             for (int i = 0; i < pages.Length; i++)
-                if (pages[i] != null) pages[i].SetBounds(pad, top, pw, ph);
+                if (pages[i] != null)
+                    pages[i].SetBounds(pad, top, w - pad * 2, h - top - Ui.Px(18));
 
-            int tw = Math.Min(Ui.Px(420), Width - Ui.Px(80));
-            toast.SetBounds((Width - tw) / 2, Height - Ui.Px(88), tw, Ui.Px(40));
+            int tw = Math.Min(Ui.Px(380), w - Ui.Px(80));
+            toast.SetBounds((w - tw) / 2, h - Ui.Px(76), tw, Ui.Px(40));
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            using (var b = new SolidBrush(Theme.Bg)) g.FillRectangle(b, ClientRectangle);
-
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+            // 标题栏和页面共用同一张宣纸 / 皮革底纹。
+            Theme.PrepareBackground(ClientSize);
+            Theme.PaintBg(g, ClientRectangle);
             int th = TitleH();
-            int nameW = Math.Max(Ui.Px(120), nav.Left - Ui.Px(44));
-            int nameH = Ui.Px(26);
-            TextRenderer.DrawText(g, "FrameForge", Theme.Bold(14f),
-                new Rectangle(Ui.Px(22), (th - nameH) / 2, nameW, nameH), Theme.Text, LeftLine());
 
-            using (var pen = new Pen(Theme.Border, 1f))
+            using (var pen = new Pen(Theme.Alpha(Theme.Border, 210), 1f))
                 g.DrawLine(pen, 0, th - 1, Width, th - 1);
-        }
 
-        private static TextFormatFlags LeftLine()
-        {
-            return TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine
-                 | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix;
+            // 字标左侧是一道短竖线;参考图没有整段红色下划线。
+            using (var pen = new Pen(Theme.Dark ? Theme.Alpha(Theme.Accent, 170) : Theme.Alpha(Theme.Border, 230), Ui.Fp(2)))
+                g.DrawLine(pen, Ui.Px(20), Ui.Px(17), Ui.Px(20), Ui.Px(38));
+            Font wf = Theme.Num(16.5f);
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+            TextRenderer.DrawText(g, "FrameForge", wf,
+                new Rectangle(Ui.Px(32), Ui.Px(9), Ui.Px(200), Ui.Px(32)), Theme.Text,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
         }
 
         /// <summary>跨屏拖动后按新 DPI 重建界面,并按比例调整窗口尺寸。</summary>
@@ -651,7 +687,7 @@ namespace FrameForge.UI
             int cw = (int)Math.Round(ClientSize.Width * s / Ui.S);
             int ch = (int)Math.Round(ClientSize.Height * s / Ui.S);
             Ui.S = s;
-            ClientSize = new Size(Math.Max(Ui.Px(840), cw), Math.Max(Ui.Px(600), ch));
+            ClientSize = new Size(Math.Max(Ui.Px(840), cw), Math.Max(Ui.Px(640), ch));
             Defer(RebuildUiCore);
         }
 
@@ -768,7 +804,9 @@ namespace FrameForge.UI
             try { if (Fps != null) { Fps.Stop(); Fps.Dispose(); } } catch { }
             try { if (Mon != null) Mon.Dispose(); } catch { }
             try { if (Ov != null) { Ov.Stop(); Ov.Dispose(); } } catch { }
-            // 先停实时加速再还原一键加速:两边都会动电源计划,先还它会盖掉最终结果。
+            // boost-core Part A：资源所有权由 SystemResourceArbiter 统一仲裁，
+            // 最终还原走同一 Reconcile + 命名 Mutex；这里的先后顺序只是历史顺序，
+            // 不再承担"谁覆盖谁"的正确性责任（原注释：先停实时加速再还原一键加速）。
             try { if (RealBoost != null) { RealBoost.Stop(); RealBoost.Dispose(); } } catch { }
             try { if (Boost != null) { Boost.Restore(); Boost.Dispose(); } } catch { }
             try { Sys.Filter.Shutdown(); } catch { }
@@ -806,12 +844,12 @@ namespace FrameForge.UI
                     using (GraphicsPath p = Ui.Round(new RectangleF(0.5f, 0.5f, 31, 31), 7.5f))
                     {
                         using (var b = new LinearGradientBrush(new RectangleF(0, 0, 32, 32),
-                            Theme.Hex("#F7F8FA"), Theme.Hex("#C4C9D1"), 62f))
+                            Theme.Hex("#F6F2EC"), Theme.Hex("#DDD5CA"), 62f))
                             g.FillPath(b, p);
-                        using (var pen = new Pen(Theme.Alpha(Theme.Hex("#6B7280"), 90), 1f))
+                        using (var pen = new Pen(Theme.Alpha(Theme.Hex("#B9B0A4"), 120), 1f))
                             g.DrawPath(pen, p);
                     }
-                    // 闪电:与 app.ico 保持同一套视觉(银色底面 + 白色凸起闪电)
+                    // 闪电:白色皮质底 + 朱砂红闪电,和 app.ico 的武侠标识一致。
                     var bolt = new PointF[]
                     {
                         new PointF(18.1f, 2.4f), new PointF(7.8f, 17.8f), new PointF(14.6f, 17.8f),
@@ -819,9 +857,9 @@ namespace FrameForge.UI
                     };
                     var shadow = (PointF[])bolt.Clone();
                     for (int i = 0; i < shadow.Length; i++) { shadow[i].X += 0.5f; shadow[i].Y += 0.9f; }
-                    using (var b = new SolidBrush(Theme.Alpha(Theme.Hex("#6B7280"), 80))) g.FillPolygon(b, shadow);
-                    using (var b = new SolidBrush(Theme.Hex("#FCFCFD"))) g.FillPolygon(b, bolt);
-                    using (var pen = new Pen(Theme.Alpha(Theme.Hex("#8B9099"), 110), 0.6f)) g.DrawPolygon(pen, bolt);
+                    using (var b = new SolidBrush(Theme.Alpha(Theme.Hex("#7A2019"), 90))) g.FillPolygon(b, shadow);
+                    using (var b = new SolidBrush(Theme.Hex("#B23A30"))) g.FillPolygon(b, bolt);
+                    using (var pen = new Pen(Theme.Alpha(Theme.Hex("#6E1F19"), 150), 0.6f)) g.DrawPolygon(pen, bolt);
                 }
                 IntPtr h = bmp.GetHicon();
                 try
@@ -830,6 +868,99 @@ namespace FrameForge.UI
                 }
                 finally { Native.DestroyIcon(h); }
             }
+        }
+    }
+
+    /// <summary>
+    /// 全页唯一 UI 状态源（boost-core §A4.2）。
+    /// 承载实时加速快照、降级原因与核心策略；写入只有引擎，页面只读这里。
+    /// 系统层的 RealBoostState / CoreSchedulerState 类型可能后到，这里用反射做
+    /// "有则读取、无则安全跳过"的可选适配，UI 不与那些类型形成编译期依赖。
+    /// </summary>
+    public sealed class PagesStateHub
+    {
+        public bool RealBoostActive;
+        public bool PowerEffective;
+        public bool TimerEffective;
+        public string RealBoostName = "";
+        public int RealBoostCount;
+        public string DegradedReason = "";
+        public string CorePolicy = "auto";
+        public int IdealCpu = -1;
+
+        /// <summary>由主窗口 1 次 tick 调用一次；不修改任何引擎状态。</summary>
+        public void RefreshFromEngines(MainForm host)
+        {
+            if (host == null) return;
+
+            GlobalBoost real = host.RealBoost;
+            bool active = real != null && real.Active;
+            RealBoostActive = active;
+            RealBoostName = active && real.CurrentName != null ? real.CurrentName : "";
+            RealBoostCount = active ? real.CurrentCount : 0;
+
+            // 老引擎没有细粒度状态：开了就先按全项生效显示；系统层快照存在时以快照为准。
+            PowerEffective = active;
+            TimerEffective = active;
+            DegradedReason = "";
+
+            object snapshot = Read(real, "SnapshotState");
+            if (snapshot == null) snapshot = Read(real, "State");
+            if (snapshot == null) snapshot = real;
+            object value = Read(snapshot, "DegradedReason");
+            if (value != null) DegradedReason = value.ToString();
+            value = Read(snapshot, "PowerEffective");
+            if (value is bool) PowerEffective = (bool)value;
+            value = Read(snapshot, "TimerEffective");
+            if (value is bool) TimerEffective = (bool)value;
+
+            CorePolicy = host.St != null ? host.St.CorePolicy : "auto";
+            IdealCpu = -1;
+            // 现有公开属性：主线程软引导选中的 CPU，>=0 才说明真的引导过。
+            if (host.Boost != null && host.Boost.SteerCpu >= 0) IdealCpu = host.Boost.SteerCpu;
+            object scheduler = Read(host, "CoreScheduler");
+            if (scheduler == null) scheduler = Read(host.Boost, "coreScheduler");
+            if (scheduler != null)
+            {
+                object core = Read(scheduler, "SnapshotState");
+                if (core == null) core = scheduler;
+                object ideal = Read(core, "IdealCpu");
+                if (ideal is int && (int)ideal >= 0) IdealCpu = (int)ideal;
+            }
+        }
+
+        /// <summary>只读公开属性 / 无参方法 / 字段（私有字段兜底）；异常全吞，UI 不被系统层改动打断。</summary>
+        private static object Read(object target, string name)
+        {
+            if (target == null || string.IsNullOrEmpty(name)) return null;
+            Type t = target.GetType();
+            PropertyInfo prop = t.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+            if (prop != null)
+            {
+                try { return prop.GetValue(target, null); }
+                catch { return null; }
+            }
+            MethodInfo method = t.GetMethod(name, BindingFlags.Public | BindingFlags.Instance,
+                null, Type.EmptyTypes, null);
+            if (method != null)
+            {
+                try { return method.Invoke(target, null); }
+                catch { return null; }
+            }
+            FieldInfo field = t.GetField(name, BindingFlags.Public | BindingFlags.Instance);
+            if (field != null)
+            {
+                try { return field.GetValue(target); }
+                catch { return null; }
+            }
+            // 系统层把调度器藏成私有字段（BoostEngine.coreScheduler）时也能取到快照。
+            field = t.GetField(name, BindingFlags.NonPublic | BindingFlags.Instance);
+            if (field != null)
+            {
+                try { return field.GetValue(target); }
+                catch { return null; }
+            }
+            return null;
         }
     }
 }

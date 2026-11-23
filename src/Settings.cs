@@ -79,6 +79,45 @@ namespace FrameForge
         // 实时加速:常驻提升前台程序与同名进程优先级,并叠加系统级基础加速。
         public bool RealBoost = false;
 
+        // 核心调度全局策略（boost-core §B3.2 第 4 条）：v1.4.7 只做全局级，
+        // 不扩 GameProfile、不加 IdealCpu 落库；按游戏仍沿用已有 Affinity + Cores。
+        private string corePolicy = "auto";
+        private int coreRebalanceSeconds = 120;
+        private double coreHysteresis = 0.02;
+        private bool coreSingleCcd;
+
+        /// <summary>核心调度策略：auto / pcorefirst / singleccd，未知值回落 auto。</summary>
+        public string CorePolicy
+        {
+            get { return corePolicy; }
+            set { corePolicy = CorePolicyKey(value); }
+        }
+
+        /// <summary>再平衡周期（秒），15..120，缺省与 Boost.SteerSeconds 对齐。</summary>
+        public int CoreRebalanceSeconds
+        {
+            get { return coreRebalanceSeconds; }
+            set { coreRebalanceSeconds = Math.Max(15, Math.Min(120, value)); }
+        }
+
+        /// <summary>负载差滞后阈值，0..1，缺省 0.02。</summary>
+        public double CoreHysteresis
+        {
+            get { return coreHysteresis; }
+            set
+            {
+                if (double.IsNaN(value) || double.IsInfinity(value)) value = 0.02;
+                coreHysteresis = Math.Max(0.0, Math.Min(1.0, value));
+            }
+        }
+
+        /// <summary>SingleCcd 高级项总开关，缺省关闭。</summary>
+        public bool CoreSingleCcd
+        {
+            get { return coreSingleCcd; }
+            set { coreSingleCcd = value; }
+        }
+
         // 画面滤镜
         public int FilterMode = 0;            // 0 关 | 1 仅游戏 | 2 始终
         public int FilterPreset = 0;
@@ -222,6 +261,11 @@ namespace FrameForge
                 case "boostprioritylevel": BoostPriorityLevel = Math.Max(0, Math.Min(4, Int(v, 4))); break;
                 case "boostidealcpu": BoostIdealCpu = Bool(v, false); break;
                 case "realboost": RealBoost = Bool(v, false); break;
+                // §B3.2：四个核心调度键缺一行就用字段默认值，老 settings.ini 无需迁移。
+                case "corepolicy": CorePolicy = v; break;
+                case "corerebalanceseconds": CoreRebalanceSeconds = Int(v, 120); break;
+                case "corehysteresis": CoreHysteresis = Dbl(v, 0.02); break;
+                case "coresingleccd": CoreSingleCcd = Bool(v, false); break;
                 case "filtermode": FilterMode = Int(v, 0); break;
                 case "filterpreset": FilterPreset = Int(v, 0); break;
                 case "filterintensity": FilterIntensity = Int(v, 100); break;
@@ -304,6 +348,11 @@ namespace FrameForge
                 sb.AppendLine("boostPriorityLevel=" + BoostPriorityLevel.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("boostIdealCpu=" + B(BoostIdealCpu));
                 sb.AppendLine("realBoost=" + B(RealBoost));
+                // §B3.2：只写全局级核心调度键，不往 profiles.ini 扩字段。
+                sb.AppendLine("corePolicy=" + CorePolicy);
+                sb.AppendLine("coreRebalanceSeconds=" + CoreRebalanceSeconds.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("coreHysteresis=" + CoreHysteresis.ToString("0.###", CultureInfo.InvariantCulture));
+                sb.AppendLine("coreSingleCcd=" + B(CoreSingleCcd));
                 sb.AppendLine("affinityCores=" + AffinityCores.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterMode=" + FilterMode.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("filterPreset=" + FilterPreset.ToString(CultureInfo.InvariantCulture));
@@ -355,6 +404,13 @@ namespace FrameForge
         {
             if (v == "beast" || v == "custom") return v;
             return "balanced";
+        }
+
+        /// <summary>核心调度策略键：只认三种已知值，手改 ini 写错就回到 auto。</summary>
+        public static string CorePolicyKey(string v)
+        {
+            if (v == "pcorefirst" || v == "singleccd") return v;
+            return "auto";
         }
 
         /// <summary>叠加层位置键:auto 或屏幕四角,未知值一律回到 auto。</summary>

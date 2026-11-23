@@ -200,7 +200,15 @@ namespace FrameForge
         public const uint PROCESS_SET_QUOTA = 0x0100;
         public const uint PROCESS_SET_INFORMATION = 0x0200;
         public const uint PROCESS_SUSPEND_RESUME = 0x0800;
+        public const uint SYNCHRONIZE = 0x00100000;   // 看门狗等待父进程句柄
         public const uint THREAD_SET_INFORMATION = 0x0020;
+
+        // WaitForSingleObject 返回值 / 超时
+        public const uint WAIT_OBJECT_0 = 0x00000000;
+        public const uint WAIT_TIMEOUT = 0x00000102;
+        public const uint WAIT_ABANDONED = 0x00000080;
+        public const uint WAIT_FAILED = 0xFFFFFFFF;
+        public const uint INFINITE = 0xFFFFFFFF;
 
         public const uint IDLE_PRIORITY_CLASS = 0x00000040;
         public const uint BELOW_NORMAL_PRIORITY_CLASS = 0x00004000;
@@ -290,6 +298,10 @@ namespace FrameForge
 
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool CloseHandle(IntPtr hObject);
+
+        // S2 看门狗：持有父进程 SYNCHRONIZE 句柄，父进程退出（正常/崩溃）即被唤醒。
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
 
         [DllImport("kernel32.dll")]
         public static extern IntPtr GetCurrentProcess();
@@ -670,31 +682,53 @@ namespace FrameForge
         /// </summary>
         public static int CpuCoreTimes(out long[] idle, out long[] busy)
         {
-            idle = null;
-            busy = null;
+            idle = new long[0];
+            busy = new long[0];
             int size = Marshal.SizeOf(typeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION));
-            int capacity = size * 64 + 64;
-            IntPtr buf = Marshal.AllocHGlobal(capacity);
+            int capacity = size * 64 + 64;   // 64 核只是下限，不是上限。
+
+            // 先用 0 长度查询所需字节数，避免 >64 逻辑处理器时固定缓冲不足。
             try
             {
-                int len;
-                int status = NtQuerySystemInformation(SystemProcessorPerformanceInformation, buf, capacity, out len);
-                if (status != 0 || len <= 0) return 0;
-                int count = len / size;
-                if (count <= 0) return 0;
-                idle = new long[count];
-                busy = new long[count];
-                for (int i = 0; i < count; i++)
-                {
-                    var info = (SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION)Marshal.PtrToStructure(
-                        new IntPtr(buf.ToInt64() + (long)i * size), typeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION));
-                    idle[i] = info.IdleTime;
-                    busy[i] = info.KernelTime + info.UserTime;
-                }
-                return count;
+                int need = 0;
+                NtQuerySystemInformation(SystemProcessorPerformanceInformation, IntPtr.Zero, 0, out need);
+                if (need > capacity) capacity = need + size * 4;
             }
-            catch { return 0; }
-            finally { Marshal.FreeHGlobal(buf); }
+            catch { }
+
+            // 处理器热插拔时所需大小可能变化，STATUS_INFO_LENGTH_MISMATCH 重试有限次。
+            for (int attempt = 0; attempt < 4; attempt++)
+            {
+                IntPtr buf = Marshal.AllocHGlobal(capacity);
+                try
+                {
+                    int len = 0;
+                    int status = NtQuerySystemInformation(SystemProcessorPerformanceInformation,
+                        buf, capacity, out len);
+                    if (status == StatusInfoLengthMismatch && len > capacity)
+                    {
+                        capacity = len + size * 4;
+                        continue;
+                    }
+                    if (status != 0 || len <= 0) return 0;
+                    int count = len / size;
+                    if (count <= 0) return 0;
+                    idle = new long[count];
+                    busy = new long[count];
+                    for (int i = 0; i < count; i++)
+                    {
+                        var info = (SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION)Marshal.PtrToStructure(
+                            new IntPtr(buf.ToInt64() + (long)i * size),
+                            typeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION));
+                        idle[i] = info.IdleTime;
+                        busy[i] = info.KernelTime + info.UserTime;
+                    }
+                    return count;
+                }
+                catch { return 0; }
+                finally { Marshal.FreeHGlobal(buf); }
+            }
+            return 0;
         }
     }
 }

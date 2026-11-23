@@ -86,7 +86,7 @@ namespace FrameForge.UI
                 KeyPreview = true;
 
                 float s = Ui.S;
-                ClientSize = new Size((int)(560 * s), (int)(540 * s));
+                ClientSize = new Size((int)(720 * s), (int)(600 * s));
 
                 for (int i = 0; i < Keys.Length; i++)
                 {
@@ -135,7 +135,7 @@ namespace FrameForge.UI
                 btnReset = new FlatButton();
                 btnReset.Primary = false;
                 btnReset.Text = I18n.T("boost.dialog.reset");
-                btnReset.FontPt = 9f;
+                btnReset.FontPt = 9.5f;
                 btnReset.Click += delegate
                 {
                     bool[] rec = { true, true, true, true, true, false, false, false, false };
@@ -174,8 +174,8 @@ namespace FrameForge.UI
                 int pad = Ui.Px(24);
                 int gap = Ui.Px(20);
                 int colW = (Width - pad * 2 - gap) / 2;
-                int rowH = Ui.Px(54);
-                int top = Ui.Px(94);
+                int rowH = Ui.Px(50);
+                int top = Ui.Px(124);
 
                 for (int i = 0; i < Keys.Length; i++)
                 {
@@ -183,19 +183,29 @@ namespace FrameForge.UI
                     int row = i / 2;
                     int x = pad + col * (colW + gap);
                     int y = top + row * rowH;
-                    sw[i].SetBounds(x + colW - Ui.Px(46), y + Ui.Px(2), Ui.Px(46), Ui.Px(26));
+                    sw[i].SetBounds(x + colW - Ui.Px(46), y + (rowH - Ui.Px(26)) / 2, Ui.Px(46), Ui.Px(26));
                 }
 
                 int rows = (Keys.Length + 1) / 2;
-                int dividerY = top + rows * rowH + Ui.Px(2);
-                coreSeg.SetBounds(Width - pad - Ui.Px(250), dividerY + Ui.Px(12), Ui.Px(250), Ui.Px(28));
-                prioSeg.SetBounds(Width - pad - Ui.Px(250), dividerY + Ui.Px(48), Ui.Px(250), Ui.Px(28));
+                int dividerY = top + rows * rowH + Ui.Px(16);
+                int segW = Ui.Px(330);
+                coreSeg.SetBounds(Width - pad - segW, dividerY + Ui.Px(16), segW, Ui.Px(32));
+                prioSeg.SetBounds(Width - pad - segW, dividerY + Ui.Px(60), segW, Ui.Px(32));
 
-                int bh = Ui.Px(36), bwOk = Ui.Px(110), bwCancel = Ui.Px(92);
+                int bh = Ui.Px(36);
                 int bottom = Height - pad - bh;
-                btnOk.SetBounds(Width - pad - bwOk, bottom, bwOk, bh);
-                btnCancel.SetBounds(Width - pad - bwOk - Ui.Px(10) - bwCancel, bottom, bwCancel, bh);
-                btnReset.SetBounds(pad, bottom, Ui.Px(92), bh);
+                int okW = ButtonWidth(btnOk, 96);
+                int cancelW = ButtonWidth(btnCancel, 88);
+                int resetW = ButtonWidth(btnReset, 104);
+                btnOk.SetBounds(Width - pad - okW, bottom, okW, bh);
+                btnCancel.SetBounds(btnOk.Left - Ui.Px(12) - cancelW, bottom, cancelW, bh);
+                btnReset.SetBounds(pad, bottom, resetW, bh);
+            }
+
+            private static int ButtonWidth(FlatButton button, int minimum)
+            {
+                int text = TextRenderer.MeasureText(button.Text, Theme.F(9.5f, FontStyle.Bold)).Width;
+                return Math.Max(Ui.Px(minimum), text + Ui.Px(32));
             }
 
             private void OnDrag(object sender, MouseEventArgs e)
@@ -211,7 +221,7 @@ namespace FrameForge.UI
                 int pref = 2;
                 if (Native.DwmSetWindowAttribute(Handle, 33, ref pref, 4) != 0)
                 {
-                    using (GraphicsPath p = Ui.Round(new RectangleF(0, 0, Width, Height), Ui.Fp(12)))
+                    using (GraphicsPath p = Ui.Round(new RectangleF(0, 0, Width, Height), Ui.Fp(8)))
                         Region = new Region(p);
                 }
             }
@@ -223,23 +233,24 @@ namespace FrameForge.UI
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
 
-                using (var p = Ui.Round(new RectangleF(0, 0, Width - 1, Height - 1), Ui.Fp(12)))
+                using (var p = Ui.Round(new RectangleF(0, 0, Width - 1, Height - 1), Ui.Fp(8)))
                 using (var pen = new Pen(Theme.Border, 1f))
                     g.DrawPath(pen, p);
 
                 int pad = Ui.Px(24);
-                var titleRect = new Rectangle(pad, Ui.Px(20), Width - pad * 2, Ui.Px(26));
-                TextRenderer.DrawText(g, I18n.T("boost.dialog.title"), Theme.F(11.5f, FontStyle.Bold),
+                var titleRect = new Rectangle(pad, Ui.Px(24), Width - pad * 2, Ui.Px(30));
+                TextRenderer.DrawText(g, I18n.T("boost.dialog.title"), Theme.F(15f, FontStyle.Bold),
                     titleRect, Theme.Text, Ui.Flags(ContentAlignment.MiddleLeft, false));
 
-                var bodyRect = new Rectangle(pad, Ui.Px(50), Width - pad * 2, Ui.Px(36));
-                TextRenderer.DrawText(g, I18n.T("boost.dialog.hint"), Theme.F(9f, FontStyle.Regular),
+                // 固定说明区：英文完整占两行，不与下面的开关行争用高度。
+                var bodyRect = new Rectangle(pad, Ui.Px(62), Width - pad * 2, Ui.Px(46));
+                TextRenderer.DrawText(g, I18n.T("boost.dialog.hint"), Theme.F(9.5f, FontStyle.Regular),
                     bodyRect, Theme.Sub, Ui.Flags(ContentAlignment.TopLeft, true));
 
                 int gap = Ui.Px(20);
                 int colW = (Width - pad * 2 - gap) / 2;
-                int rowH = Ui.Px(54);
-                int top = Ui.Px(94);
+                int rowH = Ui.Px(50);
+                int top = Ui.Px(124);
 
                 for (int i = 0; i < Keys.Length; i++)
                 {
@@ -248,46 +259,51 @@ namespace FrameForge.UI
                     int x = pad + col * (colW + gap);
                     int y = top + row * rowH;
 
-                    var nameRect = new Rectangle(x, y, colW - Ui.Px(56), Ui.Px(20));
-                    TextRenderer.DrawText(g, I18n.T("boost." + Keys[i]), Theme.F(9.8f, FontStyle.Bold),
-                        nameRect, Theme.Text, Ui.Flags(ContentAlignment.MiddleLeft, false));
+                    var nameRect = new Rectangle(x, y, colW - Ui.Px(58), Ui.Px(20));
+                    TextRenderer.DrawText(g, I18n.T("boost." + Keys[i]), Theme.F(9.5f, FontStyle.Bold),
+                        nameRect, Theme.Text,
+                        Ui.Flags(ContentAlignment.MiddleLeft, false) | TextFormatFlags.EndEllipsis);
 
-                    var subRect = new Rectangle(x, y + Ui.Px(20), colW - Ui.Px(56), Ui.Px(20));
-                    TextRenderer.DrawText(g, I18n.T("boost." + Keys[i] + ".sub"), Theme.F(8.2f, FontStyle.Regular),
-                        subRect, Theme.Faint, Ui.Flags(ContentAlignment.TopLeft, false));
+                    var subRect = new Rectangle(x, y + Ui.Px(22), colW - Ui.Px(58), Ui.Px(20));
+                    TextRenderer.DrawText(g, I18n.T("boost." + Keys[i] + ".sub"), Theme.F(8.5f, FontStyle.Regular),
+                        subRect, Theme.Sub,
+                        Ui.Flags(ContentAlignment.TopLeft, false) | TextFormatFlags.EndEllipsis);
 
                     if (row > 0)
                     {
-                        int lineY = y - Ui.Px(6);
-                        using (var pen = new Pen(Theme.Alpha(Theme.Border, Theme.Dark ? 120 : 200), 1f))
-                            g.DrawLine(pen, pad, lineY, Width - pad, lineY);
+                        int lineY = y - Ui.Px(5);
+                        using (var pen = new Pen(Theme.Border, 1f))
+                            g.DrawLine(pen, x, lineY, x + colW, lineY);
                     }
                 }
 
                 int rows = (Keys.Length + 1) / 2;
-                int dividerY = top + rows * rowH + Ui.Px(2);
+                int dividerY = top + rows * rowH + Ui.Px(16);
                 using (var pen = new Pen(Theme.Border, 1f))
-                    g.DrawLine(pen, pad, dividerY, Width - pad, dividerY);
-
-                if (coreSeg.Visible)
                 {
-                    var coreRect = new Rectangle(pad, dividerY + Ui.Px(12),
-                        Width - pad * 2 - Ui.Px(266), Ui.Px(28));
-                    TextRenderer.DrawText(g, I18n.T("boost.dialog.cores"), Theme.F(9.2f, FontStyle.Bold),
-                        coreRect, Theme.Text, Ui.Flags(ContentAlignment.MiddleLeft, false));
+                    g.DrawLine(pen, pad, dividerY, Width - pad, dividerY);
+                    int footerY = Height - pad - Ui.Px(36);
+                    g.DrawLine(pen, pad, footerY - Ui.Px(16), Width - pad, footerY - Ui.Px(16));
                 }
 
-                var prioRect = new Rectangle(pad, dividerY + Ui.Px(48),
-                    Width - pad * 2 - Ui.Px(266), Ui.Px(28));
-                TextRenderer.DrawText(g, I18n.T("boost.dialog.priority"), Theme.F(9.2f, FontStyle.Bold),
-                    prioRect, Theme.Text, Ui.Flags(ContentAlignment.MiddleLeft, false));
+                if (coreSeg.Visible)
+                    DrawSettingLabel(g, I18n.T("boost.dialog.cores"), coreSeg);
+                DrawSettingLabel(g, I18n.T("boost.dialog.priority"), prioSeg);
 
                 int count = 0;
                 for (int i = 0; i < sw.Length; i++) if (sw[i].Checked) count++;
-                var countRect = new Rectangle(pad + Ui.Px(104), Height - Ui.Px(24) - Ui.Px(36),
-                    Width - pad * 2 - Ui.Px(320), Ui.Px(36));
-                TextRenderer.DrawText(g, I18n.T("boost.dialog.count", count), Theme.F(8.5f, FontStyle.Regular),
+                int countX = btnReset.Right + Ui.Px(16);
+                var countRect = new Rectangle(countX, btnReset.Top,
+                    Math.Max(0, btnCancel.Left - Ui.Px(16) - countX), btnReset.Height);
+                TextRenderer.DrawText(g, I18n.T("boost.dialog.count", count), Theme.F(8.8f, FontStyle.Regular),
                     countRect, count == 0 ? Theme.Faint : Theme.Sub, Ui.Flags(ContentAlignment.MiddleLeft, false));
+            }
+
+            private void DrawSettingLabel(Graphics g, string label, Segmented seg)
+            {
+                TextRenderer.DrawText(g, label, Theme.F(9.5f, FontStyle.Bold),
+                    new Rectangle(Ui.Px(24), seg.Top, seg.Left - Ui.Px(40), seg.Height),
+                    Theme.Text, Ui.Flags(ContentAlignment.MiddleLeft, false));
             }
         }
     }

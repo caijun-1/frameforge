@@ -74,7 +74,8 @@ namespace FrameForge.Sys
             it.Level = MemEngine.IsAdmin ? HealthLevel.Ok : HealthLevel.Warn;
             it.Value = MemEngine.IsAdmin ? I18n.T("health.val.on") : I18n.T("health.val.off");
             it.Note = I18n.T(MemEngine.IsAdmin ? "health.admin.on" : "health.admin.off");
-            it.Rec = I18n.T("health.rec.admin");
+            // 已有权限时不再重复提示"建议用管理员运行",只说明优化状态。
+            it.Rec = MemEngine.IsAdmin ? "" : I18n.T("health.rec.admin");
             if (!MemEngine.IsAdmin)
             {
                 it.Action = "admin";
@@ -203,6 +204,7 @@ namespace FrameForge.Sys
             {
                 it.Level = HealthLevel.Info;
                 it.Value = I18n.T("health.val.none");
+                it.Rec = "";
                 it.Note = I18n.T("health.fse.nogame");
                 return it;
             }
@@ -213,7 +215,8 @@ namespace FrameForge.Sys
             it.On = !off;   // 开关表示「全屏优化」本身是否开启
             it.Level = HealthLevel.Info;
             it.Value = I18n.T(off ? "health.val.off" : "health.val.on");
-            it.Note = I18n.T(off ? "health.fse.off" : "health.fse.on");
+            // 开/关都用同一句原因,避免和推荐位的"建议保持开启"重复。
+            it.Note = I18n.T("health.fse.off");
             return it;
         }
 

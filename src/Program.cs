@@ -1,7 +1,9 @@
 using System;
 using System.Diagnostics;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
@@ -22,6 +24,14 @@ namespace FrameForge
             if (selftest) return SelfTest();
             if (HasArg(args, "--restore")) return RestoreCli();
             if (HasArg(args, "--gpudiag")) return GpuDiagCli();
+            // S2 看门狗旁路：复用同一个 exe，绕过单实例 Mutex（仿 --restore）。
+            string watchdogParent = ArgValue(args, "--watchdog");
+            if (watchdogParent != null)
+            {
+                int parentPid;
+                int.TryParse(watchdogParent, NumberStyles.Integer, CultureInfo.InvariantCulture, out parentPid);
+                return WatchdogCli(parentPid);
+            }
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
@@ -38,7 +48,12 @@ namespace FrameForge
                 Application.ThreadException += delegate(object s, ThreadExceptionEventArgs e)
                 { Log.Write("ui thread: " + e.Exception); };
                 AppDomain.CurrentDomain.UnhandledException += delegate(object s, UnhandledExceptionEventArgs e)
-                { Log.Write("unhandled: " + e.ExceptionObject); };
+                {
+                    Log.Write("unhandled: " + e.ExceptionObject);
+                    // 崩溃路径绝不删 journal：已落盘的 PREPARED/COMMITTED 凭据留给看门狗/下次启动。
+                    try { if (BoostJournal.Pending) Log.Write("unhandled: journal preserved for recovery"); }
+                    catch { }
+                };
 
                 Settings st = Settings.Load();
                 BoostEngine.SetWhitelist(st.WhitelistNames());
@@ -71,6 +86,61 @@ namespace FrameForge
             for (int i = 0; i < args.Length; i++)
                 if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase)) return true;
             return false;
+        }
+
+        /// <summary>--watchdog &lt;pid&gt; 的取值；没有下一个参数时返回 null。</summary>
+        private static string ArgValue(string[] args, string name)
+        {
+            for (int i = 0; i < args.Length - 1; i++)
+                if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase)) return args[i + 1];
+            return null;
+        }
+
+        /// <summary>
+        /// 看门狗只跟随父进程生命周期。正常退出清日志后无需动作；崩溃后统一对账两类事务。
+        /// 没有 12 小时上限，也不会因暂时没有日志而提前退出。
+        /// </summary>
+        private static int WatchdogCli(int parentPid)
+        {
+            if (parentPid <= 0) return 2;
+            IntPtr h = IntPtr.Zero;
+            try { h = Native.OpenProcess(Native.SYNCHRONIZE, false, parentPid); }
+            catch (Exception ex) { Log.Write("watchdog open: " + ex.Message); }
+
+            if (h == IntPtr.Zero)
+            {
+                try
+                {
+                    using (Process parent = Process.GetProcessById(parentPid))
+                    {
+                        // 父进程仍在但打不开时，不能把活动事务误判成崩溃遗留。
+                        Log.Write("watchdog parent access denied pid=" + parentPid);
+                        return 1;
+                    }
+                }
+                catch { }
+            }
+            else
+            {
+                try
+                {
+                    while (true)
+                    {
+                        uint w = Native.WaitForSingleObject(h, 60000);
+                        if (w == Native.WAIT_OBJECT_0 || w == Native.WAIT_ABANDONED) break;
+                        if (w == Native.WAIT_FAILED)
+                        {
+                            Log.Write("watchdog wait failed; active transaction left untouched");
+                            return 1;
+                        }
+                    }
+                }
+                finally { try { Native.CloseHandle(h); } catch { } }
+            }
+
+            if (!BoostJournal.Pending) return 0;
+            BoostJournal.RecoverStale();
+            return 0;
         }
 
         /// <summary>命令行还原:FrameForge.exe --restore,没有待还原的改动时返回 2。</summary>
@@ -126,6 +196,17 @@ namespace FrameForge
         }
 
         // ---------------- 自检 ----------------
+
+        private sealed class SelftestResourceOwner : ISystemResourceOwner
+        {
+            private readonly OwnerKind kind;
+            public SelftestResourceOwner(OwnerKind value) { kind = value; }
+            public OwnerKind Kind() { return kind; }
+            public bool Needs(ResourceKind r) { return true; }
+            public void OnGranted(ResourceKind r, uint refCount) { }
+            public void OnShared(ResourceKind r, uint refCount) { }
+            public void OnReleased(ResourceKind r) { }
+        }
 
         /// <summary>无界面自检:写日志到 %TEMP%\frameforge_selftest.log,全部通过返回 0。</summary>
         private static int SelfTest()
@@ -498,35 +579,293 @@ namespace FrameForge
             }
             catch (Exception ex) { check("boost exclude", false, ex.Message); }
 
-            // 16. 加速日志往返(有未还原的日志时跳过,避免覆盖真实数据)
+            // 16. SCTL v2 事务日志往返 + checksum + v1 迁移（有真实待还原日志时跳过）
             try
             {
                 if (BoostJournal.Pending)
                 {
-                    check("boost journal", true, "pending journal, skipped");
+                    check("boost journal v2", true, "pending journal, skipped");
                 }
                 else
                 {
-                    var js = new BoostJournal.State();
-                    js.GamePid = 0;
-                    js.GameName = "selftest";
-                    js.PrevScheme = BoostEngine.SchemeBalanced;
-                    var je = new BoostJournal.Entry();
-                    je.Path = @"Software\FrameForge\Selftest";
-                    je.Name = "v";
-                    je.Exists = false;
-                    je.Value = 7;
-                    js.Reg.Add(je);
-                    BoostJournal.Save(js);
+                    var tx = BoostJournal.NewTransaction(OwnerKind.ONE_SHOT, 0, "selftest", -1);
+                    var g = BoostJournal.MakeGuard(0, "selftest", -1);
+                    g.StartTime = 123456789;
+                    g.Tid = 456;
+                    BoostJournal.NewAction(tx, ActionKind.PRIORITY_CLASS, g, "32", "128");
+                    BoostJournal.NewAction(tx, ActionKind.IDEAL_CPU, g, "64", "3");
+                    BoostJournal.NewAction(tx, ActionKind.AFFINITY_MASK, g, "FF", "0F");
+                    var irqAction = BoostJournal.NewAction(tx, ActionKind.IRQ_AFFINITY, new ProcessGuard(),
+                        BoostJournal.Base64(new byte[] { 1, 2, 3, 4 }), BoostJournal.Base64(new byte[] { 4, 3, 2, 1 }));
+                    irqAction.Path = "HKLM\\Selftest\\IRQ";
+                    irqAction.Name = BoostJournal.EncodeIrqMeta(4, true, true);
+                    BoostJournal.NewAction(tx, ActionKind.POWER_SCHEME, new ProcessGuard(),
+                        BoostEngine.SchemeBalanced, BoostEngine.SchemeHigh).Owner = OwnerKind.ONE_SHOT;
+                    BoostJournal.NewAction(tx, ActionKind.TIMER_RESOLUTION, new ProcessGuard(), "1", "1")
+                        .RequiresLiveOwner = true;
+                    var regAction = BoostJournal.NewAction(tx, ActionKind.REG_DWORD, new ProcessGuard(),
+                        BoostJournal.Base64Int(5), BoostJournal.Base64Int(7));
+                    regAction.Path = "Software\\FrameForge\\Selftest";
+                    regAction.Name = "v";
+                    regAction.Existed = true;
+                    BoostJournal.NewAction(tx, ActionKind.SUSPEND_PROCESS, g, "RUNNING", "SUSPENDED");
+                    BoostJournal.NewAction(tx, ActionKind.MEMORY_TRIM, new ProcessGuard(), "", "").Revertible = false;
+                    tx.State = TxState.COMMITTED;
 
-                    BoostJournal.State back = BoostJournal.Load();
-                    check("boost journal", back != null && back.Reg.Count == 1
-                        && back.Reg[0].Value == 7 && back.PrevScheme == BoostEngine.SchemeBalanced,
-                        back == null ? "null" : back.Reg.Count + " entry");
+                    string text = BoostJournal.Serialize(tx);
+                    int sumAt = text.IndexOf("sum=", StringComparison.Ordinal);
+                    string body = sumAt > 0 ? text.Substring(0, sumAt) : text;
+                    check("journal checksum", sumAt > 0 && BoostJournal.Fnv1a(body) == tx.Checksum,
+                        tx.Checksum);
+                    check("journal checksum tamper", BoostJournal.Fnv1a(body + "x") != tx.Checksum,
+                        "fnv1a detects one-byte change");
+
+                    BoostJournal.Save(tx);
+                    Transaction back = BoostJournal.Load();
+                    check("boost journal v2", back != null && back.Actions.Count == 9
+                        && back.State == TxState.COMMITTED && back.MigratedFrom == 0
+                        && back.Checksum == tx.Checksum,
+                        back == null ? "null" : back.Actions.Count + " action(s)");
+                    check("journal guard roundtrip", back != null && back.Actions[0].Target != null
+                        && back.Actions[0].Target.StartTime == 123456789
+                        && back.Actions[0].Target.Tid == 456, "StartTime + Tid persisted");
+                    check("journal reg fields", back != null
+                        && back.Actions[6].Path == "Software\\FrameForge\\Selftest"
+                        && back.Actions[6].Name == "v" && back.Actions[6].Existed
+                        && back.Actions[3].Path == "HKLM\\Selftest\\IRQ"
+                        && back.Actions[3].Name == BoostJournal.EncodeIrqMeta(4, true, true),
+                        "registry path/name/existed roundtrip");
+
+                    var realtime = BoostJournal.NewTransaction(OwnerKind.REALTIME, 0, "selftest-realtime", -1);
+                    BoostJournal.NewAction(realtime, ActionKind.PRIORITY_CLASS, g, "32", "128");
+                    realtime.State = TxState.COMMITTED;
+                    BoostJournal.Save(realtime);
+                    Transaction realtimeBack = BoostJournal.Load(OwnerKind.REALTIME);
+                    check("journal realtime isolated", realtimeBack != null && realtimeBack.Owner == OwnerKind.REALTIME
+                        && realtimeBack.Actions.Count == 1 && realtimeBack.Actions[0].Owner == OwnerKind.REALTIME
+                        && BoostJournal.Load() != null,
+                        "owner and journal files stay isolated and compatible");
+                    BoostJournal.Clear(OwnerKind.REALTIME);
+
+                    // v1 迁移：只构造 POWER_SCHEME + REG_DWORD，不虚构其它 7 类。
+                    string v1 = "game=0|selftest\n" + "scheme=" + BoostEngine.SchemeBalanced + "\n"
+                        + "reg=Software\\FrameForge\\Selftest|v|0|7\n";
+                    SafeFile.WriteAllText(BoostJournal.FilePath, v1, new UTF8Encoding(false));
+                    Transaction migrated = BoostJournal.Load();
+                    check("journal v1 migrate", migrated != null && migrated.MigratedFrom == 1
+                        && migrated.Actions.Count == 2,
+                        migrated == null ? "null" : migrated.Actions.Count + " action(s)");
                     BoostJournal.Clear();
                 }
             }
-            catch (Exception ex) { check("boost journal", false, ex.Message); }
+            catch (Exception ex) { check("boost journal v2", false, ex.Message); }
+
+            // 16b. Reconcile 清日志判定（纯逻辑，不碰真实系统设置）
+            try
+            {
+                var rep = new ReconcileReport();
+                bool cleanAtZero = rep.Clean;
+                rep.Conflict = 1;
+                check("reconcile clean gate", cleanAtZero && !rep.Clean, "conflict keeps journal");
+            }
+            catch (Exception ex) { check("reconcile clean gate", false, ex.Message); }
+
+            // 16d. 双引擎仲裁：SHARED 也持有引用，最后一个 Release 才执行 restore。
+            try
+            {
+                var arbiter = SystemResourceArbiter.Instance;
+                if (arbiter.CurrentHolder(ResourceKind.TimerResolution) == OwnerKind.NONE
+                    && arbiter.RefCount(ResourceKind.TimerResolution) == 0)
+                {
+                    int applies = 0, restores = 0;
+                    var one = new SelftestResourceOwner(OwnerKind.ONE_SHOT);
+                    var real = new SelftestResourceOwner(OwnerKind.REALTIME);
+                    Func<string> readOld = delegate() { return "1"; };
+                    Func<bool> apply = delegate() { applies++; return true; };
+                    Func<string, bool> restore = delegate(string old) { restores++; return true; };
+                    AcquireResult first = arbiter.Acquire(one, ResourceKind.TimerResolution, readOld, apply);
+                    AcquireResult second = arbiter.Acquire(real, ResourceKind.TimerResolution, readOld, apply);
+                    arbiter.Release(real, ResourceKind.TimerResolution, restore);
+                    bool sharedHeld = arbiter.RefCount(ResourceKind.TimerResolution) == 1 && restores == 0;
+                    arbiter.Release(one, ResourceKind.TimerResolution, restore);
+                    check("arbiter shared refcount", first.Ok && first.State == AcquireState.GRANTED
+                        && second.Ok && second.State == AcquireState.SHARED && applies == 1 && sharedHeld
+                        && restores == 1 && arbiter.RefCount(ResourceKind.TimerResolution) == 0
+                        && arbiter.CurrentHolder(ResourceKind.TimerResolution) == OwnerKind.NONE,
+                        "SHARED acquire -> release -> final release");
+                }
+                else check("arbiter shared refcount", false, "timer resource already in use");
+            }
+            catch (Exception ex) { check("arbiter shared refcount", false, ex.Message); }
+
+            // 16e. Profile 主键：进程名优先，旧显示名仍可回退命中，不写磁盘。
+            try
+            {
+                var profiles = new ProfileStore();
+                var legacy = new GameProfile();
+                legacy.Name = "My Game";
+                legacy.DisplayName = "My Game";
+                profiles.All.Add(legacy);
+                check("profile display fallback", object.ReferenceEquals(legacy, profiles.Find("game.exe", "My Game")),
+                    "legacy display-name profile remains reachable");
+                var primary = new GameProfile();
+                primary.Name = "game";
+                primary.DisplayName = "My Game";
+                profiles.All.Add(primary);
+                check("profile process key", object.ReferenceEquals(primary, profiles.Find("GAME.EXE", "My Game")),
+                    "normalized process key has priority");
+                var assignedOnly = new ProfileStore();
+                var assigned = new GameProfile();
+                assigned.Name = "game";
+                assigned.DisplayName = "My Game";
+                assignedOnly.All.Add(assigned);
+                check("profile alias ownership", assignedOnly.Find("other", "My Game") == null,
+                    "another process cannot steal an assigned process profile");
+            }
+            catch (Exception ex) { check("profile process key", false, ex.Message); }
+
+            // 16f. SingleCcd 纯伪拓扑：不修改真实进程亲和性。
+            try
+            {
+                var topo = new CpuTopologySnapshot();
+                topo.Cores = new CpuCore[4];
+                topo.CcdByCore = new int[] { 0, 0, 1, 1 };
+                topo.NumaByCore = new int[] { 0, 0, 0, 0 };
+                topo.IsHybrid = true;
+                for (int i = 0; i < 4; i++)
+                {
+                    var core = new CpuCore();
+                    core.Index = i;
+                    core.Mask = 1L << i;
+                    core.Llc = i < 2 ? 0 : 1;
+                    core.LlcKnown = true;
+                    core.Efficient = i == 2;
+                    core.Efficiency = core.Efficient ? 1 : 0;
+                    topo.Cores[i] = core;
+                }
+                int used;
+                long mask = CpuTopology.GameMaskForPolicy(topo, CorePolicy.SingleCcd, 0, out used);
+                check("singleccd p-core tie break", mask == 3 && used == 2, "equal-size CCD chooses more P cores");
+                for (int i = 0; i < 4; i++) topo.Cores[i].LlcKnown = false;
+                mask = CpuTopology.GameMaskForPolicy(topo, CorePolicy.SingleCcd, 0, out used);
+                check("singleccd unknown llc", mask == 0 && used == 0, "unknown LLC is not a real CCD 0");
+                for (int i = 0; i < 4; i++) topo.Cores[i].LlcKnown = true;
+
+                var cacheField = typeof(CoreConfig).GetField("cache", BindingFlags.NonPublic | BindingFlags.Static);
+                var cache = (Dictionary<string, string>)cacheField.GetValue(null);
+                if (cache == null)
+                {
+                    cache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    cacheField.SetValue(null, cache);
+                }
+                try
+                {
+                    typeof(CoreConfig).GetField("cacheAt", BindingFlags.NonPublic | BindingFlags.Static)
+                        .SetValue(null, DateTime.UtcNow);
+                    cache["coreSingleCcd"] = "1";
+                    var scheduler = new CoreScheduler();
+                    var tel = new ProcessTelemetry();
+                    tel.Pid = -1;
+                    tel.Name = "selftest";
+                    tel.Cores = 2;
+                    CorePlan plan = scheduler.Plan(topo, tel, CorePolicy.SingleCcd);
+                    check("singleccd cores propagated", plan.Cores == 2 && plan.GameMask == 1,
+                        "requested core count reaches the plan; tiny CCD keeps one reserve core");
+                    tel.Cores = 0;
+                    CorePlan unlimited = scheduler.Plan(topo, tel, CorePolicy.SingleCcd);
+                    var softGame = new ProcessGuard();
+                    softGame.Pid = 123;
+                    softGame.Name = "selftest";
+                    CoreApplyResult soft = scheduler.Apply(unlimited, softGame);
+                    check("singleccd unlimited soft only", unlimited.SkipAffinity && soft.Ok && soft.Mask == 0,
+                        "all cores keeps policy validation and soft steering without hard affinity");
+                    cache["coreSingleCcd"] = "0";
+                    CorePlan disabled = scheduler.Plan(topo, tel, CorePolicy.SingleCcd);
+                    var fakeGame = new ProcessGuard();
+                    fakeGame.Pid = 123;
+                    fakeGame.Name = "selftest";
+                    CoreApplyResult applied = scheduler.Apply(disabled, fakeGame);
+                    check("singleccd disabled honest", !applied.Ok && applied.Error == "singleccd-disabled",
+                        "disabled policy never reports false affinity success");
+                }
+                finally
+                {
+                    cache.Clear();
+                    typeof(CoreConfig).GetField("cacheAt", BindingFlags.NonPublic | BindingFlags.Static)
+                        .SetValue(null, DateTime.MinValue);
+                }
+            }
+            catch (Exception ex) { check("singleccd policy selftest", false, ex.Message); }
+
+            // 16g. 对账状态机与注册表缺失原值，只操作独立测试键。
+            if (!BoostJournal.Pending)
+            {
+                const string regPath = "Software\\FrameForge\\SelftestReconcile";
+                var ctx = new ReconcileContext();
+                ctx.IsSameProcess = true;
+                ctx.IsAdmin = true;
+                try
+                {
+                    using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(regPath))
+                        key.SetValue("v", 99, Microsoft.Win32.RegistryValueKind.DWord);
+                    var conflictTx = BoostJournal.NewTransaction(OwnerKind.ONE_SHOT, 0, "selftest-conflict", -1);
+                    var conflictAction = BoostJournal.NewAction(conflictTx, ActionKind.REG_DWORD, null,
+                        BoostJournal.Base64Int(1), BoostJournal.Base64Int(2));
+                    conflictAction.Path = regPath;
+                    conflictAction.Name = "v";
+                    conflictAction.Existed = true;
+                    conflictAction.Status = ActionStatus.CONFLICT_SKIPPED;
+                    conflictTx.State = TxState.COMMITTED;
+                    BoostJournal.Save(conflictTx);
+                    ReconcileReport conflict = BoostJournal.Reconcile(BoostJournal.Load(), ctx);
+                    check("journal conflict retained", conflict.Conflict == 1 && File.Exists(BoostJournal.FilePath),
+                        "historical conflict is retried, never silently cleared");
+                    using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(regPath, true))
+                        key.SetValue("v", 1, Microsoft.Win32.RegistryValueKind.DWord);
+                    ReconcileReport resolved = BoostJournal.Reconcile(BoostJournal.Load(), ctx);
+                    check("journal conflict resolved", resolved.Clean && !File.Exists(BoostJournal.FilePath),
+                        "only current==old allows journal cleanup");
+
+                    BoostJournal.Clear();
+                    using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(regPath))
+                        key.SetValue("v", 0, Microsoft.Win32.RegistryValueKind.DWord);
+                    var missingTx = BoostJournal.NewTransaction(OwnerKind.ONE_SHOT, 0, "selftest-missing", -1);
+                    var missingAction = BoostJournal.NewAction(missingTx, ActionKind.REG_DWORD, null,
+                        BoostJournal.Base64Int(0), BoostJournal.Base64Int(0));
+                    missingAction.Path = regPath;
+                    missingAction.Name = "v";
+                    missingAction.Existed = false;
+                    missingAction.Status = ActionStatus.APPLIED_CONFIRMED;
+                    missingTx.State = TxState.COMMITTED;
+                    BoostJournal.Save(missingTx);
+                    ReconcileReport missing = BoostJournal.Reconcile(BoostJournal.Load(), ctx);
+                    object left;
+                    using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(regPath))
+                        left = key == null ? null : key.GetValue("v", null);
+                    check("journal missing reg original", missing.Clean && left == null,
+                        "old missing + new zero deletes the created value");
+
+                    var pendingTx = BoostJournal.NewTransaction(OwnerKind.ONE_SHOT, 0, "selftest-pending", -1);
+                    var pendingAction = BoostJournal.NewAction(pendingTx, ActionKind.REG_DWORD, null,
+                        BoostJournal.Base64Int(0), BoostJournal.Base64Int(7));
+                    pendingAction.Path = regPath;
+                    pendingAction.Name = "v";
+                    pendingAction.Existed = false;
+                    pendingTx.State = TxState.COMMITTED;
+                    BoostJournal.Save(pendingTx);
+                    ReconcileReport pending = BoostJournal.Reconcile(BoostJournal.Load(), ctx);
+                    check("journal pending missing noop", pending.Clean && pending.Conflict == 0,
+                        "PENDING before Apply already matches the missing original");
+                }
+                catch (Exception ex) { check("journal reconcile regression", false, ex.Message); }
+                finally
+                {
+                    BoostJournal.Clear();
+                    BoostJournal.Clear(OwnerKind.REALTIME);
+                    try { Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(regPath, false); } catch { }
+                }
+            }
+            else check("journal reconcile regression", false, "real boost journal exists");
 
             // 17. 系统体检(只读)
             try

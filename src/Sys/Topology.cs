@@ -12,6 +12,7 @@ namespace FrameForge.Sys
         public bool Smt;
         public int Efficiency;  // EfficiencyClass:0 = 高性能核,越大越省电
         public int Llc;         // 末级缓存编号,用来区分 CCD / 小芯片
+        public bool LlcKnown;   // 仅 CPU Set 明确提供 LLC 信息时为 true
         public bool Efficient;  // 能效核(E-core)
         public bool Parked;     // 已停核
     }
@@ -181,6 +182,7 @@ namespace FrameForge.Sys
                     // 同一物理核心的兄弟线程共享效率等级与缓存编号,取到第一个就够。
                     core.Efficiency = ci.Efficiency;
                     core.Llc = ci.LlcIndex;
+                    core.LlcKnown = true;
                     core.Efficient = ci.Efficiency > 0;
                     core.Parked = ci.Parked;
                     break;
@@ -232,6 +234,137 @@ namespace FrameForge.Sys
             CpuCore[] cores = Cores();
             long mask = 0;
             for (int i = 0; i < cores.Length; i++) mask |= cores[i].Mask;
+            return mask;
+        }
+
+        // ---------------- CorePolicy 支持（boost-core §B3.2，保持旧 API 不变） ----------------
+
+        /// <summary>
+        /// 构造核心拓扑只读快照。ccdByCore/numaByCore 按物理核心序号对齐；
+        /// group0Only 诚实反映 Find/SetIdsForMask 只覆盖 0 号处理器组。
+        /// </summary>
+        public static CpuTopologySnapshot Snapshot()
+        {
+            var snap = new CpuTopologySnapshot();
+            CpuCore[] cores = Cores();
+            snap.Cores = cores;
+            snap.CcdByCore = new int[cores.Length];
+            snap.NumaByCore = new int[cores.Length];
+            snap.IsHybrid = IsHybrid;
+            snap.Group0Only = true;
+            CpuSetInfo[] info = CpuSets();
+            for (int i = 0; i < cores.Length; i++)
+            {
+                // -1 是未知哨兵，不能把缺少 CPU Set 信息的核心当成真实 CCD 0。
+                snap.CcdByCore[i] = -1;
+                int bit = LowestBit(cores[i].Mask);
+                CpuSetInfo ci = Find(info, bit);
+                if (ci == null) continue;
+                snap.CcdByCore[i] = ci.LlcIndex;
+                snap.NumaByCore[i] = ci.NumaIndex;
+                if (ci.Group != 0) snap.Group0Only = false;
+            }
+            return snap;
+        }
+
+        /// <summary>按策略过滤候选物理核心；Auto 与 v1.4.7 行为一致。</summary>
+        public static CpuCore[] PolicyCandidates(CorePolicy policy)
+        {
+            return PolicyCandidates(policy, Cores());
+        }
+
+        /// <summary>使用调用方本次抓取的拓扑，避免 Plan/Rebalance 混用两次查询结果。</summary>
+        public static CpuCore[] PolicyCandidates(CorePolicy policy, CpuTopologySnapshot topo)
+        {
+            CpuCore[] all = topo == null || topo.Cores == null ? new CpuCore[0] : topo.Cores;
+            return PolicyCandidates(policy, all);
+        }
+
+        private static CpuCore[] PolicyCandidates(CorePolicy policy, CpuCore[] all)
+        {
+            var list = new List<CpuCore>();
+            if (policy == CorePolicy.PCoreFirst)
+            {
+                for (int i = 0; i < all.Length; i++)
+                    if (!all[i].Parked && !all[i].Efficient) list.Add(all[i]);
+                // 混合架构信息缺失时退回全部非停核，避免空候选。
+                if (list.Count == 0)
+                    for (int i = 0; i < all.Length; i++) if (!all[i].Parked) list.Add(all[i]);
+                return list.ToArray();
+            }
+            if (policy == CorePolicy.SingleCcd)
+            {
+                int bestCcd = -1, bestCount = 0, bestP = 0;
+                for (int i = 0; i < all.Length; i++)
+                {
+                    if (all[i].Parked || !all[i].LlcKnown) continue;
+                    int n = 0;
+                    for (int j = 0; j < all.Length; j++)
+                        if (!all[j].Parked && all[j].LlcKnown && all[j].Llc == all[i].Llc) n++;
+                    // 同数量时只在 P 核严格更多时替换，保持同 P 核数的稳定顺序。
+                    int p = 0;
+                    for (int j = 0; j < all.Length; j++)
+                        if (!all[j].Parked && all[j].LlcKnown && all[j].Llc == all[i].Llc && !all[j].Efficient) p++;
+                    if (bestCcd < 0 || n > bestCount || (n == bestCount && p > bestP))
+                    {
+                        bestCcd = all[i].Llc;
+                        bestCount = n;
+                        bestP = p;
+                    }
+                }
+                if (bestCcd >= 0)
+                {
+                    for (int i = 0; i < all.Length; i++)
+                        if (!all[i].Parked && all[i].LlcKnown && all[i].Llc == bestCcd) list.Add(all[i]);
+                }
+                // LLC 不可靠时不退回全部核心，避免跨真实 CCD 硬绑。
+                return list.ToArray();
+            }
+            for (int i = 0; i < all.Length; i++) if (!all[i].Parked) list.Add(all[i]);
+            return list.ToArray();
+        }
+
+        /// <summary>按策略候选挑 mask；正数档位沿用数量裁剪/效率升序，0 返回全部候选。</summary>
+        public static long GameMaskForPolicy(CorePolicy policy, int coresWanted, out int coresUsed)
+        {
+            return GameMaskForCandidates(PolicyCandidates(policy), coresWanted, out coresUsed);
+        }
+
+        /// <summary>使用指定拓扑快照生成策略掩码。</summary>
+        public static long GameMaskForPolicy(CpuTopologySnapshot topo, CorePolicy policy, int coresWanted, out int coresUsed)
+        {
+            return GameMaskForCandidates(PolicyCandidates(policy, topo), coresWanted, out coresUsed);
+        }
+
+        private static long GameMaskForCandidates(CpuCore[] pool, int coresWanted, out int coresUsed)
+        {
+            coresUsed = 0;
+            if (pool.Length == 0) return 0;
+            if (coresWanted <= 0)
+            {
+                long allMask = 0;
+                for (int i = 0; i < pool.Length; i++) allMask |= pool[i].Mask;
+                coresUsed = pool.Length;
+                return allMask;
+            }
+
+            int n = coresWanted;
+            if (n < 2) n = 2;
+            if (n > 8) n = 8;
+            if (n >= pool.Length) n = pool.Length > 1 ? pool.Length - 1 : 1;
+
+            var sorted = (CpuCore[])pool.Clone();
+            Array.Sort(sorted, delegate(CpuCore a, CpuCore b)
+            {
+                int c = a.Efficiency.CompareTo(b.Efficiency);
+                if (c != 0) return c;
+                c = a.Llc.CompareTo(b.Llc);
+                if (c != 0) return c;
+                return a.Index.CompareTo(b.Index);
+            });
+            long mask = 0;
+            for (int i = 0; i < n && i < sorted.Length; i++) mask |= sorted[i].Mask;
+            coresUsed = n;
             return mask;
         }
 

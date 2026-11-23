@@ -48,23 +48,23 @@ namespace FrameForge.UI
             KeyPreview = true;
 
             float s = Ui.S;
-            ClientSize = new Size((int)(540 * s), (int)(520 * s));
+            ClientSize = new Size((int)(640 * s), (int)(600 * s));
 
             int pad = Ui.Px(24);
-            int bw = Ui.Px(120), bh = Ui.Px(34);
-            int bottom = ClientSize.Height - Ui.Px(18) - bh;
+            int bh = Ui.Px(36);
+            int bottom = ClientSize.Height - pad - bh;
 
             tabs = new Segmented();
             tabs.Items = new string[] { I18n.T("wl.tab.protect"), I18n.T("wl.tab.exclude") };
             tabs.SetSilent(0);
-            tabs.SetBounds(pad, Ui.Px(48), Ui.Px(250), Ui.Px(28));
+            tabs.SetBounds(pad, Ui.Px(66), Ui.Px(300), Ui.Px(32));
             tabs.Changed += delegate { SwitchMode(tabs.Selected); };
             Controls.Add(tabs);
 
             list = new Panel();
             list.BackColor = Theme.Card;
             list.AutoScroll = true;
-            list.SetBounds(pad, Ui.Px(116), ClientSize.Width - pad * 2, bottom - Ui.Px(14) - Ui.Px(116));
+            list.SetBounds(pad, Ui.Px(172), ClientSize.Width - pad * 2, bottom - Ui.Px(32) - Ui.Px(172));
             list.Resize += delegate { LayoutRows(); };
             Controls.Add(list);
 
@@ -75,7 +75,7 @@ namespace FrameForge.UI
             btnCancel.Text = I18n.T("dialog.cancel");
             btnCancel.FontPt = 9.5f;
             btnCancel.Click += delegate { DialogResult = DialogResult.Cancel; Close(); };
-            btnCancel.SetBounds(ClientSize.Width - pad - bw * 2 - Ui.Px(10), bottom, bw, bh);
+            int cancelW = ButtonWidth(btnCancel, 88);
             Controls.Add(btnCancel);
 
             var btnOk = new FlatButton();
@@ -90,7 +90,9 @@ namespace FrameForge.UI
                 DialogResult = DialogResult.OK;
                 Close();
             };
-            btnOk.SetBounds(ClientSize.Width - pad - bw, bottom, bw, bh);
+            int okW = ButtonWidth(btnOk, 88);
+            btnOk.SetBounds(ClientSize.Width - pad - okW, bottom, okW, bh);
+            btnCancel.SetBounds(btnOk.Left - Ui.Px(12) - cancelW, bottom, cancelW, bh);
             Controls.Add(btnOk);
 
             MouseDown += OnDrag;
@@ -98,6 +100,12 @@ namespace FrameForge.UI
             {
                 if (k.KeyCode == Keys.Escape) { DialogResult = DialogResult.Cancel; Close(); }
             };
+        }
+
+        private static int ButtonWidth(FlatButton button, int minimum)
+        {
+            int text = TextRenderer.MeasureText(button.Text, Theme.F(9.5f, FontStyle.Bold)).Width;
+            return Math.Max(Ui.Px(minimum), text + Ui.Px(32));
         }
 
         /// <summary>切页前先把当前页的勾选存下来,再按新页的数据重建行。</summary>
@@ -180,7 +188,7 @@ namespace FrameForge.UI
         private void LayoutRows()
         {
             if (list == null || rows.Count == 0) return;
-            int rowH = Ui.Px(38);
+            int rowH = Ui.Px(36);
             // 预留滚动条宽度,免得列表短时居中、长时抖动。
             int w = list.ClientSize.Width - Ui.Px(6) - SystemInformation.VerticalScrollBarWidth;
             if (w < Ui.Px(120)) w = Ui.Px(120);
@@ -203,7 +211,7 @@ namespace FrameForge.UI
             int pref = 2;
             if (Native.DwmSetWindowAttribute(Handle, 33, ref pref, 4) != 0)
             {
-                using (GraphicsPath p = Ui.Round(new RectangleF(0, 0, Width, Height), Ui.Fp(12)))
+                using (GraphicsPath p = Ui.Round(new RectangleF(0, 0, Width, Height), Ui.Fp(8)))
                     Region = new Region(p);
             }
         }
@@ -215,18 +223,26 @@ namespace FrameForge.UI
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
 
-            using (GraphicsPath p = Ui.Round(new RectangleF(0, 0, Width - 1, Height - 1), Ui.Fp(12)))
+            using (GraphicsPath p = Ui.Round(new RectangleF(0, 0, Width - 1, Height - 1), Ui.Fp(8)))
             using (Pen pen = new Pen(Theme.Border, 1f))
                 g.DrawPath(pen, p);
 
             int pad = Ui.Px(24);
-            Rectangle titleRect = new Rectangle(pad, Ui.Px(18), Width - pad * 2, Ui.Px(26));
-            TextRenderer.DrawText(g, I18n.T(mode == 0 ? "wl.title" : "wl.ex.title"), Theme.F(11.5f, FontStyle.Bold),
-                titleRect, Theme.Text, Ui.Flags(ContentAlignment.MiddleLeft, false));
+            Rectangle titleRect = new Rectangle(pad, Ui.Px(24), Width - pad * 2, Ui.Px(30));
+            TextRenderer.DrawText(g, I18n.T(mode == 0 ? "wl.title" : "wl.ex.title"), Theme.F(15f, FontStyle.Bold),
+                titleRect, Theme.Text,
+                Ui.Flags(ContentAlignment.MiddleLeft, false) | TextFormatFlags.EndEllipsis);
 
-            Rectangle hintRect = new Rectangle(pad, Ui.Px(80), Width - pad * 2, Ui.Px(32));
-            TextRenderer.DrawText(g, I18n.T(mode == 0 ? "wl.hint" : "wl.ex.hint"), Theme.F(8.4f, FontStyle.Regular),
+            Rectangle hintRect = new Rectangle(pad, Ui.Px(110), Width - pad * 2, Ui.Px(46));
+            TextRenderer.DrawText(g, I18n.T(mode == 0 ? "wl.hint" : "wl.ex.hint"), Theme.F(9f, FontStyle.Regular),
                 hintRect, Theme.Sub, Ui.Flags(ContentAlignment.TopLeft, true));
+
+            using (var pen = new Pen(Theme.Border, 1f))
+            {
+                g.DrawRectangle(pen, list.Left - 1, list.Top - 1, list.Width + 1, list.Height + 1);
+                int footerY = Height - pad - Ui.Px(36);
+                g.DrawLine(pen, pad, footerY - Ui.Px(16), Width - pad, footerY - Ui.Px(16));
+            }
         }
     }
 
@@ -279,7 +295,7 @@ namespace FrameForge.UI
             if (hover && !Locked)
             {
                 using (var b = new SolidBrush(Theme.Hover))
-                    g.FillRectangle(b, new Rectangle(0, Ui.Px(2), Width, Height - Ui.Px(4)));
+                    g.FillRectangle(b, new Rectangle(0, 0, Width, Height - 1));
             }
 
             int box = Ui.Px(18);
@@ -296,7 +312,7 @@ namespace FrameForge.UI
 
             if (Checked)
             {
-                Ui.Fill(g, boxRect, Ui.Fp(5), Locked ? Theme.Mix(accent, Theme.Card, 0.45f) : accent);
+                Ui.Fill(g, boxRect, Ui.Fp(2), Locked ? Theme.Mix(accent, Theme.Card, 0.45f) : accent);
                 using (var pen = new Pen(Color.White, Math.Max(1.6f, Ui.Fp(1.8f))))
                 {
                     pen.StartCap = LineCap.Round;
@@ -310,22 +326,25 @@ namespace FrameForge.UI
             }
             else
             {
-                Ui.Stroke(g, boxRect, Ui.Fp(5), Theme.Faint, 1.4f);
+                Ui.Stroke(g, boxRect, Ui.Fp(2), Theme.Faint, 1.4f);
             }
 
-            int noteW = Ui.Px(96);
+            int noteW = Ui.Px(I18n.IsEn ? 116 : 88);
             int textX = bx + box + Ui.Px(12);
             int textW = Width - textX - noteW - Ui.Px(8);
             if (textW < Ui.Px(60)) textW = Ui.Px(60);
 
             Color fg = Locked ? Theme.Sub : Theme.Text;
-            TextRenderer.DrawText(g, Label, Theme.F(9.4f, FontStyle.Regular),
+            TextRenderer.DrawText(g, Label, Theme.F(9.5f, FontStyle.Regular),
                 new Rectangle(textX, 0, textW, Height), fg,
                 Ui.Flags(ContentAlignment.MiddleLeft, false) | TextFormatFlags.EndEllipsis);
 
-            TextRenderer.DrawText(g, Note, Theme.F(8.4f, FontStyle.Regular),
+            TextRenderer.DrawText(g, Note, Theme.F(8.5f, FontStyle.Regular),
                 new Rectangle(Width - noteW - Ui.Px(12), 0, noteW, Height), Theme.Faint,
-                Ui.Flags(ContentAlignment.MiddleRight, false));
+                Ui.Flags(ContentAlignment.MiddleRight, false) | TextFormatFlags.EndEllipsis);
+
+            using (var pen = new Pen(Theme.Border, 1f))
+                g.DrawLine(pen, Ui.Px(12), Height - 1, Width - Ui.Px(12), Height - 1);
         }
     }
 }

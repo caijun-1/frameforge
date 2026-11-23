@@ -16,7 +16,7 @@ namespace FrameForge.UI
         /// <summary>右侧内缩。</summary>
         private const int Inset = 14;
         /// <summary>行内上下留白,上下对称,文字自然落在行中线上。</summary>
-        private const int RowPadY = 6;
+        private const int RowPadY = 9;
 
         public TrayMenu()
         {
@@ -26,7 +26,7 @@ namespace FrameForge.UI
             BackColor = Theme.Card;
             ForeColor = Theme.Text;
             Font = Theme.Regular(9.5f);
-            DropShadowEnabled = true;
+            DropShadowEnabled = false;
             // 宽度和高度都由 FitSize 一次算好:交给系统自动撑开时,
             // 条目宽度会按自己的 Padding 算得比菜单还宽,文字就会被切在右边界外。
             AutoSize = false;
@@ -65,7 +65,7 @@ namespace FrameForge.UI
             }
 
             int width = textWidth + Ui.Px(Gutter + Inset);
-            int min = Ui.Px(120);
+            int min = Ui.Px(152);
             if (width < min) width = min;
 
             int height = Padding.Top + Padding.Bottom;
@@ -87,13 +87,13 @@ namespace FrameForge.UI
             base.OnOpening(e);
         }
 
-        /// <summary>Win11 用系统圆角(自带正确阴影),旧系统退回到自绘圆角区域。</summary>
+        /// <summary>Win11 用系统圆角,旧系统退回到自绘圆角区域。</summary>
         private void ApplyCorners()
         {
             int pref = 2;   // DWMWCP_ROUND
             if (Native.DwmSetWindowAttribute(Handle, 33, ref pref, 4) != 0)
             {
-                using (GraphicsPath p = Ui.Round(new RectangleF(0, 0, Width, Height), Ui.Fp(8)))
+                using (GraphicsPath p = Ui.Round(new RectangleF(0, 0, Width, Height), Ui.Fp(6)))
                     Region = new Region(p);
             }
         }
@@ -114,7 +114,7 @@ namespace FrameForge.UI
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 // 圆角半径和 Win11 的系统窗口圆角一致,免得自绘边框比系统裁切还大一圈。
                 using (GraphicsPath p = Ui.Round(
-                           new RectangleF(0.5f, 0.5f, e.ToolStrip.Width - 1f, e.ToolStrip.Height - 1f), Ui.Fp(8)))
+                           new RectangleF(0.5f, 0.5f, e.ToolStrip.Width - 1f, e.ToolStrip.Height - 1f), Ui.Fp(6)))
                 using (var pen = new Pen(Theme.Border, 1f))
                     g.DrawPath(pen, p);
             }
@@ -128,7 +128,7 @@ namespace FrameForge.UI
                     // 悬停反馈用一层很淡的底色就够,不用彩色大色块。
                     var r = new Rectangle(Ui.Px(4), Ui.Px(1),
                         e.Item.Width - Ui.Px(8), e.Item.Height - Ui.Px(2));
-                    using (GraphicsPath p = Ui.Round(new RectangleF(r.X, r.Y, r.Width, r.Height), Ui.Fp(6)))
+                    using (GraphicsPath p = Ui.Round(new RectangleF(r.X, r.Y, r.Width, r.Height), Ui.Fp(4)))
                     using (var b = new SolidBrush(Theme.Hover))
                         g.FillPath(b, p);
                 }
