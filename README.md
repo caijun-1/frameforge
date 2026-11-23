@@ -5,13 +5,13 @@
 <p align="center"><b>轻量级 FPS 游戏增效工具 · A lightweight FPS toolkit for Windows</b><br>
 一键加速 + 实时帧率监测 + 游戏内叠加层 + 画面滤镜 + 赛后性能报告 + 系统优化</p>
 
-<p align="center">单文件 · 免安装 · 不足 1 MB · 默认不注入游戏 · RTSS 叠加可选</p>
+<p align="center">单文件 · 免安装 · 约 7 MB · 默认不注入游戏 · RTSS 叠加可选</p>
 
 <p align="center">
   <img src="https://github.com/caijun-1/frameforge/actions/workflows/build.yml/badge.svg" alt="build">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue" alt="platform">
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
-  <img src="https://img.shields.io/badge/size-under%201%20MB-brightgreen" alt="size under 1 MB">
+  <img src="https://img.shields.io/badge/size-7%20MB-brightgreen" alt="size 7 MB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
   <img src="https://img.shields.io/badge/version-1.5.0-orange" alt="1.5.0">
 </p>
@@ -297,7 +297,35 @@ frameforge/
 
 ### v1.5.0
 
-> 武侠双主题视觉大改版：白昼宣纸水墨、夜晚影刃玻璃卡片，全新的表盘、剑形图标与核心拓扑；同时修复多处透明割裂，并把页面切换与重绘明显提速。
+> v1.5.0 是一次大版本更新：加速内核改为事务化并可崩溃自愈，新增核心调度策略、系统资源仲裁、单游戏策略与诊断式优化页；界面同时升级为武侠双主题毛玻璃风格，并修复多处透明割裂、明显提速。
+
+**加速与回滚**
+- 一键加速改为事务化：9 类系统改动先记录原值、再执行、逐项确认后原子落盘，失败只回滚已执行的部分。
+- 崩溃自愈：加速期间崩溃、断电或被结束，下次启动会按日志自动对账还原；新增看门狗进程跟随主程序，异常退出后自动接管还原。
+- 新增 `--restore` 命令行入口，可手动触发一次完整对账；旧版加速日志自动迁移到 v2，损坏或未知版本会被隔离，不会误还原。
+- 进程身份改为「进程名 + 启动时间 + 完整路径」三重校验，避免 PID 复用改错进程。
+- 被强制挪走亲和性的其它进程会补记原掩码到同一事务，退出时一并还原。
+
+**核心调度**
+- 新增核心调度策略：自动 / P 核优先 / 单 CCD，可在设置中选择。
+- 再平衡周期（15–120 秒）与负载差滞后阈值（默认 2%）可调，避免核心来回迁移造成抖动。
+- 拓扑快照提供 CCD / NUMA / SMT / LLC 信息，界面核心图按真实拓扑展示。
+
+**资源仲裁与内存整理**
+- 电源计划、系统计时器等全局资源改为引用计数仲裁：一键加速与实时加速共享同一份原值，最后一个释放时才还原，两者不再互相覆盖。
+- 内存整理增加节流，短时间内不会反复触发。
+
+**单游戏策略**
+- 新增「单游戏优化设置」弹窗，可为每个游戏保存一份独立策略（8 项开关 + 理想核心展示）。
+- 进程主键统一为小写进程名，兼容旧版按显示名保存的策略，并在保存 / 删除时自动迁移清理；加速时自动套用对应游戏的策略。
+
+**优化页（诊断工作区）**
+- 改为诊断工作区：顶部汇总状态，左侧只读硬件拓扑（P / E 核、SMT、LLC），右侧逐项系统设置。
+- 宽屏左右分栏、窄屏上下排列，低高度可滚动；行高统一 36px，窄行自动换行不叠字。
+
+**战绩与自检**
+- 战绩报告新增本局帧率曲线：淡色平涂 + 细折线 + 平均线。
+- 自检扩展到 70 多项，覆盖事务往返与 v1→v2 迁移、双引擎共享仲裁、冲突 / 缺失 / 挂起事务对账、核心调度策略等。
 
 **视觉**
 - **全新双主题**：白昼武侠版的宣纸水墨背景、夜晚影刃版的暗色水墨背景；标题栏、页面与卡片共用同一张底纹，缩放和滚动时纹理保持连续。
@@ -555,7 +583,7 @@ frameforge/
 
 ## English
 
-**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay, desktop-wide screen filters, and an automatic post-game performance report. It ships as a single sub-1 MB executable with about 30–80 MB of resident memory. Nothing is injected into games and no driver is installed by default; the optional RTSS overlay is the only path that injects text, and you can leave it off.
+**FrameForge** is a portable Windows toolkit for FPS games: one-click boost, live frame-time monitoring, an in-game overlay, desktop-wide screen filters, and an automatic post-game performance report. It ships as a single ~7 MB executable (the two watercolor backgrounds and the preview artwork are embedded) with about 30–80 MB of resident memory. Nothing is injected into games and no driver is installed by default; the optional RTSS overlay is the only path that injects text, and you can leave it off.
 
 ### Highlights
 
