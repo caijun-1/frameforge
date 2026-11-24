@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace FrameForge
 {
@@ -543,7 +544,7 @@ namespace FrameForge
             {"set.hotkey.overlay", "显示 / 隐藏叠加层"},
             {"set.hotkey.boost", "一键加速"},
             {"set.about", "关于"},
-            {"set.version", "FrameForge 1.6.0"},
+            {"set.version", "FrameForge 1.6.2"},
             {"set.notice", "默认不注入、不装驱动、不读游戏内存；RTSS 叠加为可选第三方组件，请遵守各游戏用户协议。"},
             {"set.about.env", "Windows 10 / 11 · 单文件免安装 · 常驻内存约 30–80 MB"},
             {"set.log", "打开日志目录"},
@@ -1207,7 +1208,7 @@ namespace FrameForge
             {"set.hotkey.overlay", "Show / hide overlay"},
             {"set.hotkey.boost", "One-click boost"},
             {"set.about", "About"},
-            {"set.version", "FrameForge 1.6.0"},
+            {"set.version", "FrameForge 1.6.2"},
             {"set.notice", "No injection, drivers or game-memory reads by default. RTSS overlay is an optional third-party component; follow each game's terms of service."},
             {"set.about.env", "Windows 10 / 11 · portable single file · about 30–80 MB resident"},
             {"set.log", "Open log folder"},
@@ -1352,6 +1353,30 @@ namespace FrameForge
             string fmt = T(key);
             try { return string.Format(fmt, args); }
             catch { return fmt; }
+        }
+
+        /// <summary>
+        /// 自检用：返回中英词典的键差集，空串表示完全一致。
+        /// 新增文案时只补一边是常见疏漏，由 --selftest 直接拦下来。
+        /// </summary>
+        public static string KeyDiff()
+        {
+            var zhOnly = new List<string>();
+            foreach (string k in Zh.Keys) if (!En.ContainsKey(k)) zhOnly.Add(k);
+            var enOnly = new List<string>();
+            foreach (string k in En.Keys) if (!Zh.ContainsKey(k)) enOnly.Add(k);
+            if (zhOnly.Count == 0 && enOnly.Count == 0) return "";
+            zhOnly.Sort(StringComparer.Ordinal);
+            enOnly.Sort(StringComparer.Ordinal);
+            return (zhOnly.Count > 0 ? "zh-only: " + string.Join(",", zhOnly.ToArray()) : "")
+                 + (enOnly.Count > 0 ? (zhOnly.Count > 0 ? "; " : "") + "en-only: " + string.Join(",", enOnly.ToArray()) : "");
+        }
+
+        /// <summary>中英词条数量（自检日志里直观看到两边规模）。</summary>
+        public static string KeyCounts()
+        {
+            return "zh=" + Zh.Count.ToString(CultureInfo.InvariantCulture)
+                 + " en=" + En.Count.ToString(CultureInfo.InvariantCulture);
         }
     }
 }

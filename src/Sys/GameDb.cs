@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -265,16 +266,17 @@ namespace FrameForge.Sys
             { "minecraft", "我的世界|Minecraft" }
         };
 
-        private static readonly Dictionary<string, string> cache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // P1-4：监控线程与 UI 线程会同时查询，全部换成并发字典，读改写不再互相撕裂。
+        private static readonly ConcurrentDictionary<string, string> cache = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         // 进程名 → exe 全路径。读程序图标要用;进程退出后仍能靠记下的路径继续显示图标。
-        private static readonly Dictionary<string, string> paths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private static readonly ConcurrentDictionary<string, string> paths = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         // 进程名 → 上次没找到的时刻。列表每次重绘都要图标,找不到时别反复扫进程。
-        private static readonly Dictionary<string, DateTime> miss = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        private static readonly ConcurrentDictionary<string, DateTime> miss = new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
         // pid → exe 路径。读 MainModule 要跨进程枚举模块,空闲扫描每 1.5 秒就会把
         // 所有有窗口的进程问一遍,缓存下来能把这部分开销抹掉。
-        private static readonly Dictionary<int, CacheEntry> pidPaths = new Dictionary<int, CacheEntry>();
+        private static readonly ConcurrentDictionary<int, CacheEntry> pidPaths = new ConcurrentDictionary<int, CacheEntry>();
         // 进程名 → 认不出来时的兜底名字。目录名/窗口标题短时间内不会变。
-        private static readonly Dictionary<string, CacheEntry> fallback = new Dictionary<string, CacheEntry>(StringComparer.OrdinalIgnoreCase);
+        private static readonly ConcurrentDictionary<string, CacheEntry> fallback = new ConcurrentDictionary<string, CacheEntry>(StringComparer.OrdinalIgnoreCase);
         private const int PathTtlSec = 20;
         private const int FallbackTtlSec = 8;
 
@@ -287,9 +289,11 @@ namespace FrameForge.Sys
         }
 
         // exe 文件名 → 完整路径,来自资源管理器缓存(旧战绩记录只有进程名时靠它补图标)。
-        private static Dictionary<string, string> mui;
-        private static Dictionary<string, string> user;
-        private static bool userLoaded;
+        private static volatile ConcurrentDictionary<string, string> mui;
+        private static volatile ConcurrentDictionary<string, string> user;
+        // P1-4：懒加载只在闸门内执行，先填好局部字典再一次性发布，避免读到半成品。
+        private static readonly object UserGate = new object();
+        private static readonly object MuiGate = new object();
 
         /// <summary>进程名 → 当前语言下的游戏名。取不到时返回美化后的进程名。</summary>
         public static string Title(int pid, string exe)
@@ -310,8 +314,8 @@ namespace FrameForge.Sys
         {
             string key = Norm(exe);
             if (key.Length == 0) return false;
-            LoadUser();
-            if (user.ContainsKey(key)) return true;
+            ConcurrentDictionary<string, string> u = LoadUser();
+            if (u.ContainsKey(key)) return true;
             return Map.ContainsKey(key);
         }
 
@@ -372,9 +376,9 @@ namespace FrameForge.Sys
         private static string KeyTitle(string key)
         {
             if (key.Length == 0) return "";
-            LoadUser();
+            ConcurrentDictionary<string, string> u = LoadUser();
             string pair;
-            if (user.TryGetValue(key, out pair)) return LangPair(pair);
+            if (u.TryGetValue(key, out pair)) return LangPair(pair);
             if (Map.TryGetValue(key, out pair)) return LangPair(pair);
             return "";
         }
@@ -406,8 +410,8 @@ namespace FrameForge.Sys
         {
             string key = Norm(exe);
             if (key.Length == 0) return "";
-            LoadUser();
-            if (user.ContainsKey(key)) return "user";
+            ConcurrentDictionary<string, string> u = LoadUser();
+            if (u.ContainsKey(key)) return "user";
             if (Map.ContainsKey(key)) return "db";
             return "auto";
         }
@@ -419,9 +423,9 @@ namespace FrameForge.Sys
             miss.Clear();
             pidPaths.Clear();
             fallback.Clear();
+            // 发布标志就是引用本身：置空后下次查询会重新加载。
             mui = null;
             user = null;
-            userLoaded = false;
         }
 
         private static string Resolve(int pid, string exe)
@@ -441,8 +445,8 @@ namespace FrameForge.Sys
             }
 
             string pair = "";
-            LoadUser();
-            if (user.TryGetValue(key, out pair)) { cache[key] = pair; return pair; }
+            ConcurrentDictionary<string, string> u = LoadUser();
+            if (u.TryGetValue(key, out pair)) { cache[key] = pair; return pair; }
             if (Map.TryGetValue(key, out pair)) { cache[key] = pair; return pair; }
 
             string path = ProcessPath(pid);
@@ -505,26 +509,39 @@ namespace FrameForge.Sys
             catch { return ""; }
         }
 
-        private static void LoadUser()
+        /// <summary>
+        /// P1-4：双重检查锁；先在局部字典里填好再一次性发布，读线程永远看不到半成品。
+        /// 返回值就是当前快照，调用方不要再去读静态字段（可能刚被 ClearCache 置空）。
+        /// </summary>
+        private static ConcurrentDictionary<string, string> LoadUser()
         {
-            if (userLoaded) return;
-            userLoaded = true;
-            user = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            try
+            ConcurrentDictionary<string, string> u = user;
+            if (u != null) return u;
+            lock (UserGate)
             {
-                if (!File.Exists(FilePath)) return;
-                foreach (string raw in File.ReadAllLines(FilePath, Encoding.UTF8))
+                u = user;
+                if (u != null) return u;
+                u = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                try
                 {
-                    string line = raw.Trim();
-                    if (line.Length == 0 || line.StartsWith(";") || line.StartsWith("#")) continue;
-                    int eq = line.IndexOf('=');
-                    if (eq <= 0) continue;
-                    string k = Norm(line.Substring(0, eq));
-                    string v = line.Substring(eq + 1).Trim();
-                    if (k.Length > 0 && v.Length > 0) user[k] = v;
+                    if (File.Exists(FilePath))
+                    {
+                        foreach (string raw in File.ReadAllLines(FilePath, Encoding.UTF8))
+                        {
+                            string line = raw.Trim();
+                            if (line.Length == 0 || line.StartsWith(";") || line.StartsWith("#")) continue;
+                            int eq = line.IndexOf('=');
+                            if (eq <= 0) continue;
+                            string k = Norm(line.Substring(0, eq));
+                            string v = line.Substring(eq + 1).Trim();
+                            if (k.Length > 0 && v.Length > 0) u[k] = v;
+                        }
+                    }
                 }
+                catch (Exception ex) { Log.Write("games.ini: " + ex.Message); }
+                user = u;   // 先发布
+                return u;
             }
-            catch (Exception ex) { Log.Write("games.ini: " + ex.Message); }
         }
 
         private static string ProcessPath(int pid)
@@ -541,7 +558,8 @@ namespace FrameForge.Sys
                         if (p.StartTime.ToUniversalTime().Ticks == hit.Start) return hit.Text;
                 }
                 catch { return ""; }
-                pidPaths.Remove(pid);
+                CacheEntry removed;
+                pidPaths.TryRemove(pid, out removed);
             }
 
             string path = "";
@@ -576,7 +594,11 @@ namespace FrameForge.Sys
             List<int> drop = new List<int>();
             foreach (KeyValuePair<int, CacheEntry> kv in pidPaths)
                 if ((now - kv.Value.At).TotalSeconds >= PathTtlSec) drop.Add(kv.Key);
-            for (int i = 0; i < drop.Count; i++) pidPaths.Remove(drop[i]);
+            for (int i = 0; i < drop.Count; i++)
+            {
+                CacheEntry removed;
+                pidPaths.TryRemove(drop[i], out removed);
+            }
             if (pidPaths.Count > 128) pidPaths.Clear();
         }
 
@@ -612,7 +634,8 @@ namespace FrameForge.Sys
                 miss[key] = DateTime.UtcNow;
                 return "";
             }
-            miss.Remove(key);
+            DateTime removedAt;
+            miss.TryRemove(key, out removedAt);
             paths[key] = p;
             return p;
         }
@@ -644,41 +667,50 @@ namespace FrameForge.Sys
         /// <summary>按 exe 文件名查 MuiCache 里记下的完整路径,没有返回空。</summary>
         private static string MuiPath(string file)
         {
-            if (mui == null) LoadMui();
+            ConcurrentDictionary<string, string> m = LoadMui();
             string p;
-            return mui.TryGetValue(file, out p) ? p : "";
+            return m.TryGetValue(file, out p) ? p : "";
         }
 
         /// <summary>
         /// 资源管理器会把它见过的每个程序记在 MuiCache 里(值名就是 exe 完整路径),
         /// 旧战绩记录没存路径、游戏又没在跑时,靠这里才拿得到真实图标。
         /// </summary>
-        private static void LoadMui()
+        private static ConcurrentDictionary<string, string> LoadMui()
         {
-            mui = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            try
+            ConcurrentDictionary<string, string> m = mui;
+            if (m != null) return m;
+            lock (MuiGate)
             {
-                using (RegistryKey k = Registry.CurrentUser.OpenSubKey(
-                    @"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache"))
+                m = mui;
+                if (m != null) return m;
+                m = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                try
                 {
-                    if (k == null) return;
-                    string[] names = k.GetValueNames();
-                    for (int i = 0; i < names.Length; i++)
+                    using (RegistryKey k = Registry.CurrentUser.OpenSubKey(
+                        @"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache"))
                     {
-                        string p = MuiExe(names[i]);
-                        if (p.Length == 0) continue;
-                        string file = Path.GetFileName(p);
-                        if (file.Length == 0) continue;
+                        if (k == null) { mui = m; return m; }
+                        string[] names = k.GetValueNames();
+                        for (int i = 0; i < names.Length; i++)
+                        {
+                            string p = MuiExe(names[i]);
+                            if (p.Length == 0) continue;
+                            string file = Path.GetFileName(p);
+                            if (file.Length == 0) continue;
 
-                        // 同名 exe 会有一堆(launcher.exe),优先留在游戏目录里的那个。
-                        string old;
-                        if (mui.TryGetValue(file, out old) && !(UnderLibrary(p) && !UnderLibrary(old)))
-                            continue;
-                        mui[file] = p;
+                            // 同名 exe 会有一堆(launcher.exe),优先留在游戏目录里的那个。
+                            string old;
+                            if (m.TryGetValue(file, out old) && !(UnderLibrary(p) && !UnderLibrary(old)))
+                                continue;
+                            m[file] = p;
+                        }
                     }
                 }
+                catch (Exception ex) { Log.Write("muicache: " + ex.Message); }
+                mui = m;
+                return m;
             }
-            catch (Exception ex) { Log.Write("muicache: " + ex.Message); }
         }
 
         /// <summary>MuiCache 的值名是「exe 完整路径.FriendlyAppName」,还原成 exe 路径。</summary>

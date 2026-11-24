@@ -37,7 +37,12 @@ namespace FrameForge
             {
                 int parentPid;
                 int.TryParse(watchdogParent, NumberStyles.Integer, CultureInfo.InvariantCulture, out parentPid);
-                return WatchdogCli(parentPid);
+                // P1-5：第二个参数是父进程启动时刻，用于识别 PID 复用。
+                long parentStart = 0;
+                string ticks = ArgValueAt(args, "--watchdog", 2);
+                if (ticks != null)
+                    long.TryParse(ticks, NumberStyles.Integer, CultureInfo.InvariantCulture, out parentStart);
+                return WatchdogCli(parentPid, parentStart);
             }
 
             Application.EnableVisualStyles();
@@ -98,37 +103,60 @@ namespace FrameForge
         /// <summary>--watchdog &lt;pid&gt; 的取值；没有下一个参数时返回 null。</summary>
         private static string ArgValue(string[] args, string name)
         {
-            for (int i = 0; i < args.Length - 1; i++)
-                if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase)) return args[i + 1];
+            return ArgValueAt(args, name, 1);
+        }
+
+        /// <summary>取 name 之后第 offset 个参数（offset=1 即紧随其后的值）。</summary>
+        private static string ArgValueAt(string[] args, string name, int offset)
+        {
+            for (int i = 0; i < args.Length - offset; i++)
+                if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase)) return args[i + offset];
             return null;
+        }
+
+        /// <summary>父进程身份是否仍是当初启动看门狗的那个进程（防止 PID 复用）。</summary>
+        private static bool ParentAlive(int pid, long startTicks)
+        {
+            try
+            {
+                using (Process p = Process.GetProcessById(pid))
+                {
+                    // 没有记录启动时刻（旧版本启动的看门狗）时只按存在性判断。
+                    if (startTicks > 0 && p.StartTime.ToUniversalTime().Ticks != startTicks) return false;
+                    return true;
+                }
+            }
+            catch { return false; }
         }
 
         /// <summary>
         /// 看门狗只跟随父进程生命周期。正常退出清日志后无需动作；崩溃后统一对账两类事务。
         /// 没有 12 小时上限，也不会因暂时没有日志而提前退出。
+        /// P1-5：先校验父进程身份；PID 被复用时仍执行 RecoverStale，不跳过恢复。
         /// </summary>
-        private static int WatchdogCli(int parentPid)
+        private static int WatchdogCli(int parentPid, long parentStart)
         {
             if (parentPid <= 0) return 2;
             IntPtr h = IntPtr.Zero;
             try { h = Native.OpenProcess(Native.SYNCHRONIZE, false, parentPid); }
             catch (Exception ex) { Log.Write("watchdog open: " + ex.Message); }
 
-            if (h == IntPtr.Zero)
+            bool alive = ParentAlive(parentPid, parentStart);
+            if (!alive)
             {
-                try
-                {
-                    using (Process parent = Process.GetProcessById(parentPid))
-                    {
-                        // 父进程仍在但打不开时，不能把活动事务误判成崩溃遗留。
-                        Log.Write("watchdog parent access denied pid=" + parentPid);
-                        return 1;
-                    }
-                }
-                catch { }
+                // 父进程已退出，或 PID 已被别的进程复用：句柄可能等错对象，直接进入恢复。
+                Log.Write("watchdog parent gone or pid reused pid=" + parentPid);
+                if (h != IntPtr.Zero) { try { Native.CloseHandle(h); } catch { } h = IntPtr.Zero; }
             }
-            else
+
+            if (alive)
             {
+                if (h == IntPtr.Zero)
+                {
+                    // 父进程仍在但打不开时，不能把活动事务误判成崩溃遗留。
+                    Log.Write("watchdog parent access denied pid=" + parentPid);
+                    return 1;
+                }
                 try
                 {
                     while (true)
@@ -150,11 +178,16 @@ namespace FrameForge
             return 0;
         }
 
-        /// <summary>命令行还原:FrameForge.exe --restore,没有待还原的改动时返回 2。</summary>
+        /// <summary>
+        /// 命令行还原:FrameForge.exe --restore。
+        /// 退出码：0 全部还原；1 部分失败/仍有未决项；2 无待还原。
+        /// </summary>
         private static int RestoreCli()
         {
-            int n = BoostJournal.RestoreAll();
-            Log.Write("restore cli: " + n + " item(s)");
+            var rep = new ReconcileReport();
+            int n = BoostJournal.RestoreAll(rep);
+            Log.Write("restore cli: reverted=" + n + " conflict=" + rep.Conflict + " failed=" + rep.Failed);
+            if (!rep.Clean) return 1;
             return n > 0 ? 0 : 2;
         }
 
@@ -329,6 +362,15 @@ namespace FrameForge
                     "boost items mapped");
             }
             catch (Exception ex) { check("settings plan", false, ex.Message); }
+
+            // 5b. 中英词条键必须一一对应（P2-4）：新增文案漏翻一边会在这里暴露。
+            try
+            {
+                string diff = I18n.KeyDiff();
+                check("i18n key parity", diff.Length == 0,
+                    diff.Length == 0 ? I18n.KeyCounts() : diff);
+            }
+            catch (Exception ex) { check("i18n key parity", false, ex.Message); }
 
             // 6. CPU 拓扑与核心分配(只读)
             try
@@ -662,6 +704,16 @@ namespace FrameForge
                     check("journal v1 migrate", migrated != null && migrated.MigratedFrom == 1
                         && migrated.Actions.Count == 2,
                         migrated == null ? "null" : migrated.Actions.Count + " action(s)");
+
+                    // 损坏日志 fixture（P2-7）：checksum 对不上时必须隔离并返回 null，
+                    // 不能抛异常，也不能把坏内容当成有效事务继续还原。
+                    string corrupt = "v=2\ntx=dead|state=COMMITTED|owner=ONE_SHOT|created=x|updated=y\n"
+                        + "host=1|1|2|0|z\ngame=0|selftest|-1\nres=pw:NONE,tm:NONE\n"
+                        + "sum=00000000:00000000000000000000000000000000\n";
+                    SafeFile.WriteAllText(BoostJournal.FilePath, corrupt, new UTF8Encoding(false));
+                    Transaction bad = BoostJournal.Load();
+                    check("journal corrupt quarantine", bad == null && !File.Exists(BoostJournal.FilePath),
+                        bad == null ? "bad checksum moved aside" : "corrupt journal was accepted");
                     BoostJournal.Clear();
                 }
             }

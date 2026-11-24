@@ -91,6 +91,8 @@ namespace FrameForge.Sys
         private static readonly object MemGate = new object();
         private static DateTime lastMemoryTrimUtc = DateTime.MinValue;
         private const double MemoryTrimThrottleSeconds = 30.0;
+        // P2-1：等待锁外 I/O 的上限，超时视为 Busy 遗留并强制清除。
+        private const int BusyWaitMs = 30000;
 
         private SystemResourceArbiter() { }
 
@@ -116,7 +118,7 @@ namespace FrameForge.Sys
             lock (gate)
             {
                 // 另一个线程正在锁外执行 powercfg / timeBeginPeriod，等它收尾。
-                while (slot.Busy) System.Threading.Monitor.Wait(gate);
+                WaitIdle(slot, r);
 
                 if (RefOf(kind, slot) > 0)
                 {
@@ -136,8 +138,11 @@ namespace FrameForge.Sys
                 else
                 {
                     // 对方已持有：叠加，不改系统、不覆盖 old。
+                    // P1-1：必须登记叠加者指针，否则 holder 先释放时无处转移恢复责任。
                     slot.Ref++;
                     SetRef(kind, 1, slot);
+                    if (kind == OwnerKind.ONE_SHOT) slot.OneShotOwner = owner;
+                    else slot.RealtimeOwner = owner;
                     sharedRef = slot.Ref;
                     res.Ok = true;
                     res.State = AcquireState.SHARED;
@@ -154,24 +159,30 @@ namespace FrameForge.Sys
 
             string got = "";
             bool applied = false;
-            try { got = readOld == null ? "" : (readOld() ?? ""); }
-            catch (Exception ex) { Log.Write("arbiter readOld " + r + ": " + ex.Message); }
-            try { applied = apply != null && apply(); }
-            catch (Exception ex) { Log.Write("arbiter apply " + r + ": " + ex.Message); }
-
-            lock (gate)
+            try
             {
-                slot.Busy = false;
-                if (applied)
+                try { got = readOld == null ? "" : (readOld() ?? ""); }
+                catch (Exception ex) { Log.Write("arbiter readOld " + r + ": " + ex.Message); }
+                try { applied = apply != null && apply(); }
+                catch (Exception ex) { Log.Write("arbiter apply " + r + ": " + ex.Message); }
+            }
+            finally
+            {
+                // P2-1：无论 apply 路径如何退出，都必须释放 Busy 并唤醒等待者。
+                lock (gate)
                 {
-                    slot.Holder = kind;
-                    slot.Old = got;
-                    slot.Ref = 1;
-                    SetRef(kind, 1, slot);
-                    if (kind == OwnerKind.ONE_SHOT) slot.OneShotOwner = owner;
-                    else slot.RealtimeOwner = owner;
+                    slot.Busy = false;
+                    if (applied)
+                    {
+                        slot.Holder = kind;
+                        slot.Old = got;
+                        slot.Ref = 1;
+                        SetRef(kind, 1, slot);
+                        if (kind == OwnerKind.ONE_SHOT) slot.OneShotOwner = owner;
+                        else slot.RealtimeOwner = owner;
+                    }
+                    System.Threading.Monitor.PulseAll(gate);
                 }
-                System.Threading.Monitor.PulseAll(gate);
             }
 
             if (!applied) { res.Reason = "apply-failed"; return res; }
@@ -202,7 +213,7 @@ namespace FrameForge.Sys
 
             lock (gate)
             {
-                while (slot.Busy) System.Threading.Monitor.Wait(gate);
+                WaitIdle(slot, r);
                 if (RefOf(kind, slot) == 0) return;
                 SetRef(kind, 0, slot);
                 if (slot.Ref > 0) slot.Ref--;
@@ -238,16 +249,39 @@ namespace FrameForge.Sys
             {
                 try { restore(oldValue); }
                 catch (Exception ex) { Log.Write("arbiter restore " + r + ": " + ex.Message); }
-                lock (gate)
+                finally
                 {
-                    slot.Busy = false;
-                    System.Threading.Monitor.PulseAll(gate);
+                    lock (gate)
+                    {
+                        slot.Busy = false;
+                        System.Threading.Monitor.PulseAll(gate);
+                    }
                 }
             }
 
             // FF-011：holder 转移后，留存引擎要立刻把新的 resourceOwnership 落盘。
             if (transferred && nextOwner != null) NotifyGranted(nextOwner, r, nextRef);
             NotifyReleased(owner, r);
+        }
+
+        /// <summary>
+        /// P2-1：等待锁外 I/O 收尾，带超时。持 Busy 的线程若异常终止，超时后强制清标志，
+        /// 避免该资源的 Acquire/Release 永久阻塞。调用方必须持有 gate。
+        /// </summary>
+        private void WaitIdle(Slot slot, ResourceKind r)
+        {
+            DateTime deadline = DateTime.UtcNow.AddMilliseconds(BusyWaitMs);
+            while (slot.Busy)
+            {
+                double left = (deadline - DateTime.UtcNow).TotalMilliseconds;
+                if (left <= 0)
+                {
+                    Log.Write("arbiter busy timeout " + r + ": force clear");
+                    slot.Busy = false;
+                    return;
+                }
+                System.Threading.Monitor.Wait(gate, (int)Math.Min(1000.0, left));
+            }
         }
 
         public OwnerKind CurrentHolder(ResourceKind r)

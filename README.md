@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
   <img src="https://img.shields.io/badge/size-7%20MB-brightgreen" alt="size 7 MB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.6.0-orange" alt="1.6.0">
+  <img src="https://img.shields.io/badge/version-1.6.2-orange" alt="1.6.2">
 </p>
 
 <p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
@@ -294,6 +294,35 @@ frameforge/
 - 仅支持 Windows；Linux / macOS 不在计划内。
 
 ## 更新日志
+
+### v1.6.2
+
+> 稳定性与可读性版本：按遗留缺点评审修掉资源仲裁、事务日志密钥、退出收尾、游戏库缓存与看门狗的一批边界问题；叠加层改为等宽数字 + 字段角色配色，读数不再跳列，并能一眼区分帧率、1% Low、帧时间与环境信息。
+
+**资源与事务**
+
+- 仲裁器在 SHARED 分支也登记 owner 指针：持有者先退出时，剩余的叠加用户能立即接手恢复责任，不再出现“无人还原”的空档。
+- 锁外 I/O 的 Busy 标志改由 try/finally 保证清除并唤醒等待者；等待增加 30 秒上限，异常遗留的 Busy 会被强制清除并写日志。
+- 事务日志密钥改为进程内串行 + 临时文件原子发布 + 回读校验；并发启动时后到者读回先到者的密钥，绝不覆盖。长度异常的密钥文件移走保留现场。
+- HMAC 不匹配不再一律按伪造静默隔离：本次运行才新建密钥时，旧日志（换机、清理配置后）标记为 unverified 并写明显告警，文件保留供人工确认。
+- 退出收尾链每一步独立捕获异常，一键加速的系统还原放进 finally——前面任何一环失败，桌面都不会留在加速状态。
+- 游戏库缓存全部换成并发字典，用户库改为双重检查锁并“先填好再发布”；监控线程与界面同时查询不再互相撕裂。
+- 看门狗额外校验父进程启动时刻：PID 被复用时不会等错对象，仍会执行遗留事务恢复。
+- `--restore` 明确退出码：0 全部还原、1 仍有未决项、2 无待还原，便于脚本与批处理判断。
+
+**叠加层可读性**
+
+- 数值改用等宽字体（Consolas），列宽按字符数取整；帧率从 9 跳到 144 时整块 OSD 不再左右抖动。
+- 按字段角色分层配色：FPS `#FF4FD8`、1% Low `#FFC7EE`、帧时间 `#4FD8E8`、设备标签 `#CED6E2`、时间/时长 `#9AA6B8`；自绘、RTSS 与设置页预览共用同一套色值。
+- GPU 温度按阈值变色：默认 ≥70°C 变黄、>83°C 变浅红，两个阈值可在配置中调整（0 关闭该档）。
+- 简洁样式统一为 `144 FPS · 64°C`，去掉中英混排的“1%·5秒”前缀，1% Low 固定写作 `1% 58`。
+- RTSS 输出改为按段着色并逐段闭合，长文本仍受 RTSS 长度上限保护；标签与数值不再整行同色。
+- 新增两个可选配置：`overlayBackdrop=subtle` 在文字带下铺极淡黑底（无圆角描边，默认关闭），`overlayKeepPos=true` 在切换样式/贴角时保留拖动后的位置。
+
+**修正**
+
+- 报告页 CPU/GPU 占用数字与平均值、最大值不再重叠（1.6.0 构建中的排版回归）。
+- 自检新增中英词条键一致性（当前 640/640）与损坏日志隔离用例；损坏日志必须被移走且不得被当作有效事务还原。
 
 ### v1.6.0
 
@@ -635,6 +664,35 @@ frameforge/
 - Bilingual UI (Chinese / English), dark and light themes, tray mode, autostart, optional update check.
 
 ### Changelog
+
+#### v1.6.2
+
+> Stability and readability release: fixes a set of edge cases in resource arbitration, journal key handling, shutdown cleanup, the game cache and the watchdog; the overlay now uses monospaced numbers and role-based colours so readings no longer shift columns and FPS, 1% low, frame time and ambient info are easy to tell apart.
+
+**Resources and transactions**
+
+- The arbiter now records owner pointers in the SHARED branch too, so when the holder leaves first the remaining overlay user immediately takes over the restore responsibility.
+- Busy flags around out-of-lock I/O are cleared in try/finally with a 30-second wait cap; a stale flag is force-cleared and logged.
+- Journal key handling is serialized, published atomically via a temp file, verified by read-back, and never overwrites a key created by a concurrent instance; malformed key files are moved aside for inspection.
+- An HMAC mismatch is no longer silently treated as forgery: when the key was created during this run (after a reinstall or config cleanup) the old journal is tagged unverified with an explicit warning and kept for review.
+- Every shutdown step catches its own exception, and the one-click restore runs in a finally block, so the desktop can never be left boosted if an earlier step fails.
+- Game database caches are now concurrent dictionaries; the user database uses double-checked locking and publishes a fully built map.
+- The watchdog also validates the parent's start time, so a reused PID cannot make it wait on the wrong process, while stale recovery still runs.
+- `--restore` now returns 0 (all restored), 1 (unresolved items remain) or 2 (nothing to restore).
+
+**Overlay readability**
+
+- Numbers use a monospaced font (Consolas) with character-count column widths, so the OSD no longer jitters when FPS goes from 9 to 144.
+- Role-based colours: FPS `#FF4FD8`, 1% low `#FFC7EE`, frame time `#4FD8E8`, device labels `#CED6E2`, clock/uptime `#9AA6B8` — shared by the live overlay, RTSS output and the settings preview.
+- GPU temperature is colour-coded (≥70 °C amber, >83 °C light red by default; both thresholds configurable, 0 disables a tier).
+- The mini style is now `144 FPS · 64°C`, and 1% low is written as `1% 58` instead of the mixed-script `1%·5s` prefix.
+- RTSS output is coloured per segment with matching close tags and stays within the RTSS length cap.
+- Two opt-in settings: `overlayBackdrop=subtle` adds a very faint black plate under the text band (no rounded corners or border, off by default), and `overlayKeepPos=true` keeps the dragged position when switching style or corner.
+
+**Fixes**
+
+- CPU/GPU usage no longer overlaps the average/max values on the report page (a layout regression in the 1.6.0 build).
+- Self-test adds a zh/en string-key parity check (currently 640/640) and a corrupt-journal quarantine case: a bad journal must be moved aside and never restored as a valid transaction.
 
 #### v1.6.0
 

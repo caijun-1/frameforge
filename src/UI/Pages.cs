@@ -1005,7 +1005,8 @@ namespace FrameForge.UI
                 Host.St.OverlayStyle = key;
                 // 每一种样式的默认摆位不同(横向居中 / 竖向靠左 / 简洁居中),
                 // 换样式就把上次拖动保存的坐标清掉,让它按新样式重新摆放。
-                if (changed) { Host.St.OverlayX = -1; Host.St.OverlayY = -1; }
+                // P1：OverlayKeepPos=true 时保留用户拖动后的位置。
+                if (changed && !Host.St.OverlayKeepPos) { Host.St.OverlayX = -1; Host.St.OverlayY = -1; }
                 Host.St.Save();
                 if (Host.Ov != null) Host.Ov.ApplySettings();
                 preview.Invalidate();
@@ -1039,8 +1040,8 @@ namespace FrameForge.UI
                 if (Host.St.OverlayCorner == key) return;
                 Host.St.OverlayCorner = key;
                 // 固定角位时坐标不再使用;清掉旧的拖动坐标,回到"自动"时也会重新按样式摆位。
-                Host.St.OverlayX = -1;
-                Host.St.OverlayY = -1;
+                // P1：开启“保留位置”后不清坐标，切换角位仍沿用当前拖动位置。
+                if (!Host.St.OverlayKeepPos) { Host.St.OverlayX = -1; Host.St.OverlayY = -1; }
                 Host.St.Save();
                 if (Host.Ov != null) Host.Ov.ApplySettings();
                 preview.Invalidate();
@@ -1742,11 +1743,28 @@ namespace FrameForge.UI
             // 假数据:数值长度覆盖 2~8 个字符(含带秒的时间),用来检验换行/挤位问题。
             private static readonly string[] Samples =
             {
-                "144", "112", "6.9 ms", "38%", "76%", "64°", "9.8G", "62%", "21:40:36", "32:08"
+                "144", "1% 112", "6.9 ms", "38%", "76%", "64°C", "9.8G", "62%", "21:40:36", "32:08"
             };
 
-            // 和真实叠加层保持同一支粉色(小飞机风格的帧率配色)。
-            private static readonly Color FpsColor = Color.FromArgb(255, 255, 79, 216);
+            // 预览与实机共用同一套角色配色（OverlayPalette），不再各写一份色值。
+
+            // 等宽数字字体：与真实叠加层一致（Consolas），缓存避免每帧 new Font。
+            private Font numFont;
+            private float numFontPt;
+
+            private Font NumFont(float pt)
+            {
+                if (numFont != null && Math.Abs(numFontPt - pt) < 0.05f) return numFont;
+                if (numFont != null) { try { numFont.Dispose(); } catch { } numFont = null; }
+                try { numFont = new Font("Consolas", pt, FontStyle.Bold); }
+                catch
+                {
+                    try { numFont = new Font(FontFamily.GenericMonospace, pt, FontStyle.Bold); }
+                    catch { numFont = Theme.Bold(pt); }
+                }
+                numFontPt = pt;
+                return numFont;
+            }
 
             private bool CornerFixed { get { return st.OverlayCorner != null && st.OverlayCorner != "auto"; } }
             private bool CornerLeft { get { return st.OverlayCorner == "tl" || st.OverlayCorner == "bl"; } }
@@ -1765,6 +1783,7 @@ namespace FrameForge.UI
             protected override void Dispose(bool disposing)
             {
                 if (disposing && art != null) { art.Dispose(); art = null; }
+                if (disposing && numFont != null) { try { numFont.Dispose(); } catch { } numFont = null; }
                 base.Dispose(disposing);
             }
 
@@ -1828,8 +1847,8 @@ namespace FrameForge.UI
                 }
 
                 Font lf = Theme.F(9.5f * Scaled(), FontStyle.Regular);
-                Font vf = Theme.Bold(12.5f * Scaled());
-                Color lc = Color.FromArgb(225, 208, 216, 228);
+                Font vf = NumFont(12.5f * Scaled());
+                Color lc = OverlayPalette.Label;
                 Color vc = Color.White;
 
                 List<PvRow> rows = PreviewRows();
@@ -1843,13 +1862,13 @@ namespace FrameForge.UI
                 if (st.OverlayStyle == "mini")
                 {
                     // 简洁样式:只有帧率和温度,位置跟着"位置"选项走。
-                    // 帧率粉色、温度白色,和真实叠层保持一致。
+                    // 与实机一致：帧率粉色、温度按阈值着色。
                     string s = "144 FPS";
-                    if (st.ShowGpuTemp) s += "   64°";
-                    int cut = s.IndexOf("   ", StringComparison.Ordinal);
+                    if (st.ShowGpuTemp) s += " · 64°C";
+                    int cut = s.IndexOf(" · ", StringComparison.Ordinal);
                     string head = cut > 0 ? s.Substring(0, cut) : s;
-                    string tail = cut > 0 ? s.Substring(cut).Trim() : "";
-                    Font f = Theme.Bold(14f * Scaled());
+                    string tail = cut > 0 ? s.Substring(cut + 3) : "";
+                    Font f = NumFont(14f * Scaled());
                     Size hs = TextRenderer.MeasureText(g, head, f, Size.Empty, TextFormatFlags.NoPadding);
                     Size ts = tail.Length > 0
                         ? TextRenderer.MeasureText(g, tail, f, Size.Empty, TextFormatFlags.NoPadding) : Size.Empty;
@@ -1858,8 +1877,9 @@ namespace FrameForge.UI
                     float mx = CornerFixed && !CornerLeft ? Width - total - Ui.Fp(12) : (Width - total) / 2f;
                     float my = CornerFixed && CornerBottom ? Height - hs.Height - Ui.Fp(12) : Ui.Fp(12);
                     if (mx < Ui.Fp(8)) mx = Ui.Fp(8);
-                    ShadowText(g, head, f, FpsColor, mx, my);
-                    if (tail.Length > 0) ShadowText(g, tail, f, vc, mx + hs.Width + gap, my);
+                    ShadowText(g, head, f, OverlayPalette.Fps, mx, my);
+                    if (tail.Length > 0)
+                        ShadowText(g, tail, f, OverlayPalette.Temp(64, st.OverlayTempWarn, st.OverlayTempHot), mx + hs.Width + gap, my);
                     return;
                 }
 
@@ -1883,12 +1903,15 @@ namespace FrameForge.UI
                         if (rows[i].Cells.Count > cols) cols = rows[i].Cells.Count;
                     }
                     float[] colW = new float[cols];
+                    int digitW = TextRenderer.MeasureText(g, "0", vf, Size.Empty, TextFormatFlags.NoPadding).Width;
                     for (int i = 0; i < rows.Count; i++)
                     {
                         for (int c = 0; c < rows[i].Cells.Count; c++)
                         {
                             float cw = TextRenderer.MeasureText(g, rows[i].Cells[c], vf,
                                 Size.Empty, TextFormatFlags.NoPadding).Width;
+                            float fixedW = digitW * rows[i].Cells[c].Length;
+                            if (fixedW > cw) cw = fixedW;
                             if (cw > colW[c]) colW[c] = cw;
                         }
                     }
@@ -1906,14 +1929,13 @@ namespace FrameForge.UI
                     for (int i = 0; i < rows.Count; i++)
                     {
                         PvRow pr = rows[i];
-                        ShadowText(g, pr.Label, lf, lc, bx, y + Ui.Fp(2));
+                        ShadowText(g, pr.Label, lf, pr.Ambient ? OverlayPalette.Ambient : lc, bx, y + Ui.Fp(2));
                         float cx = bx + labelW + gapV;
                         for (int c = 0; c < pr.Cells.Count; c++)
                         {
                             float cw = TextRenderer.MeasureText(g, pr.Cells[c], vf,
                                 Size.Empty, TextFormatFlags.NoPadding).Width;
-                            Color cc = (pr.FpsCell && c == 0) ? FpsColor : vc;
-                            ShadowText(g, pr.Cells[c], vf, cc, cx + colW[c] - cw, y);
+                            ShadowText(g, pr.Cells[c], vf, pr.ColorAt(c), cx + colW[c] - cw, y);
                             cx += colW[c] + gapC;
                         }
                         y += rowH;
@@ -1973,14 +1995,13 @@ namespace FrameForge.UI
                     for (int k = lineStart[ln]; k < lineEnd[ln]; k++)
                     {
                         PvRow pr = rows[k];
-                        ShadowText(g, pr.Label, lf, lc, hx, hy + Ui.Fp(3));
+                        ShadowText(g, pr.Label, lf, pr.Ambient ? OverlayPalette.Ambient : lc, hx, hy + Ui.Fp(3));
                         hx += lw[k] + gap1;
                         for (int c = 0; c < pr.Cells.Count; c++)
                         {
                             float cw = TextRenderer.MeasureText(g, pr.Cells[c], vf,
                                 Size.Empty, TextFormatFlags.NoPadding).Width;
-                            Color cc = (pr.FpsCell && c == 0) ? FpsColor : vc;
-                            ShadowText(g, pr.Cells[c], vf, cc, hx, hy);
+                            ShadowText(g, pr.Cells[c], vf, pr.ColorAt(c), hx, hy);
                             hx += cw + gap1;
                         }
                         hx += gap2;
@@ -1993,7 +2014,19 @@ namespace FrameForge.UI
             {
                 public string Label = "";
                 public readonly List<string> Cells = new List<string>();
-                public bool FpsCell;
+                public readonly List<Color> Colors = new List<Color>();
+                public bool Ambient;
+
+                public void Add(string text, Color color)
+                {
+                    Cells.Add(text);
+                    Colors.Add(color);
+                }
+
+                public Color ColorAt(int i)
+                {
+                    return i >= 0 && i < Colors.Count ? Colors[i] : Color.White;
+                }
             }
 
             /// <summary>
@@ -2014,8 +2047,10 @@ namespace FrameForge.UI
                 if (scale < 50) scale = 50;
                 if (scale > 200) scale = 200;
                 // 预览卡比真实屏幕小得多,字号同比缩一点,200% 时不至于撑破卡片。
-                Font f = Theme.Bold(Math.Max(8f, 12f * Scaled() * scale / 100f));
-                Color c = ColorTranslator.FromHtml("#" + Rtss.ColorHex(st.RtssColor));
+                Font f = NumFont(Math.Max(8f, 12f * Scaled() * scale / 100f));
+                Color lc = OverlayPalette.Label;
+                if (!string.Equals(st.RtssColor, "white", StringComparison.OrdinalIgnoreCase))
+                    lc = ColorTranslator.FromHtml("#" + Rtss.ColorHex(st.RtssColor));
 
                 float x = Ui.Fp(14), y = Ui.Fp(14);
                 float lineH = f.Height + Ui.Fp(1);
@@ -2026,12 +2061,17 @@ namespace FrameForge.UI
                     if (label == "内存") label = "RAM";
                     else if (label == "时间") label = "TIME";
                     else if (label == "时长") label = "UPTIME";
-                    string line = label;
-                    for (int k = 0; k < rows[i].Cells.Count; k++) line += " " + rows[i].Cells[k];
-                    ShadowText(g, line, f, c, x, y);
+                    float lx = x;
+                    ShadowText(g, label, f, rows[i].Ambient ? OverlayPalette.Ambient : lc, lx, y);
+                    lx += TextRenderer.MeasureText(g, label, f, Size.Empty, TextFormatFlags.NoPadding).Width;
+                    for (int k = 0; k < rows[i].Cells.Count; k++)
+                    {
+                        string cell = " " + rows[i].Cells[k];
+                        ShadowText(g, cell, f, rows[i].ColorAt(k), lx, y);
+                        lx += TextRenderer.MeasureText(g, cell, f, Size.Empty, TextFormatFlags.NoPadding).Width;
+                    }
                     if (st.RtssStacked) y += lineH;
-                    else x += TextRenderer.MeasureText(g, line, f, Size.Empty, TextFormatFlags.NoPadding).Width
-                              + Ui.Fp(14);
+                    else x = lx + Ui.Fp(14);
                 }
             }
 
@@ -2044,47 +2084,48 @@ namespace FrameForge.UI
                 {
                     PvRow r = new PvRow();
                     r.Label = "FPS";
-                    r.FpsCell = st.ShowFps;
-                    if (ItemValue(st, 0)) r.Cells.Add(Samples[0]);
-                    if (ItemValue(st, 1)) r.Cells.Add((I18n.IsEn ? "1%·5s " : "1%·5秒 ") + Samples[1]);
-                    if (ItemValue(st, 2)) r.Cells.Add(Samples[2]);
+                    if (ItemValue(st, 0)) r.Add(Samples[0], OverlayPalette.Fps);
+                    if (ItemValue(st, 1)) r.Add(Samples[1], OverlayPalette.Low);
+                    if (ItemValue(st, 2)) r.Add(Samples[2], OverlayPalette.Frame);
                     rows.Add(r);
                 }
                 if (ItemValue(st, 3))
                 {
                     PvRow r = new PvRow();
                     r.Label = "CPU";
-                    r.Cells.Add(Samples[3]);
+                    r.Add(Samples[3], Color.White);
                     rows.Add(r);
                 }
                 if (ItemValue(st, 4) || ItemValue(st, 5))
                 {
                     PvRow r = new PvRow();
                     r.Label = "GPU";
-                    if (ItemValue(st, 4)) r.Cells.Add(Samples[4]);
-                    if (ItemValue(st, 5)) r.Cells.Add(Samples[5]);
+                    if (ItemValue(st, 4)) r.Add(Samples[4], Color.White);
+                    if (ItemValue(st, 5)) r.Add(Samples[5], OverlayPalette.Temp(64, st.OverlayTempWarn, st.OverlayTempHot));
                     rows.Add(r);
                 }
                 if (ItemValue(st, 6) || ItemValue(st, 7))
                 {
                     PvRow r = new PvRow();
                     r.Label = I18n.IsEn ? "RAM" : "内存";
-                    if (ItemValue(st, 6)) r.Cells.Add(Samples[6]);
-                    if (ItemValue(st, 7)) r.Cells.Add(Samples[7]);
+                    if (ItemValue(st, 6)) r.Add(Samples[6], Color.White);
+                    if (ItemValue(st, 7)) r.Add(Samples[7], Color.White);
                     rows.Add(r);
                 }
                 if (ItemValue(st, 8))
                 {
                     PvRow r = new PvRow();
                     r.Label = I18n.IsEn ? "TIME" : "时间";
-                    r.Cells.Add(Samples[8]);
+                    r.Ambient = true;
+                    r.Add(Samples[8], OverlayPalette.Ambient);
                     rows.Add(r);
                 }
                 if (ItemValue(st, 9))
                 {
                     PvRow r = new PvRow();
                     r.Label = I18n.IsEn ? "UPTIME" : "时长";
-                    r.Cells.Add(Samples[9]);
+                    r.Ambient = true;
+                    r.Add(Samples[9], OverlayPalette.Ambient);
                     rows.Add(r);
                 }
                 return rows;

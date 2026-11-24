@@ -13,6 +13,38 @@ using FrameForge.Sys;
 namespace FrameForge
 {
     /// <summary>
+    /// 叠加层统一配色（评审方案 §4.1）：自绘与 RTSS 共用同一套“字段角色 → 颜色”，
+    /// 设置页预览也直接引用，避免三处各写一份色值漂移。
+    /// </summary>
+    public static class OverlayPalette
+    {
+        public static readonly Color Fps = Color.FromArgb(255, 255, 79, 216);      // #FF4FD8
+        public static readonly Color Low = Color.FromArgb(255, 255, 199, 238);     // #FFC7EE
+        public static readonly Color Frame = Color.FromArgb(255, 79, 216, 232);    // #4FD8E8
+        public static readonly Color Label = Color.FromArgb(225, 206, 214, 226);   // #CED6E2
+        public static readonly Color Ambient = Color.FromArgb(230, 154, 166, 184); // #9AA6B8
+        public static readonly Color Warn = Color.FromArgb(255, 255, 209, 102);    // #FFD166
+        public static readonly Color Hot = Color.FromArgb(255, 255, 107, 107);     // #FF6B6B
+
+        /// <summary>温度按阈值分档：低于 warn 白，warn..hot 黄，超过 hot 浅红。</summary>
+        public static Color Temp(double celsius, int warn, int hot)
+        {
+            if (celsius < 0) return Color.White;
+            if (hot > 0 && celsius > hot) return Hot;
+            if (warn > 0 && celsius >= warn) return Warn;
+            return Color.White;
+        }
+
+        /// <summary>RTSS 内嵌颜色标签要 AARRGGBB；这里只取 RGB，alpha 固定 FF。</summary>
+        public static string RgbHex(Color c)
+        {
+            return c.R.ToString("X2", CultureInfo.InvariantCulture)
+                 + c.G.ToString("X2", CultureInfo.InvariantCulture)
+                 + c.B.ToString("X2", CultureInfo.InvariantCulture);
+        }
+    }
+
+    /// <summary>
     /// 游戏内叠加层:分层置顶窗口 + UpdateLayeredWindow 逐像素透明。
     /// 不注入游戏,不接管输入;锁定后完全鼠标穿透。
     /// </summary>
@@ -40,9 +72,6 @@ namespace FrameForge
         private readonly Dictionary<string, Font> fonts = new Dictionary<string, Font>();
         // 排版用的是"无额外内边距"的格式,测出来多宽就画多宽,右对齐不会漂。
         private static readonly StringFormat Typo = NewTypo();
-
-        // 帧率数值用"小飞机"(MSI Afterburner / RTSS)那套粉色,一眼就能和别的数值分开。
-        private static readonly Color FpsColor = Color.FromArgb(255, 255, 79, 216);
 
         private IntPtr memDc = IntPtr.Zero;
         private IntPtr dib = IntPtr.Zero;
@@ -316,7 +345,11 @@ namespace FrameForge
 
                 string key = style + "|" + st.OverlayScale.ToString("0.00", CultureInfo.InvariantCulture)
                            + "|" + k.ToString("0.00", CultureInfo.InvariantCulture)
-                           + "|" + st.OverlayCorner + "|" + RowsKey(rows);
+                           + "|" + st.OverlayCorner
+                           + "|" + (st.OverlayBackdrop ?? "none")
+                           + "|" + st.OverlayTempWarn.ToString(CultureInfo.InvariantCulture)
+                           + "|" + st.OverlayTempHot.ToString(CultureInfo.InvariantCulture)
+                           + "|" + RowsKey(rows);
                 if (key == lastKey)
                 {
                     // 位置可能被游戏顶掉,内容没变也要重新声明置顶。
@@ -347,7 +380,10 @@ namespace FrameForge
                 {
                     pg.TextRenderingHint = TextRenderingHint.AntiAlias;
                     Font lf = OverlayFont(labelPt, FontStyle.Regular);
-                    Font vf = OverlayFont(valuePt, FontStyle.Bold);
+                    Font vf = NumericFont(valuePt, FontStyle.Bold);
+                    // 数字用等宽字体后，列宽按“该列最多几个字符 × 单字宽”取整，
+                    // 读数从 9 跳到 100 时列宽不再变化，整块 OSD 不会左右抖。
+                    int digitW = (int)Math.Ceiling(pg.MeasureString("0", vf, int.MaxValue, Typo).Width);
 
                     // 分组排布:同一台设备的数值并到一行(CPU 只写一次),
                     // 同一列在所有行里按最宽的那一项对齐。
@@ -367,6 +403,9 @@ namespace FrameForge
                         for (int c = 0; c < r.Cells.Count; c++)
                         {
                             int cw = (int)Math.Ceiling(pg.MeasureString(r.Cells[c], vf, int.MaxValue, Typo).Width);
+                            // 等宽字体下 len*digitW 即精确占位；“1% 58”之类纯 ASCII 也能算准。
+                            int fixedW = digitW * r.Cells[c].Length;
+                            if (fixedW > cw) cw = fixedW;
                             if (cw > colW[c]) colW[c] = cw;
                         }
                     }
@@ -381,7 +420,7 @@ namespace FrameForge
                     }
                     else if (style == "mini")
                     {
-                        w = (int)Math.Ceiling(pg.MeasureString(MiniText(), OverlayFont(valuePt * 1.35f, FontStyle.Bold), int.MaxValue, Typo).Width) + padX * 2;
+                        w = (int)Math.Ceiling(pg.MeasureString(MiniText(), NumericFont(valuePt * 1.35f, FontStyle.Bold), int.MaxValue, Typo).Width) + padX * 2;
                         h = (int)Math.Round(28 * k) + padY * 2;
                     }
                     else
@@ -425,25 +464,31 @@ namespace FrameForge
                         // 整块只留文字:不要圆角底,也不要描边(用户明确要求)。
                         // 没有底色后白字在雪地/亮天空里会糊,所以先压一层深色阴影再画字,
                         // 相当于数字自带描边,背景仍然完全透明。
+                        // P1：可选“微底板”——极淡黑底铺满文字带（无圆角/描边），默认关闭。
+                        if (string.Equals(st.OverlayBackdrop, "subtle", StringComparison.OrdinalIgnoreCase))
+                        {
+                            using (var bg = new SolidBrush(Color.FromArgb(40, 0, 0, 0)))
+                                g.FillRectangle(bg, 0, 0, w, h);
+                        }
                         if (style == "v")
                         {
                             // 小飞机那种分组排布:左边设备名只出现一次,右边是这台设备的各项数值。
                             // 同一列的数值右对齐,读数长短变化时列不会左右抖。
                             float y = padY;
                             Font lf = OverlayFont(labelPt, FontStyle.Regular);
-                            Font vf = OverlayFont(valuePt, FontStyle.Bold);
+                            Font vf = NumericFont(valuePt, FontStyle.Bold);
                             for (int i = 0; i < rows.Count; i++)
                             {
                                 Row r = rows[i];
                                 SizeF ls = g.MeasureString(r.Label, lf, int.MaxValue, Typo);
-                                using (var b = new SolidBrush(Color.FromArgb(225, 206, 214, 226)))
+                                using (var b = new SolidBrush(r.Ambient ? OverlayPalette.Ambient : OverlayPalette.Label))
                                     ShadowString(g, r.Label, lf, b, padX, y + (rowH - ls.Height) / 2f, k);
 
                                 float cx = padX + labelMax + gapV;
                                 for (int c = 0; c < r.Cells.Count; c++)
                                 {
                                     SizeF cs = g.MeasureString(r.Cells[c], vf, int.MaxValue, Typo);
-                                    using (var b = new SolidBrush(r.FpsCell && c == 0 ? FpsColor : Color.White))
+                                    using (var b = new SolidBrush(r.ColorAt(c)))
                                         ShadowString(g, r.Cells[c], vf, b, cx + colW[c] - cs.Width,
                                             y + (rowH - cs.Height) / 2f, k);
                                     cx += colW[c] + gapC;
@@ -453,21 +498,21 @@ namespace FrameForge
                         }
                         else if (style == "mini")
                         {
-                            // 帧率数字用粉色,后面的温度保持白色,和小飞机那种"只高亮帧率"一致。
-                            Font f = OverlayFont(valuePt * 1.35f, FontStyle.Bold);
+                            // 帧率数字用粉色，温度保持白色/阈值色，和小飞机那种“只高亮帧率”一致。
+                            Font f = NumericFont(valuePt * 1.35f, FontStyle.Bold);
                             string text = MiniText();
-                            int cut = text.IndexOf("   ", StringComparison.Ordinal);
+                            int cut = text.IndexOf(" · ", StringComparison.Ordinal);
                             string head = cut > 0 ? text.Substring(0, cut) : text;
-                            string tail = cut > 0 ? text.Substring(cut).Trim() : "";
+                            string tail = cut > 0 ? text.Substring(cut + 3) : "";
                             SizeF hs = g.MeasureString(head, f, int.MaxValue, Typo);
                             SizeF ts = tail.Length > 0 ? g.MeasureString(tail, f, int.MaxValue, Typo) : SizeF.Empty;
                             float totalW = hs.Width + (tail.Length > 0 ? 12 * k + ts.Width : 0);
                             float mx = (w - totalW) / 2f;
                             float my = (h - hs.Height) / 2f;
-                            using (var b = new SolidBrush(FpsColor))
+                            using (var b = new SolidBrush(OverlayPalette.Fps))
                                 ShadowString(g, head, f, b, mx, my, k);
                             if (tail.Length > 0)
-                                using (var b = new SolidBrush(Color.White))
+                                using (var b = new SolidBrush(OverlayPalette.Temp(last.GpuTemp, st.OverlayTempWarn, st.OverlayTempHot)))
                                     ShadowString(g, tail, f, b, mx + hs.Width + 12 * k, my, k);
                         }
                         else
@@ -475,18 +520,18 @@ namespace FrameForge
                             float x = padX;
                             float cy = h / 2f;
                             Font lf = OverlayFont(labelPt, FontStyle.Regular);
-                            Font vf = OverlayFont(valuePt, FontStyle.Bold);
+                            Font vf = NumericFont(valuePt, FontStyle.Bold);
                             for (int i = 0; i < rows.Count; i++)
                             {
                                 Row r = rows[i];
                                 SizeF ls = g.MeasureString(r.Label, lf, int.MaxValue, Typo);
-                                using (var b = new SolidBrush(Color.FromArgb(220, 196, 206, 220)))
+                                using (var b = new SolidBrush(r.Ambient ? OverlayPalette.Ambient : OverlayPalette.Label))
                                     ShadowString(g, r.Label, lf, b, x, cy - ls.Height / 2f, k);
                                 x += ls.Width + gap1;
                                 for (int c = 0; c < r.Cells.Count; c++)
                                 {
                                     SizeF cs = g.MeasureString(r.Cells[c], vf, int.MaxValue, Typo);
-                                    using (var b = new SolidBrush(r.FpsCell && c == 0 ? FpsColor : Color.White))
+                                    using (var b = new SolidBrush(r.ColorAt(c)))
                                         ShadowString(g, r.Cells[c], vf, b, x, cy - cs.Height / 2f, k);
                                     x += cs.Width + gap1;
                                 }
@@ -536,7 +581,21 @@ namespace FrameForge
         {
             public string Label = "";
             public readonly List<string> Cells = new List<string>();
-            public bool FpsCell;
+            /// <summary>与 Cells 一一对应的字色；缺省白色（设备读数）。</summary>
+            public readonly List<Color> Colors = new List<Color>();
+            /// <summary>环境信息（时间/时长）整行降为次级灰，不与游戏读数抢视觉。</summary>
+            public bool Ambient;
+
+            public void Add(string text, Color color)
+            {
+                Cells.Add(text);
+                Colors.Add(color);
+            }
+
+            public Color ColorAt(int i)
+            {
+                return i >= 0 && i < Colors.Count ? Colors[i] : Color.White;
+            }
         }
 
         /// <summary>
@@ -551,40 +610,43 @@ namespace FrameForge
             {
                 Row r = new Row();
                 r.Label = "FPS";
-                r.FpsCell = st.ShowFps;
-                if (st.ShowFps) r.Cells.Add(fps > 0 ? fps.ToString("0") : "--");
-                if (st.ShowLow) r.Cells.Add((I18n.IsEn ? "1%·5s " : "1%·5秒 ") + (low > 0 ? low.ToString("0") : "--"));
-                if (st.ShowFrameTime) r.Cells.Add(frameTime > 0 ? frameTime.ToString("0.0") + " ms" : "-- ms");
+                if (st.ShowFps) r.Add(fps > 0 ? fps.ToString("0") : "--", OverlayPalette.Fps);
+                // 1% Low 去掉“·5秒”这种中英混排，固定列宽后数字仍然对齐。
+                if (st.ShowLow) r.Add("1% " + (low > 0 ? low.ToString("0") : "--"), OverlayPalette.Low);
+                if (st.ShowFrameTime) r.Add(frameTime > 0 ? frameTime.ToString("0.0") + " ms" : "-- ms", OverlayPalette.Frame);
                 rows.Add(r);
             }
             if (st.ShowCpu)
             {
                 Row r = new Row();
                 r.Label = "CPU";
-                r.Cells.Add(last.Cpu >= 0 ? last.Cpu.ToString("0") + "%" : "--");
+                r.Add(last.Cpu >= 0 ? last.Cpu.ToString("0") + "%" : "--", Color.White);
                 rows.Add(r);
             }
             if (st.ShowGpu || st.ShowGpuTemp)
             {
                 Row r = new Row();
                 r.Label = "GPU";
-                if (st.ShowGpu) r.Cells.Add(last.Gpu >= 0 ? last.Gpu.ToString("0") + "%" : "--");
-                if (st.ShowGpuTemp) r.Cells.Add(last.GpuTemp >= 0 ? last.GpuTemp.ToString("0") + "°" : "--");
+                if (st.ShowGpu) r.Add(last.Gpu >= 0 ? last.Gpu.ToString("0") + "%" : "--", Color.White);
+                if (st.ShowGpuTemp)
+                    r.Add(last.GpuTemp >= 0 ? last.GpuTemp.ToString("0") + "°C" : "--°C",
+                        OverlayPalette.Temp(last.GpuTemp, st.OverlayTempWarn, st.OverlayTempHot));
                 rows.Add(r);
             }
             if (st.ShowRam || st.ShowRamPct)
             {
                 Row r = new Row();
                 r.Label = I18n.IsEn ? "RAM" : "内存";
-                if (st.ShowRam) r.Cells.Add(last.RamUsed > 0 ? ((double)last.RamUsed / 1073741824.0).ToString("0.0") + "G" : "--");
-                if (st.ShowRamPct) r.Cells.Add(last.RamPct >= 0 ? last.RamPct.ToString("0") + "%" : "--");
+                if (st.ShowRam) r.Add(last.RamUsed > 0 ? ((double)last.RamUsed / 1073741824.0).ToString("0.0") + "G" : "--", Color.White);
+                if (st.ShowRamPct) r.Add(last.RamPct >= 0 ? last.RamPct.ToString("0") + "%" : "--", Color.White);
                 rows.Add(r);
             }
             if (st.ShowClock)
             {
                 Row r = new Row();
                 r.Label = I18n.IsEn ? "TIME" : "时间";
-                r.Cells.Add(DateTime.Now.ToString("HH:mm:ss"));
+                r.Ambient = true;
+                r.Add(DateTime.Now.ToString("HH:mm:ss"), OverlayPalette.Ambient);
                 rows.Add(r);
             }
             if (st.ShowSession)
@@ -593,17 +655,19 @@ namespace FrameForge
                 if (t.TotalSeconds < 0) t = TimeSpan.Zero;
                 Row r = new Row();
                 r.Label = I18n.IsEn ? "UPTIME" : "时长";
-                r.Cells.Add(((int)t.TotalMinutes).ToString() + ":" + t.Seconds.ToString("00"));
+                r.Ambient = true;
+                r.Add(((int)t.TotalMinutes).ToString() + ":" + t.Seconds.ToString("00"), OverlayPalette.Ambient);
                 rows.Add(r);
             }
             return rows;
         }
 
-        /// <summary>简洁样式:一行"帧率 + 温度",用三空格分隔,绘制时拆成两段上色。</summary>
+        /// <summary>简洁样式:一行"帧率 · 温度",绘制时拆成两段上色。</summary>
         private string MiniText()
         {
             string text = (fps > 0 ? fps.ToString("0") : "--") + " FPS";
-            if (st.ShowGpuTemp && last.GpuTemp >= 0) text += "   " + last.GpuTemp.ToString("0") + "°";
+            if (st.ShowGpuTemp && last.GpuTemp >= 0)
+                text += " · " + last.GpuTemp.ToString("0") + "°C";
             return text;
         }
 
@@ -611,9 +675,11 @@ namespace FrameForge
         /// 交给 RTSS 的文字。标签统一用英文——RTSS 的 OSD 字体不一定带中文字形,
         /// 写中文可能是一排方块;数值本身和界面上显示的完全一致。
         /// 字号/颜色/排版用 RTSS 的内嵌标签下发,用户不用再打开 RTSS 单独调。
+        /// P1：每个“标签/数值”段都用自己的角色色并用 &lt;C&gt; 闭合，避免整行单色。
         /// </summary>
         private string RtssText(List<Row> rows)
         {
+            const string Reset = "<C>";
             var sb = new StringBuilder();
             for (int i = 0; i < rows.Count; i++)
             {
@@ -622,16 +688,30 @@ namespace FrameForge
                 if (label == "内存") label = "RAM";
                 else if (label == "时间") label = "TIME";
                 else if (label == "时长") label = "UPTIME";
-                sb.Append(label);
-                for (int c = 0; c < rows[i].Cells.Count; c++) sb.Append(' ').Append(rows[i].Cells[c]);
+
+                Color labelColor = rows[i].Ambient ? OverlayPalette.Ambient : LabelColor();
+                sb.Append("<C=FF").Append(OverlayPalette.RgbHex(labelColor)).Append('>')
+                  .Append(label).Append(Reset);
+                for (int c = 0; c < rows[i].Cells.Count; c++)
+                {
+                    sb.Append(' ')
+                      .Append("<C=FF").Append(OverlayPalette.RgbHex(rows[i].ColorAt(c))).Append('>')
+                      .Append(rows[i].Cells[c]).Append(Reset);
+                }
             }
 
             int scale = st.RtssScale;
             if (scale < 50) scale = 50;
             if (scale > 200) scale = 200;
-            return "<S=" + scale.ToString(CultureInfo.InvariantCulture)
-                 + "><C=FF" + Rtss.ColorHex(st.RtssColor) + ">"
-                 + sb.ToString() + "<C>";
+            return "<S=" + scale.ToString(CultureInfo.InvariantCulture) + ">" + sb.ToString();
+        }
+
+        /// <summary>RTSS 标签色：默认用统一灰；用户选了非白色则尊重其颜色设置。</summary>
+        private Color LabelColor()
+        {
+            if (!string.Equals(st.RtssColor, "white", StringComparison.OrdinalIgnoreCase))
+                return ColorTranslator.FromHtml("#" + Rtss.ColorHex(st.RtssColor));
+            return OverlayPalette.Label;
         }
 
         /// <summary>内容签名:只有文字或排布变了才重新量尺寸、重画。</summary>
@@ -668,6 +748,32 @@ namespace FrameForge
             string family = I18n.IsEn ? "Segoe UI" : "Microsoft YaHei UI";
             try { f = new Font(family, px, style, GraphicsUnit.Pixel); }
             catch { f = new Font(FontFamily.GenericSansSerif, px, style, GraphicsUnit.Pixel); }
+            fonts[key] = f;
+            return f;
+        }
+
+        /// <summary>
+        /// 数值专用等宽字体：Consolas 在 Windows 上恒定存在；缺失时退回系统等宽族。
+        /// 只用于数字/单位（纯 ASCII），保证同一列在读数位数变化时宽度不变。
+        /// </summary>
+        private Font NumericFont(float px, FontStyle style)
+        {
+            string key = "n" + px.ToString("0.0", CultureInfo.InvariantCulture) + "/" + ((int)style).ToString();
+            Font f;
+            if (fonts.TryGetValue(key, out f)) return f;
+
+            if (fonts.Count > 24)
+            {
+                foreach (Font old in fonts.Values) { try { old.Dispose(); } catch { } }
+                fonts.Clear();
+            }
+
+            try { f = new Font("Consolas", px, style, GraphicsUnit.Pixel); }
+            catch
+            {
+                try { f = new Font(FontFamily.GenericMonospace, px, style, GraphicsUnit.Pixel); }
+                catch { f = new Font(FontFamily.GenericSansSerif, px, style, GraphicsUnit.Pixel); }
+            }
             fonts[key] = f;
             return f;
         }

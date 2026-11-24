@@ -808,29 +808,42 @@ namespace FrameForge.UI
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            // 先撤滤镜/背光:这两项是全局系统状态,必须早于任何可能失败或变慢的收尾,
-            // 否则中途抛异常会把桌面留在滤色/低亮度状态。
-            try { Sys.Filter.Shutdown(); } catch { }
-            try { Sys.Display.Shutdown(); } catch { }
+            try
+            {
+                // 先撤滤镜/背光:这两项是全局系统状态,必须早于任何可能失败或变慢的收尾,
+                // 否则中途抛异常会把桌面留在滤色/低亮度状态。
+                try { Sys.Filter.Shutdown(); } catch (Exception ex) { Log.Write("exit filter: " + ex.Message); }
+                try { Sys.Display.Shutdown(); } catch (Exception ex) { Log.Write("exit display: " + ex.Message); }
 
-            if (ui != null) ui.Stop();
-            if (saveTimer != null) saveTimer.Stop();
-            if (captureTimer != null) captureTimer.Stop();
-            // 退出时正在玩的对局也要留下记录,否则关掉软件这局的成绩就丢了。
-            try { if (Tracker != null) Tracker.Flush(); } catch { }
-            try { if (St != null) St.Save(); } catch { }
+                // P1-3：每一步独立 try/catch，任何一步失败都不能中断后续收尾。
+                try { if (ui != null) ui.Stop(); } catch (Exception ex) { Log.Write("exit ui timer: " + ex.Message); }
+                try { if (saveTimer != null) saveTimer.Stop(); } catch (Exception ex) { Log.Write("exit save timer: " + ex.Message); }
+                try { if (captureTimer != null) captureTimer.Stop(); } catch (Exception ex) { Log.Write("exit capture timer: " + ex.Message); }
+                // 退出时正在玩的对局也要留下记录,否则关掉软件这局的成绩就丢了。
+                try { if (Tracker != null) Tracker.Flush(); } catch (Exception ex) { Log.Write("exit tracker: " + ex.Message); }
+                try { if (St != null) St.Save(); } catch (Exception ex) { Log.Write("exit settings: " + ex.Message); }
 
-            UnregisterHotkeys();
-            try { if (Fps != null) { Fps.Stop(); Fps.Dispose(); } } catch { }
-            try { if (Mon != null) Mon.Dispose(); } catch { }
-            try { if (Ov != null) { Ov.Stop(); Ov.Dispose(); } } catch { }
-            // boost-core Part A：资源所有权由 SystemResourceArbiter 统一仲裁，
-            // 最终还原走同一 Reconcile + 命名 Mutex；这里的先后顺序只是历史顺序，
-            // 不再承担"谁覆盖谁"的正确性责任（原注释：先停实时加速再还原一键加速）。
-            try { if (RealBoost != null) { RealBoost.Stop(); RealBoost.Dispose(); } } catch { }
-            try { if (Boost != null) { Boost.Restore(); Boost.Dispose(); } } catch { }
-
-            if (tray != null) { tray.Visible = false; tray.Dispose(); tray = null; }
+                try { UnregisterHotkeys(); } catch (Exception ex) { Log.Write("exit hotkeys: " + ex.Message); }
+                try { if (Fps != null) { Fps.Stop(); Fps.Dispose(); } } catch (Exception ex) { Log.Write("exit fps: " + ex.Message); }
+                try { if (Mon != null) Mon.Dispose(); } catch (Exception ex) { Log.Write("exit monitor: " + ex.Message); }
+                try { if (Ov != null) { Ov.Stop(); Ov.Dispose(); } } catch (Exception ex) { Log.Write("exit overlay: " + ex.Message); }
+                // boost-core Part A：资源所有权由 SystemResourceArbiter 统一仲裁，
+                // 最终还原走同一 Reconcile + 命名 Mutex；这里的先后顺序只是历史顺序，
+                // 不再承担"谁覆盖谁"的正确性责任（原注释：先停实时加速再还原一键加速）。
+                try { if (RealBoost != null) { RealBoost.Stop(); RealBoost.Dispose(); } } catch (Exception ex) { Log.Write("exit realtime boost: " + ex.Message); }
+            }
+            finally
+            {
+                // 系统状态还原必须执行，哪怕上面任何一步抛异常。
+                try
+                {
+                    if (Boost != null) { Boost.Restore(); Boost.Dispose(); }
+                    Log.Write("exit restore done, pending journal=" + (BoostJournal.Pending ? 1 : 0));
+                }
+                catch (Exception ex) { Log.Write("exit restore: " + ex.Message); }
+                try { if (tray != null) { tray.Visible = false; tray.Dispose(); tray = null; } }
+                catch (Exception ex) { Log.Write("exit tray: " + ex.Message); }
+            }
             base.OnFormClosing(e);
         }
 

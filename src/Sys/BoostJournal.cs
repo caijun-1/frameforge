@@ -303,33 +303,107 @@ namespace FrameForge.Sys
         private static byte[] macKey;
         private static bool macTried;
         private static bool macExisted;
+        // P1-2：密钥创建/读取必须串行，且用 CreateNew 原子发布，避免并发读到半成品。
+        private static readonly object MacGate = new object();
+
+        private static string MacKeyFile()
+        {
+            string dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "FrameForge");
+            return Path.Combine(dir, "journal.key");
+        }
+
+        /// <summary>读取密钥；文件不存在返回 null。长度不对不算有效密钥。</summary>
+        private static byte[] ReadMacKey(string file)
+        {
+            if (!File.Exists(file)) return null;
+            byte[] k = File.ReadAllBytes(file);
+            return k.Length == 32 ? k : null;
+        }
+
+        /// <summary>
+        /// 临时文件 + Move 原子发布；返回 false 表示目标已存在（其它实例抢先创建）。
+        /// </summary>
+        private static bool WriteMacKeyAtomic(string file, byte[] data)
+        {
+            if (File.Exists(file)) return false;
+            string tmp = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                using (var fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    fs.Write(data, 0, data.Length);
+                    fs.Flush(true);
+                }
+                // Move 在目标已存在时抛 IOException：视为竞争失败，交给调用方读回。
+                try { File.Move(tmp, file); }
+                catch (IOException) { return false; }
+                return true;
+            }
+            finally
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+            }
+        }
 
         /// <summary>
         /// 日志 HMAC 密钥:首次在 %ProgramData%\FrameForge 下生成(普通用户无写权限),
         /// 之后只读不改。拿不到时返回 null,退回纯 FNV 校验,不阻断自检与受限场景。
+        /// P1-2：加锁 + 原子创建 + 回读校验；并发时后到者读回先到者的 key，绝不覆盖。
         /// </summary>
         private static byte[] MacKey()
         {
-            if (macTried) return macKey;
-            macTried = true;
-            try
+            lock (MacGate)
             {
-                string dir = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "FrameForge");
-                string file = Path.Combine(dir, "journal.key");
-                if (File.Exists(file))
+                if (macTried) return macKey;
+                macTried = true;
+                try
                 {
-                    byte[] k = File.ReadAllBytes(file);
-                    if (k.Length == 32) { macExisted = true; macKey = k; return macKey; }
+                    string file = MacKeyFile();
+                    byte[] k = ReadMacKey(file);
+                    if (k == null && File.Exists(file))
+                    {
+                        // 长度异常：隔离坏文件而不是直接覆盖，保留现场供排查。
+                        try
+                        {
+                            string bad = file + ".bad." + DateTime.Now.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
+                            File.Move(file, bad);
+                            Log.Write("journal key invalid, moved to " + Path.GetFileName(bad));
+                        }
+                        catch (Exception ex) { Log.Write("journal key invalid: " + ex.Message); }
+                    }
+                    if (k != null) { macExisted = true; macKey = k; return macKey; }
+
+                    byte[] rnd = new byte[32];
+                    using (var rng = new RNGCryptoServiceProvider()) rng.GetBytes(rnd);
+                    Directory.CreateDirectory(Path.GetDirectoryName(file));
+                    if (WriteMacKeyAtomic(file, rnd))
+                    {
+                        // 回读校验：写入后确认磁盘上就是这份密钥。
+                        byte[] back = ReadMacKey(file);
+                        if (back != null && MacEquals(Convert.ToBase64String(back), Convert.ToBase64String(rnd)))
+                        {
+                            macKey = rnd;
+                            return macKey;
+                        }
+                        Log.Write("journal key verify failed after create");
+                        macKey = null;
+                        return macKey;
+                    }
+
+                    // 竞争失败：读回已存在的密钥（对方可能刚建好，允许短暂重试）。
+                    for (int i = 0; i < 10 && k == null; i++)
+                    {
+                        k = ReadMacKey(file);
+                        if (k == null) Thread.Sleep(30);
+                    }
+                    if (k != null) { macExisted = true; macKey = k; return macKey; }
+                    Log.Write("journal key race: neither created nor readable");
+                    macKey = null;
                 }
-                byte[] rnd = new byte[32];
-                using (var rng = new RNGCryptoServiceProvider()) rng.GetBytes(rnd);
-                Directory.CreateDirectory(dir);
-                File.WriteAllBytes(file, rnd);
-                macKey = rnd;
+                catch (Exception ex) { Log.Write("journal key: " + ex.Message); macKey = null; }
+                return macKey;
             }
-            catch (Exception ex) { Log.Write("journal key: " + ex.Message); macKey = null; }
-            return macKey;
         }
 
         private static string Hmac(byte[] key, string text)
@@ -432,7 +506,17 @@ namespace FrameForge.Sys
                     byte[] key = MacKey();
                     if (key != null && !MacEquals(Hmac(key, body.ToString()), mac))
                     {
-                        Quarantine(owner, "bad", "mac mismatch");
+                        // P1-2：本次运行才新建密钥时，旧日志无法验证（换机/清理配置后的合法日志），
+                        // 隔离为 unverified 并写明显告警，不按伪造静默处理。
+                        if (!macExisted)
+                        {
+                            Log.Write("journal mac unverifiable: key created this run, journal predates it");
+                            Quarantine(owner, "unverified", "mac mismatch (key regenerated)");
+                        }
+                        else
+                        {
+                            Quarantine(owner, "bad", "mac mismatch");
+                        }
                         return null;
                     }
                 }
@@ -1138,8 +1222,15 @@ namespace FrameForge.Sys
         /// <summary>启动自愈：有日志就按 v2 核心对账；挂起进程不再受"游戏存活"门控。</summary>
         public static int RecoverStale()
         {
+            return RecoverStale(new ReconcileReport());
+        }
+
+        /// <summary>同上，并把 conflict/failed 累计到调用方的报告里，供 --restore 区分退出码。</summary>
+        public static int RecoverStale(ReconcileReport total)
+        {
+            if (total == null) total = new ReconcileReport();
             if (!Pending) return 0;
-            int total = 0;
+            int reverted = 0;
             OwnerKind[] owners = new OwnerKind[] { OwnerKind.ONE_SHOT, OwnerKind.REALTIME };
             for (int i = 0; i < owners.Length; i++)
             {
@@ -1149,18 +1240,27 @@ namespace FrameForge.Sys
                 ctx.IsSameProcess = false;
                 ctx.IsAdmin = MemEngine.IsAdmin;
                 ReconcileReport rep = Reconcile(tx, ctx);
-                total += rep.Reverted;
+                reverted += rep.Reverted;
+                total.Reverted += rep.Reverted;
+                total.Noop += rep.Noop;
+                total.Conflict += rep.Conflict;
+                total.Failed += rep.Failed;
                 Log.Write("journal recover " + owners[i] + ": reverted=" + rep.Reverted
                     + " noop=" + rep.Noop + " conflict=" + rep.Conflict + " failed=" + rep.Failed);
             }
-            if (total > 0) Log.Write("journal recovered=" + total);
-            return total;
+            if (reverted > 0) Log.Write("journal recovered=" + reverted);
+            return reverted;
         }
 
         /// <summary>--restore 命令行入口：与启动自愈共用同一 Reconcile。</summary>
         public static int RestoreAll()
         {
             return RecoverStale();
+        }
+
+        public static int RestoreAll(ReconcileReport total)
+        {
+            return RecoverStale(total);
         }
 
         // =================================================================

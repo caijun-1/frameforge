@@ -1224,7 +1224,12 @@ namespace FrameForge.Sys
                         watchdogProcess = null;
                     }
                     string exe = Process.GetCurrentProcess().MainModule.FileName;
-                    string args = "--watchdog " + Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture);
+                    // P1-5：把父进程启动时刻一并交给看门狗，用于识别 PID 复用。
+                    long startTicks = 0;
+                    try { startTicks = Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks; }
+                    catch { startTicks = 0; }
+                    string args = "--watchdog " + Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture)
+                        + " " + startTicks.ToString(CultureInfo.InvariantCulture);
                     var psi = new ProcessStartInfo(exe, args);
                     psi.UseShellExecute = false;
                     psi.CreateNoWindow = true;

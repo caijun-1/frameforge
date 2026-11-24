@@ -313,15 +313,17 @@ namespace FrameForge.UI
             Tile(g, r);
             int pad = Ui.Px(14);
             Txt(g, caption, Theme.Regular(8.8f), Theme.Sub,
-                new Rectangle(x + pad, y + Ui.Px(10), w - pad * 2, Ui.Px(16)), TextFormatFlags.Left);
+                new Rectangle(x + pad, y + Ui.Px(7), w - pad * 2, Ui.Px(14)), TextFormatFlags.Left);
+            // 主数值上移两像素、「最高」下移到卡片底部，中间留出至少 3px，
+            // 避免 16pt 数字的下缘压到小字（高 DPI 下尤其明显）。
             Txt(g, avg, Theme.Num(16f), Theme.Text,
-                new Rectangle(x + pad, y + Ui.Px(28), w - pad * 2, Ui.Px(26)),
+                new Rectangle(x + pad, y + Ui.Px(21), w - pad * 2, Ui.Px(27)),
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
             if (max.Length > 0)
             {
                 string tail = I18n.T("report.max") + " " + max;
                 Txt(g, tail, Theme.Regular(8.5f), Theme.Faint,
-                    new Rectangle(x + pad, y + h - Ui.Px(24), w - pad * 2, Ui.Px(16)), TextFormatFlags.Left);
+                    new Rectangle(x + pad, y + h - Ui.Px(19), w - pad * 2, Ui.Px(14)), TextFormatFlags.Left);
             }
         }
 

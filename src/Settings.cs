@@ -28,6 +28,13 @@ namespace FrameForge
         public int OverlayY = -1;
         public double OverlayScale = 1.0;
         public bool OverlayLocked = true;
+        // 微底板：none = 纯文字；subtle = 极淡黑底（无圆角/描边）。默认保持纯文字。
+        public string OverlayBackdrop = "none";
+        // 温度告警：>= warn 变黄，> hot 变浅红；0 表示关闭该档。
+        public int OverlayTempWarn = 70;
+        public int OverlayTempHot = 83;
+        // 切换样式/贴角时是否保留用户拖动后的位置（默认恢复默认摆位）。
+        public bool OverlayKeepPos = false;
         // RTSS 在运行时,叠加层整个交给它的 OSD 画(独占全屏也能显示);
         // 没运行还是由 FrameForge 自己的分层窗口画。关掉这一项就始终自己画。
         public bool RtssOsd = true;
@@ -206,6 +213,11 @@ namespace FrameForge
 
             if (double.IsNaN(OverlayScale) || double.IsInfinity(OverlayScale)) OverlayScale = 1.0;
             OverlayScale = Math.Max(0.5, Math.Min(3.0, OverlayScale));
+            OverlayBackdrop = string.Equals(OverlayBackdrop, "subtle", StringComparison.OrdinalIgnoreCase) ? "subtle" : "none";
+            if (OverlayTempWarn < 0 || OverlayTempWarn > 120) OverlayTempWarn = 70;
+            if (OverlayTempHot < 0 || OverlayTempHot > 120) OverlayTempHot = 83;
+            if (OverlayTempWarn > 0 && OverlayTempHot > 0 && OverlayTempHot < OverlayTempWarn)
+                OverlayTempHot = OverlayTempWarn;
         }
 
         private static string SafeIccPath(string p)
@@ -272,6 +284,12 @@ namespace FrameForge
                     RtssColor = (v == "pink" || v == "green" || v == "yellow" || v == "cyan") ? v : "white";
                     break;
                 case "rtssstacked": RtssStacked = Bool(v, true); break;
+                case "overlaybackdrop":
+                    OverlayBackdrop = string.Equals(v, "subtle", StringComparison.OrdinalIgnoreCase) ? "subtle" : "none";
+                    break;
+                case "overlaytempwarn": OverlayTempWarn = Math.Max(0, Math.Min(120, Int(v, 70))); break;
+                case "overlaytemphot": OverlayTempHot = Math.Max(0, Math.Min(120, Int(v, 83))); break;
+                case "overlaykeeppos": OverlayKeepPos = Bool(v, false); break;
                 case "showfps": ShowFps = Bool(v, true); break;
                 case "showcpu": ShowCpu = Bool(v, false); break;
                 case "showgpu": ShowGpu = Bool(v, true); break;
@@ -358,6 +376,10 @@ namespace FrameForge
                 sb.AppendLine("rtssScale=" + RtssScale.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("rtssColor=" + RtssColor);
                 sb.AppendLine("rtssStacked=" + B(RtssStacked));
+                sb.AppendLine("overlayBackdrop=" + OverlayBackdrop);
+                sb.AppendLine("overlayTempWarn=" + OverlayTempWarn.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("overlayTempHot=" + OverlayTempHot.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("overlayKeepPos=" + B(OverlayKeepPos));
                 sb.AppendLine("showFps=" + B(ShowFps));
                 sb.AppendLine("showCpu=" + B(ShowCpu));
                 sb.AppendLine("showGpu=" + B(ShowGpu));
