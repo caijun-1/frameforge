@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
   <img src="https://img.shields.io/badge/size-7%20MB-brightgreen" alt="size 7 MB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.5.0-orange" alt="1.5.0">
+  <img src="https://img.shields.io/badge/version-1.6.0-orange" alt="1.6.0">
 </p>
 
 <p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
@@ -294,6 +294,42 @@ frameforge/
 - 仅支持 Windows；Linux / macOS 不在计划内。
 
 ## 更新日志
+
+### v1.6.0
+
+> 质量与安全版本：在 1.5.1 的一批 P0/P1 热修之上，完成仲裁器死锁、高 DPI 对话框、CPU 负载采样、文件缓存、NVAPI、HDR/ACM 检测与日志隐私等 1.6.0 架构项，并按评审参数重标定全部 23 套画面预设。
+
+**画面滤镜**
+- 颜色矩阵方向修正：内部按列向量计算，导出到 Win32 / GDI+ 前统一转置，预览与实屏不再相反。
+- 23 套预设按新规范重标定（鲜艳、柔和、高亮、电影、防雪盲、白天、夜间护眼、灰度、明基亮丽、雾天增强、竞技、二次元及各游戏预设），索引顺序保持不变。
+- 色温改为连续普朗克曲线，滑杆改用 Mired（±75），范围收紧到 2700–10000K；夜间预设落在暖色安全区。
+- 饱和度正负半轴分别限幅（工作区 1.45、总上限 1.65），净黑位不超过 +0.055，强度只在最终合成后插值一次。
+- 新增 HDR / 自动颜色管理探测：开启时明确提示系统会绕过色调调整，分辨率或刷新率变化后自动重测。
+
+**安全**
+- 所有系统程序改用 System32 绝对路径；启动时把 DLL 搜索目录锁定到 System32。
+- RTSS 安装包每次落到随机目录并强制 SHA-256 校验；自更新包在启动前复核哈希；PresentMon 要求 Intel 签名。
+- 加速日志增加 HMAC 签名，防手工伪造还原；优化项读取改为白名单键，电源方案校验 GUID。
+- 配置文件加载即钳位：滤镜参数、ICC 路径（拒绝 UNC、相对路径与超长路径）和叠加层缩放全部限幅。
+- NVAPI 只绑定签名明确的 SetDVCLevel，移除会破坏调用栈的 Ex 变体，以及 Optimus 机器上会写错显示器的物理 GPU 句柄，退出时补 NvAPI_Unload。
+
+**稳定与性能**
+- 资源仲裁者重构：锁内只做状态转移，读原值、写系统、写回与 owner 回调全部移到锁外，消除一键加速与实时加速之间的 AB-BA 死锁；holder 转移时立即落盘归属。
+- 混合架构核判定增加频率比兜底：P/E 核频率差达到 10% 才判混合，同构平台保持原判定。
+- CPU 负载采样改为「内核时间 − 空闲时间 + 用户时间」，空载核心不再显示成半忙。
+- 理想处理器不再把所有线程塞进同一颗核，改为按可用核轮流分配，并在循环结束后只落盘一次。
+- 实时加速每 5 秒的进程扫描由 13 次按名查询合并为一次全表枚举；提权失败的 PID 进入 5 分钟冷却，不再反复写盘；动作记录超过上限时优先裁剪已还原项。
+- 内存清理只在全屏游戏时执行，并与实时加速共享 30 秒节流；进程裁剪改为按工作集降序。
+- 系统文件缓存清理改用 SetSystemFileCacheSize，旧实现传入空缓冲永远返回失败。
+- 中断优化只删除自己写入的注册表值，不再整键删除；未显式开启 MSI 的设备不再被当作已开启。
+- MPO 开关逻辑修正（开启时删除覆盖值）；关机或注销时先撤滤镜与背光；高 DPI 下对话框按正文实际高度撑开，危险确认对话框回车等于取消。
+- 主题按钮按当前主题显示太阳或月牙，切换主题立即刷新。
+
+**隐私与日志**
+- 日志分级（INFO / WARN / ERROR，可用 FRAMEFORGE_LOG_LEVEL 过滤）、单行化、路径与用户名脱敏、跨进程命名互斥；单实例互斥量从 Global\ 改为 Local\。
+
+**自检**
+- 新增滤镜灰度中性、行向量导出、夜间亮度、CS2 暗部四项检查，HDR/ACM 探测信息，以及双 owner 反复抢占计时器的并发回归（60 次往返无死锁）。
 
 ### v1.5.0
 
@@ -599,6 +635,47 @@ frameforge/
 - Bilingual UI (Chinese / English), dark and light themes, tray mode, autostart, optional update check.
 
 ### Changelog
+
+#### v1.6.0
+
+> Quality and security release: on top of the 1.5.1 P0/P1 hotfixes, this version closes the 1.6.0 architecture items — arbiter deadlock, high-DPI dialogs, CPU load sampling, file cache, NVAPI safety, HDR/ACM detection and log privacy — and recalibrates all 23 picture presets.
+
+**Picture filter**
+
+- Fixed the colour-matrix orientation: matrices are built as column vectors internally and transposed once on export, so previews and the live screen no longer disagree.
+- All 23 presets recalibrated (Vivid, Soft, Bright, Cinematic, Snow-blind, Day, Night, Grayscale, BenQ, Fog boost, Esports, Anime and the per-game presets); indices are unchanged.
+- White balance now follows a continuous Planckian curve with a Mired slider (±75) clamped to 2700–10000 K.
+- Saturation is limited separately on the positive and negative halves (1.45 working, 1.65 total), net black lift is capped at +0.055, and intensity is interpolated exactly once after composition.
+- Added HDR / auto colour management detection with an explicit hint when Windows bypasses colour tweaks, re-probed on display changes.
+
+**Security**
+
+- System binaries are launched by absolute System32 path and the DLL search path is locked to System32 before any vendor DLL is resolved.
+- RTSS installers always unpack into a random directory and must match SHA-256; update packages are re-hashed right before launch; PresentMon must carry a valid Intel signature.
+- Boost journals are HMAC-signed to prevent forged restores; the optimization reader only accepts whitelisted keys and validates power-scheme GUIDs.
+- Settings are sanitized on load: filter ranges, ICC paths (UNC, relative and overlong paths rejected) and overlay scale are all clamped.
+- NVAPI now only binds the well-defined SetDVCLevel, drops the stack-corrupting Ex variant and the physical-GPU fallback that could target the wrong display on Optimus laptops, and calls NvAPI_Unload on exit.
+
+**Reliability and performance**
+
+- Reworked the resource arbiter: only state transitions happen under the lock; read, apply, restore and owner callbacks run outside it, removing the AB-BA deadlock between one-click and real-time boost; ownership is persisted immediately when the holder changes.
+- Hybrid-core detection gained a frequency-ratio fallback (mixed only when P/E differ by 10% or more), leaving homogeneous CPUs on the previous decision.
+- CPU load sampling now subtracts idle time from kernel time, so idle cores no longer look half busy.
+- Ideal-processor assignment spreads threads across available cores instead of pinning every thread to one core, and writes the journal once per pass.
+- The real-time boost's 5-second scan merges 13 name queries into a single process enumeration; PIDs that fail elevation enter a 5-minute cooldown instead of writing two journal entries every tick; reverted actions are pruned when the journal grows.
+- Memory trimming only runs for fullscreen games and shares a 30-second throttle with the real-time engine; process trimming now starts from the largest working sets.
+- System file-cache flushing uses SetSystemFileCacheSize (the old zero-buffer call always failed).
+- Interrupt tuning only removes the values it wrote and never deletes the whole key; devices without an explicit MSI flag are no longer treated as MSI-capable.
+- MPO toggling fixed (enabling removes the override), filters and backlight are dropped before shutdown or logoff, high-DPI dialogs size themselves to the actual body text, and Enter means Cancel on destructive confirmations.
+- The theme button now shows a sun or a crescent moon for the current theme and repaints immediately when the theme changes.
+
+**Privacy and logs**
+
+- Logs are levelled (INFO / WARN / ERROR, filterable via FRAMEFORGE_LOG_LEVEL), single-line, redact paths and user names, and are guarded by a cross-process mutex; the single-instance mutex moved from Global\ to Local\.
+
+**Self-test**
+
+- Added filter checks (neutral gray, row-vector export, night luminance, CS2 shadow lift), an advanced-colour probe line, and a concurrent arbiter regression (60 acquire/release cycles across two owners without deadlock).
 
 #### v1.5.0
 

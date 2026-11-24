@@ -11,6 +11,7 @@ namespace FrameForge.Sys
         public long Mask;   // 该核心的全部逻辑处理器
         public bool Smt;
         public int Efficiency;  // EfficiencyClass:0 = 高性能核,越大越省电
+        public int Mhz;         // 该核心的最高标称频率;混合架构上用它兜底判定 P/E
         public int Llc;         // 末级缓存编号,用来区分 CCD / 小芯片
         public bool LlcKnown;   // 仅 CPU Set 明确提供 LLC 信息时为 true
         public bool Efficient;  // 能效核(E-core)
@@ -188,6 +189,70 @@ namespace FrameForge.Sys
                     break;
                 }
             }
+            ApplyFrequency(cores);
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ProcessorPowerInfo
+        {
+            public uint Number;
+            public uint MaxMhz;
+            public uint CurrentMhz;
+            public uint MhzLimit;
+            public uint MaxIdleState;
+            public uint CurrentIdleState;
+        }
+
+        [DllImport("powrprof.dll")]
+        private static extern uint CallNtPowerInformation(int level, IntPtr input, uint inputSize,
+            IntPtr output, uint outputSize);
+
+        /// <summary>
+        /// 用每个逻辑处理器的最高标称频率校正 P/E 判定。
+        /// 不同 OEM 固件对 EfficiencyClass 的编号并不统一,靠单一常量决定游戏绑核
+        /// 风险太大;频率是可观测的物理差异:同构平台频率一致时不改判定,
+        /// 混合架构上明显更低频的核心才标记为能效核,排序也以频率优先。
+        /// </summary>
+        private static void ApplyFrequency(List<CpuCore> cores)
+        {
+            if (cores == null || cores.Count == 0) return;
+            int logical = Environment.ProcessorCount;
+            if (logical <= 0 || logical > 64) return;
+            int unit = Marshal.SizeOf(typeof(ProcessorPowerInfo));
+            IntPtr buf = Marshal.AllocHGlobal(unit * logical);
+            try
+            {
+                if (CallNtPowerInformation(11, IntPtr.Zero, 0, buf, (uint)(unit * logical)) != 0) return;
+                var mhz = new int[logical];
+                int max = 0, min = int.MaxValue;
+                for (int i = 0; i < logical; i++)
+                {
+                    var info = (ProcessorPowerInfo)Marshal.PtrToStructure(
+                        new IntPtr(buf.ToInt64() + i * unit), typeof(ProcessorPowerInfo));
+                    mhz[i] = (int)info.MaxMhz;
+                    if (mhz[i] <= 0) return;   // 拿不到可靠频率就保持 EfficiencyClass 原判
+                    if (mhz[i] > max) max = mhz[i];
+                    if (mhz[i] < min) min = mhz[i];
+                }
+                if (max == 0 || min == 0 || (double)max / min < 1.10) return;  // 同构平台
+
+                int threshold = (int)(max * 0.92);
+                for (int c = 0; c < cores.Count; c++)
+                {
+                    CpuCore core = cores[c];
+                    int best = 0;
+                    for (int bit = 0; bit < 64 && bit < logical; bit++)
+                    {
+                        if ((core.Mask & (1L << bit)) == 0) continue;
+                        if (mhz[bit] > best) best = mhz[bit];
+                    }
+                    if (best == 0) best = core.Mhz;
+                    core.Mhz = best;
+                    core.Efficient = best < threshold;
+                }
+            }
+            catch { }
+            finally { Marshal.FreeHGlobal(buf); }
         }
 
         private static CpuSetInfo Find(CpuSetInfo[] info, int logical)
@@ -216,7 +281,10 @@ namespace FrameForge.Sys
             var sorted = (CpuCore[])cores.Clone();
             Array.Sort(sorted, delegate(CpuCore a, CpuCore b)
             {
-                int c = a.Efficiency.CompareTo(b.Efficiency);
+                // 高频核心(P-core)优先;频率相同再按 EfficiencyClass 与缓存编号。
+                int c = b.Mhz.CompareTo(a.Mhz);
+                if (c != 0) return c;
+                c = a.Efficiency.CompareTo(b.Efficiency);
                 if (c != 0) return c;
                 c = a.Llc.CompareTo(b.Llc);
                 if (c != 0) return c;
@@ -356,7 +424,10 @@ namespace FrameForge.Sys
             var sorted = (CpuCore[])pool.Clone();
             Array.Sort(sorted, delegate(CpuCore a, CpuCore b)
             {
-                int c = a.Efficiency.CompareTo(b.Efficiency);
+                // 高频核心(P-core)优先;频率相同再按 EfficiencyClass 与缓存编号。
+                int c = b.Mhz.CompareTo(a.Mhz);
+                if (c != 0) return c;
+                c = a.Efficiency.CompareTo(b.Efficiency);
                 if (c != 0) return c;
                 c = a.Llc.CompareTo(b.Llc);
                 if (c != 0) return c;

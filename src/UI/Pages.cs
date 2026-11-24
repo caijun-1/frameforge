@@ -2752,7 +2752,7 @@ namespace FrameForge.UI
                     MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
             try
             {
-                System.Diagnostics.Process.Start("shutdown", "/r /t 10 /c \"FrameForge: restarting after RTSS uninstall\"");
+                System.Diagnostics.Process.Start(Native.System32("shutdown.exe"), "/r /t 10 /c \"FrameForge: restarting after RTSS uninstall\"");
             }
             catch (Exception ex)
             {
@@ -3093,6 +3093,8 @@ namespace FrameForge.UI
                 Host.St.FilterMode = mode.Selected;
                 Host.St.Save();
                 Host.ApplyFilter(true);
+                // FF-038：HDR/ACM 下系统会绕过色调调整，切到开启时明确告知一次。
+                if (Host.St.FilterMode > 0 && Sys.Filter.HdrActive) Host.Toast(I18n.T("flt.hdr"));
                 UpdateNote();
             };
 
@@ -3927,8 +3929,9 @@ namespace FrameForge.UI
 
         /// <summary>
         /// 把缓存的游戏画面按 5×5 颜色矩阵画进预览框。
-        /// GDI+ 的 ColorMatrix 行 = 输出通道、列 = 输入通道,和 Filter 的矩阵排布一致,
-        /// 第 5 列的平移量按 0..1 归一化,正好等于矩阵里的偏移量。
+        /// GDI+ 的 ColorMatrix 与 Win32 放大镜一样按行向量右乘,而 Filter 内部是列向量布局,
+        /// 这里必须先用 Filter.Transpose 转置,否则预览方向会和实屏相反(旧版灰度预览正常、
+        /// 实屏变绿就是这个原因)。
         /// </summary>
         private void DrawScene(Graphics g, GraphicsPath path, float[] m)
         {
@@ -3936,12 +3939,13 @@ namespace FrameForge.UI
             if (src == null) return;
             if (m == null || m.Length < 25) m = Filter.Identity();
 
+            float[] t = Filter.Transpose(m);
             var cm = new ColorMatrix();
-            cm.Matrix00 = m[0]; cm.Matrix01 = m[1]; cm.Matrix02 = m[2]; cm.Matrix03 = m[3]; cm.Matrix04 = m[4];
-            cm.Matrix10 = m[5]; cm.Matrix11 = m[6]; cm.Matrix12 = m[7]; cm.Matrix13 = m[8]; cm.Matrix14 = m[9];
-            cm.Matrix20 = m[10]; cm.Matrix21 = m[11]; cm.Matrix22 = m[12]; cm.Matrix23 = m[13]; cm.Matrix24 = m[14];
-            cm.Matrix30 = m[15]; cm.Matrix31 = m[16]; cm.Matrix32 = m[17]; cm.Matrix33 = m[18]; cm.Matrix34 = m[19];
-            cm.Matrix40 = m[20]; cm.Matrix41 = m[21]; cm.Matrix42 = m[22]; cm.Matrix43 = m[23]; cm.Matrix44 = m[24];
+            cm.Matrix00 = t[0]; cm.Matrix01 = t[1]; cm.Matrix02 = t[2]; cm.Matrix03 = t[3]; cm.Matrix04 = t[4];
+            cm.Matrix10 = t[5]; cm.Matrix11 = t[6]; cm.Matrix12 = t[7]; cm.Matrix13 = t[8]; cm.Matrix14 = t[9];
+            cm.Matrix20 = t[10]; cm.Matrix21 = t[11]; cm.Matrix22 = t[12]; cm.Matrix23 = t[13]; cm.Matrix24 = t[14];
+            cm.Matrix30 = t[15]; cm.Matrix31 = t[16]; cm.Matrix32 = t[17]; cm.Matrix33 = t[18]; cm.Matrix34 = t[19];
+            cm.Matrix40 = t[20]; cm.Matrix41 = t[21]; cm.Matrix42 = t[22]; cm.Matrix43 = t[23]; cm.Matrix44 = t[24];
 
             GraphicsState state = g.Save();
             try

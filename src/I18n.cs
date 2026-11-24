@@ -283,6 +283,7 @@ namespace FrameForge
             {"flt.icc.note", "ICC 生效时预设与自定义参数不参与计算；暗部平衡与数字振动仍可叠加。点预设即可切回。"},
             {"flt.icc.lut", "这个 ICC 只有正向查找表（A2B），缺少屏幕校色需要的反向查找表（B2A），无法用来校正显示。"},
             {"flt.note", "滤镜作用于整个桌面，不注入游戏；切到「关闭」立即恢复。"},
+            {"flt.hdr", "当前显示器开着 HDR 或自动颜色管理，系统会绕过这里的色调调整；要看到滤镜效果请先关闭 HDR。"},
 
             {"ov.title", "游戏内叠加层"},
             {"ov.on", "在游戏中显示"},
@@ -542,7 +543,7 @@ namespace FrameForge
             {"set.hotkey.overlay", "显示 / 隐藏叠加层"},
             {"set.hotkey.boost", "一键加速"},
             {"set.about", "关于"},
-            {"set.version", "FrameForge 1.5.0"},
+            {"set.version", "FrameForge 1.6.0"},
             {"set.notice", "默认不注入、不装驱动、不读游戏内存；RTSS 叠加为可选第三方组件，请遵守各游戏用户协议。"},
             {"set.about.env", "Windows 10 / 11 · 单文件免安装 · 常驻内存约 30–80 MB"},
             {"set.log", "打开日志目录"},
@@ -946,6 +947,7 @@ namespace FrameForge
             {"flt.icc.note", "With an ICC profile active, presets and sliders are ignored; shadow balance and digital vibrance still stack. Click any preset to switch back."},
             {"flt.icc.lut", "This ICC only has a forward (A2B) lookup table and lacks the reverse (B2A) table screen correction needs, so it can't be used to calibrate the display."},
             {"flt.note", "The filter tints the whole desktop and does not inject into games. Switch to Off to restore normal colors."},
+            {"flt.hdr", "This display has HDR or auto color management enabled; Windows bypasses these color tweaks. Turn HDR off to see the filter."},
 
             {"ov.title", "In-game overlay"},
             {"ov.on", "Show in games"},
@@ -1205,7 +1207,7 @@ namespace FrameForge
             {"set.hotkey.overlay", "Show / hide overlay"},
             {"set.hotkey.boost", "One-click boost"},
             {"set.about", "About"},
-            {"set.version", "FrameForge 1.5.0"},
+            {"set.version", "FrameForge 1.6.0"},
             {"set.notice", "No injection, drivers or game-memory reads by default. RTSS overlay is an optional third-party component; follow each game's terms of service."},
             {"set.about.env", "Windows 10 / 11 · portable single file · about 30–80 MB resident"},
             {"set.log", "Open log folder"},

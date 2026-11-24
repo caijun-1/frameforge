@@ -703,6 +703,21 @@ namespace FrameForge.UI
             if (m.Msg == 0x02E0) { OnDpiChangedMsg(m); return; }
             if (m.Msg == Native.WM_HOTKEY) { HandleHotkey(m.WParam.ToInt32()); return; }
             if (m.Msg == Native.WM_SHOWME) { RestoreFromTray(); return; }
+            if (m.Msg == 0x0016 && m.WParam != IntPtr.Zero)   // WM_ENDSESSION
+            {
+                // 关机/注销时先撤掉全屏滤镜与背光,否则进程被强杀后桌面会停在滤色状态。
+                try { Sys.Filter.Shutdown(); } catch { }
+                try { Sys.Display.Shutdown(); } catch { }
+            }
+
+            if (m.Msg == 0x007E)   // WM_DISPLAYCHANGE
+            {
+                // FF-038：切分辨率/刷新率或开关 HDR 后，HDR 缓存与 gamma DC 都会失效，
+                // 不重算会出现「滤镜还在，但颜色没变」。
+                try { Sys.Display.RefreshAdvancedColor(); } catch { }
+                try { Sys.Filter.RefreshGamma(); } catch { }
+                ApplyFilter(false);
+            }
 
             if (m.Msg == WM_NCCALCSIZE)
             {
@@ -793,6 +808,11 @@ namespace FrameForge.UI
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            // 先撤滤镜/背光:这两项是全局系统状态,必须早于任何可能失败或变慢的收尾,
+            // 否则中途抛异常会把桌面留在滤色/低亮度状态。
+            try { Sys.Filter.Shutdown(); } catch { }
+            try { Sys.Display.Shutdown(); } catch { }
+
             if (ui != null) ui.Stop();
             if (saveTimer != null) saveTimer.Stop();
             if (captureTimer != null) captureTimer.Stop();
@@ -809,8 +829,6 @@ namespace FrameForge.UI
             // 不再承担"谁覆盖谁"的正确性责任（原注释：先停实时加速再还原一键加速）。
             try { if (RealBoost != null) { RealBoost.Stop(); RealBoost.Dispose(); } } catch { }
             try { if (Boost != null) { Boost.Restore(); Boost.Dispose(); } } catch { }
-            try { Sys.Filter.Shutdown(); } catch { }
-            try { Sys.Display.Shutdown(); } catch { }
 
             if (tray != null) { tray.Visible = false; tray.Dispose(); tray = null; }
             base.OnFormClosing(e);

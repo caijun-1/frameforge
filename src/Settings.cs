@@ -126,9 +126,9 @@ namespace FrameForge
         public int FilterSaturation = 0;
         public int FilterWarmth = 0;
         public int FilterTint = 0;            // 色调:负值偏绿、正值偏洋红 -100..100
-        public int FilterDark = 50;           // 暗部场景平衡 0..100(50 为默认)
+        public int FilterDark = 35;           // 暗部场景平衡 0..100(35 为默认)
         public bool FilterDarkOn = false;     // 暗部场景平衡开关
-        public int FilterVibrance = 50;       // 数字振动 0..100(50 为默认)
+        public int FilterVibrance = 35;       // 数字振动 0..100(35 为默认)
         public bool FilterVibranceOn = false; // 数字振动开关
         public string FilterIcc = "";         // 当前生效的 ICC 配置文件路径,空 = 只用 sRGB
 
@@ -174,8 +174,51 @@ namespace FrameForge
                 }
             }
             catch (Exception ex) { Log.Write("settings load: " + ex.Message); }
+            s.Sanitize();
             s.EnsureIccEntry();
             return s;
+        }
+
+        /// <summary>
+        /// 把手工编辑过的 ini 收进合法范围。滤波参数越界会直接算坏矩阵;
+        /// ICC 写 UNC/相对路径会让界面线程卡在网络或工作目录上,这里统一挡掉。
+        /// </summary>
+        public void Sanitize()
+        {
+            if (FilterMode < 0 || FilterMode > 2) FilterMode = 0;
+            if (FilterPreset < 0 || FilterPreset > 22) FilterPreset = 0;
+            FilterIntensity = Math.Max(0, Math.Min(100, FilterIntensity));
+            FilterContrast = Math.Max(-100, Math.Min(100, FilterContrast));
+            FilterSaturation = Math.Max(-100, Math.Min(100, FilterSaturation));
+            FilterWarmth = Math.Max(-100, Math.Min(100, FilterWarmth));
+            FilterTint = Math.Max(-100, Math.Min(100, FilterTint));
+            FilterDark = Math.Max(0, Math.Min(100, FilterDark));
+            FilterVibrance = Math.Max(0, Math.Min(100, FilterVibrance));
+
+            FilterIcc = SafeIccPath(FilterIcc);
+            for (int i = IccList.Count - 1; i >= 0; i--)
+            {
+                string p = SafeIccPath(IccList[i].Path);
+                if (p.Length == 0) IccList.RemoveAt(i);
+                else IccList[i].Path = p;
+            }
+            if (IccList.Count > 32) IccList.RemoveRange(32, IccList.Count - 32);
+
+            if (double.IsNaN(OverlayScale) || double.IsInfinity(OverlayScale)) OverlayScale = 1.0;
+            OverlayScale = Math.Max(0.5, Math.Min(3.0, OverlayScale));
+        }
+
+        private static string SafeIccPath(string p)
+        {
+            if (string.IsNullOrEmpty(p)) return "";
+            p = p.Trim();
+            if (p.Length > 260) return "";
+            // UNC(\\server\share)会让 FileInfo/ReadAllBytes 阻塞在网络上。
+            if (p.StartsWith(@"\\", StringComparison.Ordinal)) return "";
+            if (!Path.IsPathRooted(p)) return "";
+            string ext = Path.GetExtension(p).ToLowerInvariant();
+            if (ext != ".icc" && ext != ".icm") return "";
+            return p;
         }
 
         /// <summary>旧配置里只存了路径:补一条默认名字的条目,列表里才看得到在用的 profile。</summary>
@@ -201,8 +244,11 @@ namespace FrameForge
             int bar = v.IndexOf('|');
             if (bar <= 0) return;
             string name = CleanIccName(v.Substring(0, bar));
-            string path = v.Substring(bar + 1).Trim();
+            string path = SafeIccPath(v.Substring(bar + 1).Trim());
             if (name.Length == 0 || path.Length == 0) return;
+            for (int i = 0; i < IccList.Count; i++)
+                if (string.Equals(IccList[i].Path, path, StringComparison.OrdinalIgnoreCase)) return;
+            if (IccList.Count >= 32) IccList.RemoveAt(IccList.Count - 1);
             IccList.Add(new IccEntry { Name = name, Path = path });
         }
 
@@ -273,9 +319,9 @@ namespace FrameForge
                 case "filtersaturation": FilterSaturation = Int(v, 0); break;
                 case "filterwarmth": FilterWarmth = Int(v, 0); break;
                 case "filtertint": FilterTint = Int(v, 0); break;
-                case "filterdark": FilterDark = Int(v, 50); break;
+                case "filterdark": FilterDark = Int(v, 35); break;
                 case "filterdarkon": FilterDarkOn = Bool(v, false); break;
-                case "filtervibrance": FilterVibrance = Int(v, 50); break;
+                case "filtervibrance": FilterVibrance = Int(v, 35); break;
                 case "filtervibranceon": FilterVibranceOn = Bool(v, false); break;
                 case "filtericc": FilterIcc = v; break;
                 case "iccprofile": AddIccProfile(v); break;

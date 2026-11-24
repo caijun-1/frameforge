@@ -91,7 +91,9 @@ namespace FrameForge.Sys
         /// </summary>
         public static string DownloadAndInstall(Action<int> progress)
         {
-            string tmp = Path.Combine(Path.GetTempPath(), "FrameForge.update.exe");
+            // 随机文件名:固定的 %TEMP%\FrameForge.update.exe 可被本地程序预放置/替换。
+            string tmp = Path.Combine(Path.GetTempPath(),
+                "FrameForge.update." + Guid.NewGuid().ToString("N") + ".exe");
             try
             {
                 if (ExeUrl.Length == 0) return I18n.T("upd.err.asset");
@@ -112,7 +114,7 @@ namespace FrameForge.Sys
                 }
 
                 string err;
-                return LaunchInstaller(tmp, out err) ? "" : err;
+                return LaunchInstaller(tmp, want, out err) ? "" : err;
             }
             catch (Exception ex)
             {
@@ -169,13 +171,30 @@ namespace FrameForge.Sys
         }
 
         /// <summary>写一个临时脚本:等本进程退出 -> 覆盖 exe -> 启动新版,失败时保留旧版。</summary>
-        private static bool LaunchInstaller(string file, out string error)
+        private static bool LaunchInstaller(string file, string wantHash, out string error)
         {
             error = "";
             try
             {
-                string exe = Process.GetCurrentProcess().MainModule.FileName;
+                // 校验完成到脚本真正复制之间还有一个窗口:启动前再算一次哈希。
+                if (!string.Equals(HashFile(file), wantHash, StringComparison.OrdinalIgnoreCase))
+                {
+                    try { File.Delete(file); } catch (Exception) { }
+                    error = I18n.T("upd.err.hash");
+                    return false;
+                }
+
                 int pid = Process.GetCurrentProcess().Id;
+                string exe = Native.ProcessPath(pid);
+                if (exe.Length == 0) exe = Process.GetCurrentProcess().MainModule.FileName;
+                // 如果当前程序本身是签名发布的,新包也必须通过同样的签名链校验。
+                // 未签名构建(本地 csc 编译)不做此要求,否则自更新会被自己拦住。
+                if (FpsEngine.HasTrustedSignature(exe) && !FpsEngine.HasTrustedSignature(file))
+                {
+                    try { File.Delete(file); } catch (Exception) { }
+                    error = I18n.T("err.sign");
+                    return false;
+                }
                 string script = Path.Combine(Path.GetTempPath(), "frameforge_update.cmd");
 
                 var sb = new StringBuilder();
@@ -197,7 +216,7 @@ namespace FrameForge.Sys
                 sb.AppendLine("del \"%~f0\"");
                 File.WriteAllText(script, sb.ToString(), Encoding.Default);
 
-                var psi = new ProcessStartInfo("cmd.exe", "/c \"\"" + script + "\"\"");
+                var psi = new ProcessStartInfo(Native.System32("cmd.exe"), "/c \"\"" + script + "\"\"");
                 psi.CreateNoWindow = true;
                 psi.UseShellExecute = false;
                 psi.WindowStyle = ProcessWindowStyle.Hidden;

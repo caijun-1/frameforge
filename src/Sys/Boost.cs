@@ -163,6 +163,8 @@ namespace FrameForge.Sys
         public void OnGranted(ResourceKind r, uint refCount)
         {
             Log.Write("boost arbiter granted " + r + " ref=" + refCount);
+            // FF-011：holder 转移后由留存引擎落盘，崩溃恢复才认得当前归属。
+            PersistOwnership();
         }
         public void OnShared(ResourceKind r, uint refCount)
         {
@@ -171,6 +173,18 @@ namespace FrameForge.Sys
         public void OnReleased(ResourceKind r)
         {
             Log.Write("boost arbiter released " + r);
+        }
+
+        private void PersistOwnership()
+        {
+            try
+            {
+                Transaction tx = currentTx;
+                if (tx == null) return;
+                tx.Res = SystemResourceArbiter.Instance.Snapshot();
+                BoostJournal.Save(tx);
+            }
+            catch (Exception ex) { Log.Write("boost persist ownership: " + ex.Message); }
         }
 
         // =================================================================
@@ -1369,6 +1383,10 @@ namespace FrameForge.Sys
         {
             int ideal = IdealProcessor(cores);
             int ok = 0;
+            // FF-026：所有线程不再一起塞到同一颗核上，而是按可用核轮流分配，
+            // 主线程仍优先落到 IdealProcessor 挑出的那颗。
+            int[] cpus = TargetCpus(cores);
+            int turn = 0;
             ProcessGuard processGuard = BoostJournal.MakeGuard(pid, GameName, -1);
             IntPtr snap = Native.CreateToolhelp32Snapshot(Native.TH32CS_SNAPTHREAD, 0);
             if (snap == IntPtr.Zero || snap == new IntPtr(-1)) return 0;
@@ -1381,6 +1399,7 @@ namespace FrameForge.Sys
                 {
                     if (e.th32OwnerProcessID != (uint)pid) continue;
                     int tid = (int)e.th32ThreadID;
+                    int cpu = cpus.Length == 0 ? ideal : cpus[turn++ % cpus.Length];
                     IntPtr th = Native.OpenThread(Native.THREAD_SET_INFORMATION, false, tid);
                     if (th == IntPtr.Zero) continue;
                     JournalAction action = null;
@@ -1394,11 +1413,10 @@ namespace FrameForge.Sys
                         guard.Tid = tid;
                         action = BoostJournal.NewAction(tx, ActionKind.IDEAL_CPU, guard,
                             Native.MAXIMUM_PROCESSORS.ToString(CultureInfo.InvariantCulture),
-                            ideal.ToString(CultureInfo.InvariantCulture));
-                        action.NewClass = ideal;
-                        // 每个线程都先落 PENDING，再写系统；崩溃后可按实际 new 对账。
-                        BoostJournal.Save(tx);
-                        uint previous = Native.SetThreadIdealProcessor(th, (uint)ideal);
+                            cpu.ToString(CultureInfo.InvariantCulture));
+                        action.NewClass = cpu;
+                        // FF-026：只在循环结束后统一落盘一次，不再每个线程写一遍 journal。
+                        uint previous = Native.SetThreadIdealProcessor(th, (uint)cpu);
                         if (previous != 0xFFFFFFFF)
                         {
                             ok++;
@@ -1438,7 +1456,15 @@ namespace FrameForge.Sys
             for (int i = 0; i < all.Length; i++)
             {
                 if (all[i].Parked) continue;
-                if (best == null || all[i].Efficiency < best.Efficiency) best = all[i];
+                if (best == null) { best = all[i]; continue; }
+                // 先看最高频率(P-core),频率相同再退回 EfficiencyClass 与编号,
+                // 避免不同 OEM 对 EfficiencyClass 的编号差异把理想核选到 E-core。
+                if (all[i].Mhz > best.Mhz) { best = all[i]; continue; }
+                if (all[i].Mhz == best.Mhz)
+                {
+                    if (all[i].Efficiency < best.Efficiency) best = all[i];
+                    else if (all[i].Efficiency == best.Efficiency && all[i].Index < best.Index) best = all[i];
+                }
             }
             if (best == null) best = all[0];
 
@@ -1456,6 +1482,21 @@ namespace FrameForge.Sys
                 }
             }
             return best.Index;
+        }
+
+        /// <summary>
+        /// FF-026：可分配的逻辑核列表(0..63)。核心独占时只取游戏自己的核，
+        /// 其余情况取全部未停用核；线程按这份列表轮流设置理想处理器。
+        /// </summary>
+        private static int[] TargetCpus(int cores)
+        {
+            var list = new List<int>();
+            int used;
+            long mask = cores > 0 ? CpuTopology.GameMask(cores, out used) : CpuTopology.AllMask();
+            if (mask == 0) mask = CpuTopology.AllMask();
+            for (int i = 0; i < 64; i++)
+                if ((mask & (1L << i)) != 0) list.Add(i);
+            return list.ToArray();
         }
 
         /// <summary>
@@ -1644,8 +1685,8 @@ namespace FrameForge.Sys
             {
                 string cur = ActiveSchemeGuid();
                 if (cur.Length == 0) return false;
-                if (string.Equals(cur, SchemeHigh, StringComparison.OrdinalIgnoreCase)) return true;
-                // §A3：所有电源改动进仲裁者原子 Acquire；只有 holder 记原值。
+                // FF-011：删除「已经是高性能就直接返回」的捷径。那一刻的高性能可能由
+                // 实时加速持有，直接返回会让一键加速不占引用，实时加速一停就把方案拨回去。
                 string captured = cur;
                 AcquireResult ar = SystemResourceArbiter.Instance.Acquire(this, ResourceKind.PowerScheme,
                     delegate { return captured; },
@@ -2068,7 +2109,7 @@ namespace FrameForge.Sys
         {
             try
             {
-                string outp = Run("powercfg", "/getactivescheme");
+                string outp = Run(Native.System32("powercfg.exe"), "/getactivescheme");
                 Match m = GuidRx.Match(outp);
                 return m.Success ? m.Value.ToLowerInvariant() : "";
             }
@@ -2090,7 +2131,7 @@ namespace FrameForge.Sys
         {
             try
             {
-                var psi = new ProcessStartInfo("powercfg", "/setactive " + guid);
+                var psi = new ProcessStartInfo(Native.System32("powercfg.exe"), "/setactive " + guid);
                 psi.UseShellExecute = false;
                 psi.CreateNoWindow = true;
                 psi.RedirectStandardOutput = true;

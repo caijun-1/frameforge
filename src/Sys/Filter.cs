@@ -138,6 +138,14 @@ namespace FrameForge.Sys
         {
             if (st == null) return;
             bool on = st.FilterMode == 2 || (st.FilterMode == 1 && isGame);
+            // FF-038：HDR/ACM 打开时 DWM 走线性 scRGB，gamma LUT 与 SDR 颜色矩阵都会被绕过。
+            bool hdr = Display.HdrOrAcmActive();
+            if (hdr != lastHdr)
+            {
+                lastHdr = hdr;
+                if (hdr) Log.Warn("filter: advanced color on (" + Display.AdvancedColorDetail + "), tone changes may be bypassed");
+            }
+            HdrActive = hdr;
             if (!on)
             {
                 // 不需要滤镜时连放大镜一起卸掉,避免平时就占着系统的合成链。
@@ -201,6 +209,10 @@ namespace FrameForge.Sys
         {
             get { return active || gammaDirty || NvApi.Applied; }
         }
+
+        /// <summary>FF-038：当前显示器是否处于 HDR/ACM 模式，界面据此提示。</summary>
+        public static bool HdrActive { get; private set; }
+        private static bool lastHdr;
 
         /// <summary>独占全屏下用显示器 gamma LUT 近似整套调色。</summary>
         private static void ApplyGamma(float[] m, double approximate)
@@ -278,10 +290,28 @@ namespace FrameForge.Sys
             double sat = (sum - 1.0) / 2.0;
             if (sat <= 1.01) return 0;
             if (sat > 2.0) sat = 2.0;
-            // 1.12 倍饱和度大约抬到量程的 18%,再高就过艳了。
-            double v = (sat - 1.0) * 1.5;
-            if (v > 1.0) v = 1.0;
+            // 软压缩:预留顶部 25% 驱动余量,避免叠加数字振动后肤色炸裂。
+            double v = (sat - 1.0) * 1.35;
+            if (v > 0.75) v = 0.75;
             return v;
+        }
+
+        /// <summary>从矩阵对角线估算等效饱和度,SatCurve 与总饱和度钳位共用。</summary>
+        private static double EstimateSaturation(float[] m)
+        {
+            if (m == null || m.Length < 25) return 1.0;
+            double sum = 0;
+            for (int c = 0; c < 3; c++)
+            {
+                int row = c * 5;
+                double gain = m[row] + m[row + 1] + m[row + 2];
+                if (gain < 0.05) return 1.0;
+                sum += m[row + c] / gain;
+            }
+            double sat = (sum - 1.0) / 2.0;
+            if (sat < 0) sat = 0;
+            if (sat > 2.5) sat = 2.5;
+            return sat;
         }
 
         /// <summary>
@@ -312,19 +342,10 @@ namespace FrameForge.Sys
         /// </summary>
         private static double SatCurve(float[] m)
         {
-            if (m == null || m.Length < 25) return 0;
-            double sum = 0;
-            for (int c = 0; c < 3; c++)
-            {
-                int row = c * 5;
-                double gain = m[row] + m[row + 1] + m[row + 2];
-                if (gain < 0.05) return 0;
-                sum += m[row + c] / gain;
-            }
-            double sat = (sum - 1.0) / 2.0;
+            double sat = EstimateSaturation(m);
             if (sat <= 1.0) return 0;
-            if (sat > 2.0) sat = 2.0;
-            return Math.Min(0.40, (sat - 1.0) * 1.1);
+            // 上限 0.18:中心斜率约 1.54,不会再出现暗亮两端断层色带。
+            return Math.Min(0.18, (sat - 1.0) * 0.55);
         }
 
         /// <summary>把显示器 LUT 还原成启动时保存的原样。</summary>
@@ -422,7 +443,7 @@ namespace FrameForge.Sys
             float[] baseM = null;
             if (!string.IsNullOrEmpty(st.FilterIcc)) baseM = Icc.For(st.FilterIcc);
             if (baseM == null)
-                baseM = Build(st.FilterPreset, st.FilterIntensity,
+                baseM = BuildCore(st.FilterPreset,
                     st.FilterContrast, st.FilterSaturation, st.FilterWarmth,
                     st.FilterTint);
 
@@ -431,7 +452,36 @@ namespace FrameForge.Sys
             // 用户可以只用 ICC 校正 + 轻微抬暗部,两者不再互斥。
             int dark = st.FilterDarkOn ? st.FilterDark : 0;
             int vibrance = st.FilterVibranceOn ? st.FilterVibrance : 0;
-            return Enhance(baseM, dark, vibrance, st.FilterIntensity);
+            float[] m = EnhanceCore(baseM, dark, vibrance);
+            // 强度滑杆只在最终合成矩阵后插值一次,避免 Build 与 Enhance 各缩一次。
+            return WithIntensity(m, st.FilterIntensity);
+        }
+
+        /// <summary>把总强度插值(0..100)向恒等矩阵收敛。</summary>
+        public static float[] WithIntensity(float[] m, int intensity)
+        {
+            if (m == null) m = Identity();
+            double t = Clamp01(intensity / 100.0);
+            if (t >= 0.9999) return m;
+            float[] id = Identity();
+            var final = new float[25];
+            for (int i = 0; i < 25; i++)
+                final[i] = (float)(id[i] + (m[i] - id[i]) * t);
+            return final;
+        }
+
+        /// <summary>
+        /// 内部矩阵按列向量构造(平移在 m[4,9,14]);Win32 MAGCOLOREFFECT 与 GDI+
+        /// ColorMatrix 都要求行向量右乘(平移在 m[20..22]),推送前必须转置。
+        /// 不转置时灰度会把纯白算成偏绿、暗部平衡方向也会反。
+        /// </summary>
+        public static float[] Transpose(float[] m)
+        {
+            if (m == null || m.Length < 25) return Identity();
+            var r = new float[25];
+            for (int i = 0; i < 5; i++)
+                for (int j = 0; j < 5; j++) r[i * 5 + j] = m[j * 5 + i];
+            return r;
         }
 
         /// <summary>
@@ -453,21 +503,35 @@ namespace FrameForge.Sys
         }
 
         /// <summary>
-        /// 暗部场景平衡 + 数字振动。dark/vibrance 均为 0..100,50 为中性偏轻,
-        /// intensity 决定增强层整体强度(和滑杆区一致,拉到 0 就等于不增强)。
+        /// 暗部场景平衡 + 数字振动。dark/vibrance 均为 0..100,50 为中性偏轻。
+        /// 强度不在这里缩放:调用方在最终合成后统一插值一次。
         /// </summary>
         public static float[] Enhance(float[] baseM, int dark, int vibrance, int intensity)
+        {
+            return WithIntensity(EnhanceCore(baseM, dark, vibrance), intensity);
+        }
+
+        /// <summary>
+        /// 增强层核心:只负责画面提升,强度插值交给最外层。
+        /// 暗部抬升后的净黑位与总饱和度都在这里收口。
+        /// </summary>
+        public static float[] EnhanceCore(float[] baseM, int dark, int vibrance)
         {
             if (baseM == null) baseM = Identity();
             if (dark <= 0 && vibrance <= 0) return baseM;
 
-            double t = Clamp01(intensity / 100.0);
-            if (t <= 0) return baseM;
+            double shadow = Clamp01(dark / 100.0);
+            double vib = Clamp01(vibrance / 100.0);
 
-            double sat = 1.0 + vibrance / 100.0 * 0.55 * t;    // 数字振动:只往上加饱和度
-            double shadow = dark / 100.0 * 0.5 * t;            // 暗部场景平衡
+            // 数字振动单层最大 +50%,并按底层已有饱和度做联合钳位(总上限 1.65)。
+            double sat = 1.0 + vib * 0.50;
+            double baseSat = EstimateSaturation(baseM);
+            if (baseSat > 0.01 && baseSat * sat > 1.65) sat = 1.65 / baseSat;
+            if (sat < 1.0) sat = 1.0;
+
             double gain = 1.0 - 0.15 * shadow;
-            double lift = 0.06 * shadow;
+            // 线性路径净黑位不超过 +0.055,防止整屏被洗成灰膜。
+            double lift = Math.Min(0.055, 0.06 * shadow);
 
             double lr = 0.2126, lg = 0.7152, lb = 0.0722;
             float[] e =
@@ -478,7 +542,19 @@ namespace FrameForge.Sys
                 0, 0, 0, 1, 0,
                 0, 0, 0, 0, 1
             };
-            return Mul(e, baseM);
+            float[] m = Mul(e, baseM);
+            CapBlack(m);
+            return m;
+        }
+
+        /// <summary>净黑位上限 +0.055:只压平移列,不动彩度与对比度。</summary>
+        private static void CapBlack(float[] m)
+        {
+            if (m == null || m.Length < 25) return;
+            const double MaxBlack = 0.055;
+            if (m[4] > MaxBlack) m[4] = (float)MaxBlack;
+            if (m[9] > MaxBlack) m[9] = (float)MaxBlack;
+            if (m[14] > MaxBlack) m[14] = (float)MaxBlack;
         }
 
         /// <summary>把 5×5 矩阵推给系统;已是最新则什么都不做。</summary>
@@ -489,7 +565,8 @@ namespace FrameForge.Sys
             try
             {
                 var effect = new Native.MAGCOLOREFFECT();
-                effect.transform = (float[])m.Clone();
+                // 出口统一转置成行向量右乘布局,平移落到 m[20..22]。
+                effect.transform = Transpose(m);
                 if (Native.MagSetFullscreenColorEffect(ref effect)) last = (float[])m.Clone();
                 else Log.Write("MagSetFullscreenColorEffect failed " + System.Runtime.InteropServices.Marshal.GetLastWin32Error());
             }
@@ -515,53 +592,67 @@ namespace FrameForge.Sys
         public static float[] Build(int preset, int intensity, int contrast, int saturation, int warmth,
             int tint = 0)
         {
+            return WithIntensity(BuildCore(preset, contrast, saturation, warmth, tint), intensity);
+        }
+
+        /// <summary>
+        /// 基层矩阵(不含强度插值)。参数按 v1.5.1 规格表重标定:
+        /// 所有预设净黑位 y(0) ≥ 0、高光裁切 &lt; 1.9%,护眼类锁 y(1) ≤ 0.965。
+        /// </summary>
+        public static float[] BuildCore(int preset, int contrast, int saturation, int warmth, int tint)
+        {
+            if (preset < 0 || preset >= PresetKeys.Length) preset = 0;
             double sat = 1.0, con = 1.0, bri = 0.0, warm = 0.0; double shadow = 0.0;
             // 分割色调:正值阴影偏青、高光偏暖,负值反过来。对应 ReShade 的 LiftGammaGain。
             double split = 0.0;
             switch (preset)
             {
-                case 1: sat = 1.12; con = 1.04; break;                    // 鲜艳
-                case 2: sat = 0.98; con = 0.97; bri = 0.02; break;        // 柔和
-                case 3: con = 1.02; bri = 0.05; break;                    // 高亮
-                case 4: sat = 1.05; con = 1.03; warm = 0.10; shadow = 0.06; split = 0.70; break; // 电影
-                case 5: con = 0.94; bri = -0.03; sat = 0.99; break;       // 防雪盲
-                case 6: con = 1.0; bri = 0.04; sat = 1.02; break;         // 白天
-                case 7: con = 0.96; bri = -0.02; warm = 0.45; break;      // 夜间护眼
-                case 8: sat = 0.0; break;                                 // 灰度
-                case 9: con = 1.04; bri = 0.03; sat = 1.06; shadow = 0.06; split = 0.25; break; // 明基亮丽
-                case 10: con = 0.92; bri = 0.01; sat = 0.94; shadow = 0.16; break; // 雾天增强
-                case 11: con = 1.06; sat = 1.04; shadow = 0.10; break;    // 竞技
-                case 12: sat = 1.12; con = 1.02; bri = 0.02; shadow = 0.06; break; // 二次元
+                case 1: sat = 1.16; con = 1.04; bri = 0.012; warm = 0.02; shadow = 0.14; break;  // 鲜艳
+                case 2: sat = 0.95; con = 0.96; bri = -0.015; warm = 0.06; break;                 // 柔和
+                case 3: sat = 1.03; con = 1.02; bri = 0.025; shadow = 0.22; break;                // 高亮
+                case 4: sat = 1.06; con = 1.03; bri = 0.006; warm = 0.10; shadow = 0.16; split = 0.55; break; // 电影
+                case 5: sat = 0.96; con = 0.93; bri = -0.030; warm = 0.16; shadow = 0.05; break; // 防雪盲
+                case 6: sat = 1.05; con = 1.03; bri = 0.015; warm = -0.04; shadow = 0.14; break; // 白天
+                case 7: sat = 0.92; con = 0.95; bri = -0.025; warm = 0.53; break;                 // 夜间护眼
+                case 8: sat = 0.0; break;                                                         // 灰度
+                case 9: sat = 1.22; con = 1.06; bri = 0.015; warm = -0.04; shadow = 0.35; break;  // 明基亮丽
+                case 10: sat = 1.10; con = 1.06; warm = -0.07; break;                             // 雾天增强(去雾方向)
+                case 11: sat = 1.14; con = 1.06; bri = 0.015; warm = -0.05; shadow = 0.30; break; // 竞技
+                case 12: sat = 1.15; con = 1.03; bri = 0.008; warm = -0.02; shadow = 0.14; break; // 二次元
 
                 // ---- 热门游戏 ----
-                // 战场类都靠"轻抬暗部 + 一点点冷调"把人和环境拉开距离,
-                // 数值刻意保守:全屏矩阵过强会让素材发灰、HUD 变色,
-                // 玩久了还会有明显的眩晕感。
-                case 13: sat = 1.04; con = 1.04; bri = 0.01; warm = -0.04; shadow = 0.10; break; // 三角洲行动
-                case 14: sat = 1.06; con = 1.06; bri = 0.02; warm = -0.06; shadow = 0.08; break; // 无畏契约
-                case 15: sat = 1.10; con = 1.02; bri = 0.03; warm = 0.06; shadow = 0.04; break;  // 原神
-                case 16: sat = 1.05; con = 1.05; bri = 0.01; warm = -0.05; shadow = 0.12; break; // Apex 英雄
-                case 17: sat = 1.04; con = 1.07; shadow = 0.08; break;                           // CS2
-                case 18: sat = 1.03; con = 0.98; bri = 0.02; warm = -0.03; shadow = 0.18; break; // PUBG
-                case 19: sat = 1.08; con = 1.03; bri = 0.01; warm = 0.08; shadow = 0.06; break;  // 永劫无间
-                case 20: sat = 1.06; con = 1.0; bri = 0.02; warm = 0.03; shadow = 0.04; break;   // 英雄联盟
-                case 21: sat = 1.03; con = 1.03; bri = 0.01; warm = -0.55; shadow = 0.08; break; // 冷色
-                case 22: sat = 1.03; con = 1.02; warm = 0.55; shadow = 0.06; break;              // 暖色
+                // 战场类都靠"精准抬暗部 + 一点点冷调"把人和环境拉开距离;
+                // shadow/con 联合标定保证净黑位 > 0,不再把暗道压成死黑。
+                case 13: sat = 1.12; con = 1.06; bri = 0.015; warm = -0.06; shadow = 0.34; break; // 三角洲行动
+                case 14: sat = 1.20; con = 1.06; bri = 0.014; warm = -0.08; shadow = 0.28; break; // 无畏契约
+                case 15: sat = 1.14; con = 1.03; bri = 0.008; warm = 0.02; shadow = 0.14; break;  // 原神
+                case 16: sat = 1.14; con = 1.06; bri = 0.015; warm = -0.06; shadow = 0.36; break; // Apex 英雄
+                case 17: sat = 1.22; con = 1.06; bri = 0.014; warm = -0.04; shadow = 0.32; break; // CS2
+                case 18: sat = 1.12; con = 1.07; bri = 0.016; warm = -0.04; shadow = 0.38; break; // PUBG
+                case 19: sat = 1.14; con = 1.05; bri = 0.012; warm = 0.04; shadow = 0.24; break;  // 永劫无间
+                case 20: sat = 1.10; con = 1.00; warm = 0.06; shadow = 0.08; break;               // 英雄联盟
+                case 21: sat = 1.04; con = 1.03; bri = 0.008; warm = -0.24; shadow = 0.14; break; // 冷色
+                case 22: sat = 1.04; con = 1.02; bri = 0.004; warm = 0.22; shadow = 0.12; break;  // 暖色
             }
 
-            // 自定义滑杆叠加在预设之上:倍率整体收窄,拉到顶也不会过曝或发灰。
-            sat *= 1.0 + saturation / 100.0 * 0.4;
+            // 自定义滑杆叠加在预设之上。
+            // 饱和度改分段映射:负半轴可一路去色到黑白,正半轴最多 +45%。
+            double satMul;
+            if (saturation >= 0) satMul = 1.0 + saturation / 100.0 * 0.45;
+            else satMul = 1.0 + saturation / 100.0;
+            sat *= satMul;
             con *= 1.0 + contrast / 100.0 * 0.35;
-            warm += warmth / 100.0 * 0.4;
 
             if (sat < 0) sat = 0;
-            if (con < 0.2) con = 0.2;
+            if (sat > 1.45) sat = 1.45;
+            if (con < 0.50) con = 0.50;
+            if (con > 1.45) con = 1.45;
             if (shadow > 1) shadow = 1;
             if (shadow < 0) shadow = 0;
             if (warm > 1) warm = 1;
             if (warm < -1) warm = -1;
 
-            // 饱和度矩阵
+            // 饱和度矩阵(内部列向量布局:每一行对应一个输出通道)。
             double lr = 0.2126, lg = 0.7152, lb = 0.0722;
             double[] m =
             {
@@ -572,13 +663,12 @@ namespace FrameForge.Sys
                 0, 0, 0, 0, 1
             };
 
-            // 对比度:围绕 0.5 缩放
+            // 对比度:围绕 0.5 缩放,平移一起乘(与 2.2 节传输函数一致)。
             double offset = 0.5 * (1 - con) + bri;
             for (int i = 0; i < 5; i++) for (int j = 0; j < 3; j++) m[i * 5 + j] *= con;
             m[4] += offset; m[9] += offset; m[14] += offset;
 
             // 暗部场景平衡:压一点高光、抬黑位,暗处细节更清楚(线性矩阵的近似做法)。
-            // gain/lift 都收得很轻,主要是不让暗部彻底死黑,同时避免整屏发灰。
             if (shadow > 0)
             {
                 double gain = 1.0 - 0.15 * shadow;
@@ -588,7 +678,6 @@ namespace FrameForge.Sys
             }
 
             // 分割色调:阴影加一层薄色(青),高光加一层补色(暖)。
-            // lift 是常量偏移、gain 是乘性缩放,两者叠加就能在矩阵里近似出电影调色。
             if (split != 0.0)
             {
                 m[4] += -0.020 * split;
@@ -599,13 +688,12 @@ namespace FrameForge.Sys
                 for (int j = 0; j < 5; j++) { m[j] *= hot; m[10 + j] *= cold; }
             }
 
-            // 白平衡(参考 ReShade 的 WhiteBalance):按黑体辐射曲线把色温和色调
-            // 换算成三通道增益,再归一化亮度,调整时不会顺带把画面压暗或提亮。
+            // 白平衡:色温/色调换算成三通道增益,再归一化亮度,只改色相不改明暗。
             double tintVal = tint / 100.0;
             if (tintVal > 1) tintVal = 1;
             if (tintVal < -1) tintVal = -1;
             double[] gains = new double[3];
-            WhiteBalance(warm, tintVal, gains);
+            WhiteBalance(warm, tintVal, warmth / 100.0, gains);
             for (int j = 0; j < 5; j++)
             {
                 m[0 * 5 + j] *= gains[0];
@@ -613,72 +701,81 @@ namespace FrameForge.Sys
                 m[2 * 5 + j] *= gains[2];
             }
 
-            double t = Clamp01(intensity / 100.0);
-            float[] identity = Identity();
             var final = new float[25];
-            for (int i = 0; i < 25; i++)
-                final[i] = (float)(identity[i] + (m[i] - identity[i]) * t);
+            for (int i = 0; i < 25; i++) final[i] = (float)m[i];
+            CapBlack(final);
             return final;
         }
 
         /// <summary>
-        /// 色温 -1..1 映射到 2000K..11000K(0 为 6500K 中性白),
-        /// 色调 -1..1 在绿与洋红之间偏移。输出为三通道增益。
+        /// 色温 -1..1 按 K = 6500 - 4500·warm 映射(兼容旧设置),色温滑杆再按
+        /// Mired 对称步进(±100 ≈ ±75 MK^-1)叠加。曲线用连续 Planckian 拟合,
+        /// 6500K 精确归一为 (1,1,1),全程无 6600K 品红跳变。输出为三通道增益。
         /// </summary>
-        private static void WhiteBalance(double warm, double tint, double[] gains)
+        private static void WhiteBalance(double warm, double tint, double warmth, double[] gains)
         {
             double kelvin = 6500.0 - warm * 4500.0;
-            if (kelvin < 2000.0) kelvin = 2000.0;
-            if (kelvin > 12000.0) kelvin = 12000.0;
+            if (warmth != 0)
+            {
+                double mired = 1e6 / kelvin + warmth * 75.0;
+                if (mired < 100.0) mired = 100.0;      // 硬上限 10000K
+                if (mired > 370.4) mired = 370.4;      // 下限 2700K
+                kelvin = 1e6 / mired;
+            }
+            if (kelvin < 2700.0) kelvin = 2700.0;
+            if (kelvin > 10000.0) kelvin = 10000.0;
 
-            double rr = BlackBodyR(kelvin) / BlackBodyR(6500.0);
-            double gg = BlackBodyG(kelvin) / BlackBodyG(6500.0);
-            double bb = BlackBodyB(kelvin) / BlackBodyB(6500.0);
+            double[] cur = new double[3], basis = new double[3];
+            Planckian(kelvin, cur);
+            Planckian(6500.0, basis);
+            double rr = cur[0] / basis[0];
+            double gg = cur[1] / basis[1];
+            double bb = cur[2] / basis[2];
 
-            // 色调:正值偏洋红(压绿),负值偏绿。
-            gg *= 1.0 - tint * 0.18;
+            // 色调:正值偏洋红(压绿),负值偏绿;灵敏度收窄到 ±12%。
+            gg *= 1.0 - tint * 0.12;
 
-            // 归一化亮度:只改色相,不改整体明暗。
-            // 显示器是 gamma 编码的,先按 2.2 还原成线性光再算权重,否则暖色会顺带压暗。
-            double luma = 0.2126 * Math.Pow(rr, 2.2) + 0.7152 * Math.Pow(gg, 2.2) + 0.0722 * Math.Pow(bb, 2.2);
+            // 线性光下归一化亮度,只改色相,不改整体明暗。
+            double luma = 0.2126 * rr + 0.7152 * gg + 0.0722 * bb;
             if (luma < 0.0001) luma = 0.0001;
-            luma = Math.Pow(luma, 1.0 / 2.2);
             gains[0] = rr / luma;
             gains[1] = gg / luma;
             gains[2] = bb / luma;
         }
 
-        // 黑体辐射色温到 sRGB 的近似( Tanner Helland ),只用其相对比例。
-        private static double BlackBodyR(double kelvin)
+        /// <summary>
+        /// 连续 Planckian 轨迹 → 线性 sRGB 相对亮度(Kim 等 1960 UCS 三次拟合)。
+        /// 输出未归一化的线性 RGB,供 WhiteBalance 做 6500K 相对增益。
+        /// </summary>
+        private static void Planckian(double kelvin, double[] rgb)
         {
-            double t = kelvin / 100.0;
-            double v = t <= 66.0 ? 255.0 : 329.698727446 * Math.Pow(t - 60.0, -0.1332047592);
-            return Clamp01(v / 255.0);
+            double t = kelvin;
+            double x;
+            if (t <= 4000.0)
+                x = -0.2661239e9 / (t * t * t) - 0.2343589e6 / (t * t) + 0.8776956e3 / t + 0.179910;
+            else
+                x = -3.0258469e9 / (t * t * t) + 2.1070379e6 / (t * t) + 0.2226347e3 / t + 0.240390;
+
+            double x2 = x * x, x3 = x2 * x;
+            double y;
+            if (t <= 2222.0) y = -1.1063814 * x3 - 1.34811020 * x2 + 2.18555832 * x - 0.20219683;
+            else if (t <= 4000.0) y = -0.9549476 * x3 - 1.37418593 * x2 + 2.09137015 * x - 0.16748867;
+            else y = 3.0817580 * x3 - 5.87338670 * x2 + 3.75112997 * x - 0.37001483;
+
+            double X = x / y, Y = 1.0, Z = (1.0 - x - y) / y;
+            double r = 3.2404542 * X - 1.5371385 * Y - 0.4985314 * Z;
+            double g = -0.9692660 * X + 1.8760108 * Y + 0.0415560 * Z;
+            double b = 0.0556434 * X - 0.2040259 * Y + 1.0572252 * Z;
+            rgb[0] = r > 1e-6 ? r : 1e-6;
+            rgb[1] = g > 1e-6 ? g : 1e-6;
+            rgb[2] = b > 1e-6 ? b : 1e-6;
         }
 
-        private static double BlackBodyG(double kelvin)
-        {
-            double t = kelvin / 100.0;
-            double v = t <= 66.0
-                ? 99.4708025861 * Math.Log(t) - 161.1195681661
-                : 288.1221695283 * Math.Pow(t - 60.0, -0.0755148492);
-            return Clamp01(v / 255.0);
-        }
-
-        private static double BlackBodyB(double kelvin)
-        {
-            double t = kelvin / 100.0;
-            double v;
-            if (t >= 66.0) v = 255.0;
-            else if (t <= 19.0) v = 0.0;
-            else v = 138.5177312231 * Math.Log(t - 10.0) - 305.0447927307;
-            return Clamp01(v / 255.0);
-        }
-
-        /// <summary>用矩阵变换单个颜色,给界面上的预览条使用。</summary>
+        /// <summary>用矩阵变换单个颜色,给界面上的预览条使用(入参为内部列向量矩阵)。</summary>
         public static Color Transform(Color c, float[] m)
         {
             if (m == null || m.Length < 25) return c;
+            // 内部矩阵每一行对应一个输出通道,直接按行加权即可。
             double r = c.R, g = c.G, b = c.B, a = c.A;
             double nr = r * m[0] + g * m[1] + b * m[2] + a * m[3] + 255.0 * m[4];
             double ng = r * m[5] + g * m[6] + b * m[7] + a * m[8] + 255.0 * m[9];

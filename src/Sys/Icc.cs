@@ -59,6 +59,9 @@ namespace FrameForge.Sys
             {
                 var fi = new FileInfo(path);
                 if (!fi.Exists) { err = "file not found"; return null; }
+                // ICC 规范里 profile 极少超过 8MB;设 16MB 硬上限,避免恶意/损坏文件
+                // 让 UI 线程一次吃掉几百 MB。
+                if (fi.Length > 16L * 1024 * 1024) { err = "profile too large"; return null; }
                 long stamp = fi.LastWriteTimeUtc.Ticks;
 
                 Entry hit;
@@ -246,7 +249,9 @@ namespace FrameForge.Sys
                         err = "fit failed";
                         return null;
                     }
-                    res[ch * 5 + c] = (float)s[c];
+                    // s[0..2] 是 RGB 系数,s[3] 是常数偏移:内部矩阵的平移在第 5 列(m[4])。
+                    // 旧代码直接写进 m[3](alpha 列),偏移被吃掉,ICC 只剩增益。
+                    res[ch * 5 + (c == 3 ? 4 : c)] = (float)s[c];
                 }
             }
             res[18] = 1;
@@ -395,28 +400,32 @@ namespace FrameForge.Sys
             var t = new double[1024];
             if (type == "curv")
             {
-                int n = U32(d, p + 8);
-                if (n < 0 || p + 12 + n * 2 > d.Length) return null;
-                next = p + 12 + n * 2;
-                if (n == 0)
+                // 用 long 计算长度:恶意 n 会让 int 乘法溢出成负数,绕过边界检查后 OOM。
+                long n = U32(d, p + 8);
+                if (n < 0 || n > 65536 || p + 12L + n * 2L > d.Length) return null;
+                int nInt = (int)n;
+                // ICC 要求每个标签元素按 4 字节对齐。
+                next = p + 12 + nInt * 2;
+                next = (next + 3) & ~3;
+                if (nInt == 0)
                 {
                     for (int i = 0; i < 1024; i++) t[i] = i / 1023.0;
                     return t;
                 }
-                if (n == 1)
+                if (nInt == 1)
                 {
                     double gam = ((d[p + 12] << 8) | d[p + 13]) / 256.0;
                     if (gam <= 0.001) gam = 1.0;
                     for (int i = 0; i < 1024; i++) t[i] = Math.Pow(i / 1023.0, gam);
                     return t;
                 }
-                var tb = new double[n];
-                for (int i = 0; i < n; i++) tb[i] = ((d[p + 12 + i * 2] << 8) | d[p + 13 + i * 2]) / 65535.0;
+                var tb = new double[nInt];
+                for (int i = 0; i < nInt; i++) tb[i] = ((d[p + 12 + i * 2] << 8) | d[p + 13 + i * 2]) / 65535.0;
                 for (int i = 0; i < 1024; i++)
                 {
-                    double x = i / 1023.0 * (n - 1);
+                    double x = i / 1023.0 * (nInt - 1);
                     int i0 = (int)x;
-                    if (i0 >= n - 1) { t[i] = tb[n - 1]; continue; }
+                    if (i0 >= nInt - 1) { t[i] = tb[nInt - 1]; continue; }
                     double f = x - i0;
                     t[i] = tb[i0] + (tb[i0 + 1] - tb[i0]) * f;
                 }
@@ -441,7 +450,7 @@ namespace FrameForge.Sys
                     if (fn == 0) y = Math.Pow(x, g);
                     else if (fn == 1) y = (a != 0 && x >= -b / a) ? Math.Pow(a * x + b, g) : 0;
                     else if (fn == 2) y = Math.Pow(a * x + b, g) + c;
-                    else if (fn == 3) y = x >= dd ? Math.Pow(a * x + b, g) + c : c;
+                    else if (fn == 3) y = x >= dd ? Math.Pow(a * x + b, g) + c : c * x;
                     else y = x >= dd ? Math.Pow(a * x + b, g) + e : c * x + ff;
                     t[i] = y;
                 }
@@ -604,7 +613,7 @@ namespace FrameForge.Sys
                     if (fn == 0) y = Math.Pow(x, g);
                     else if (fn == 1) y = (a != 0 && x >= -b / a) ? Math.Pow(a * x + b, g) : 0;
                     else if (fn == 2) y = Math.Pow(a * x + b, g) + c;
-                    else if (fn == 3) y = x >= dd ? Math.Pow(a * x + b, g) + c : c;
+                    else if (fn == 3) y = x >= dd ? Math.Pow(a * x + b, g) + c : c * x;
                     else y = x >= dd ? Math.Pow(a * x + b, g) + e : c * x + f;
                     res[i] = y;
                 }

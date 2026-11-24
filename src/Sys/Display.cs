@@ -13,6 +13,149 @@ namespace FrameForge.Sys
     {
         private const uint MonitorDefaultToNearest = 2;
 
+        // ---------------- HDR / 自动颜色管理（FF-038） ----------------
+        // HDR 或 ACM 开启时，DWM 用线性 scRGB 合成，SetDeviceGammaRamp 与
+        // MAGCOLOREFFECT 的 SDR 色调都会被绕过；不检测的话用户只看到「开了没用」。
+
+        private const uint QdcOnlyActivePaths = 0x00000002;
+        private const uint DcInfoGetAdvancedColorInfo = 9;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct Luid
+        {
+            public uint Low;
+            public int High;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PathSourceInfo
+        {
+            public Luid AdapterId;
+            public uint Id;
+            public uint ModeInfoIdx;
+            public uint StatusFlags;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PathTargetInfo
+        {
+            public Luid AdapterId;
+            public uint Id;
+            public uint ModeInfoIdx;
+            public uint OutputTechnology;
+            public uint Rotation;
+            public uint Scaling;
+            public uint RefreshNum;
+            public uint RefreshDen;
+            public uint ScanLineOrdering;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PathInfo
+        {
+            public PathSourceInfo Source;
+            public PathTargetInfo Target;
+            public uint Flags;
+        }
+
+        /// <summary>DISPLAYCONFIG_MODE_INFO 固定 64 字节，内容用不到，只占位。</summary>
+        [StructLayout(LayoutKind.Sequential, Size = 64)]
+        private struct ModeInfo
+        {
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct DeviceInfoHeader
+        {
+            public uint Type;
+            public uint Size;
+            public Luid AdapterId;
+            public uint Id;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct AdvancedColorInfo
+        {
+            public DeviceInfoHeader Header;
+            public uint Value;          // bit0 支持 / bit1 已启用 / bit3 被策略禁用
+            public int ColorEncoding;   // 0 SDR / 1 WCG / 2 HDR
+            public uint BitsPerColorChannel;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern int GetDisplayConfigBufferSizes(uint flags, out uint numPath, out uint numMode);
+
+        [DllImport("user32.dll")]
+        private static extern int QueryDisplayConfig(uint flags, ref uint numPath, [In, Out] PathInfo[] paths,
+            ref uint numMode, [In, Out] ModeInfo[] modes, IntPtr currentTopologyId);
+
+        [DllImport("user32.dll")]
+        private static extern int DisplayConfigGetDeviceInfo(ref AdvancedColorInfo info);
+
+        private static bool hdrChecked;
+        private static bool hdrActive;
+        private static string hdrDetail = "off";
+
+        /// <summary>当前是否有显示器开着 HDR 或自动颜色管理(ACM)。</summary>
+        public static bool HdrOrAcmActive()
+        {
+            ProbeAdvancedColor(false);
+            return hdrActive;
+        }
+
+        /// <summary>诊断用:off / supported / hdr / acm。</summary>
+        public static string AdvancedColorDetail
+        {
+            get { ProbeAdvancedColor(false); return hdrDetail; }
+        }
+
+        /// <summary>切换显示器、开关 HDR 后调用，丢掉缓存重新探测。</summary>
+        public static void RefreshAdvancedColor()
+        {
+            ProbeAdvancedColor(true);
+        }
+
+        private static void ProbeAdvancedColor(bool force)
+        {
+            if (hdrChecked && !force) return;
+            hdrChecked = true;
+            hdrActive = false;
+            hdrDetail = "off";
+            try
+            {
+                uint numPath, numMode;
+                if (GetDisplayConfigBufferSizes(QdcOnlyActivePaths, out numPath, out numMode) != 0) return;
+                if (numPath == 0 || numPath > 64) return;
+
+                var paths = new PathInfo[numPath];
+                var modes = new ModeInfo[numMode];
+                uint pc = numPath, mc = numMode;
+                if (QueryDisplayConfig(QdcOnlyActivePaths, ref pc, paths, ref mc, modes, IntPtr.Zero) != 0) return;
+
+                for (uint i = 0; i < pc; i++)
+                {
+                    var info = new AdvancedColorInfo();
+                    info.Header.Type = DcInfoGetAdvancedColorInfo;
+                    info.Header.Size = (uint)Marshal.SizeOf(typeof(AdvancedColorInfo));
+                    info.Header.AdapterId = paths[i].Target.AdapterId;
+                    info.Header.Id = paths[i].Target.Id;
+                    if (DisplayConfigGetDeviceInfo(ref info) != 0) continue;
+
+                    bool supported = (info.Value & 0x1) != 0;
+                    bool enabled = (info.Value & 0x2) != 0;
+                    if (enabled)
+                    {
+                        hdrActive = true;
+                        // 颜色编码 2 = HDR，其它情况就是 ACM/SDR 广色域。
+                        hdrDetail = info.ColorEncoding == 2 ? "hdr" : "acm";
+                        return;
+                    }
+                    if (supported) hdrDetail = "supported";
+                }
+            }
+            catch (Exception ex) { hdrDetail = "probe failed: " + ex.Message; }
+        }
+
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         private struct PhysicalMonitor
         {
@@ -305,8 +448,11 @@ namespace FrameForge.Sys
             {
                 using (var s = new ManagementObjectSearcher(@"root\wmi",
                     "SELECT InstanceName, CurrentBrightness FROM WmiMonitorBrightness"))
+                // FF-038：WMI 查询结果集合是 IDisposable，不释放会在每次轮询后留下
+                // 一个 COM 集合，长时间运行后 WMI 服务内存持续上涨。
+                using (ManagementObjectCollection col = s.Get())
                 {
-                    foreach (ManagementBaseObject o in s.Get())
+                    foreach (ManagementBaseObject o in col)
                     {
                         string inst = Convert.ToString(o["InstanceName"]);
                         object v = o["CurrentBrightness"];
@@ -352,8 +498,11 @@ namespace FrameForge.Sys
             {
                 using (var s = new ManagementObjectSearcher(@"root\wmi",
                     "SELECT InstanceName, CurrentBrightness FROM WmiMonitorBrightness"))
+                // FF-038：WMI 查询结果集合是 IDisposable，不释放会在每次轮询后留下
+                // 一个 COM 集合，长时间运行后 WMI 服务内存持续上涨。
+                using (ManagementObjectCollection col = s.Get())
                 {
-                    foreach (ManagementBaseObject o in s.Get())
+                    foreach (ManagementBaseObject o in col)
                     {
                         string inst = Convert.ToString(o["InstanceName"]);
                         if (wmiInstance.Length > 0 && !string.Equals(inst, wmiInstance, StringComparison.OrdinalIgnoreCase))
@@ -376,8 +525,9 @@ namespace FrameForge.Sys
             {
                 using (var s = new ManagementObjectSearcher(@"root\wmi",
                     "SELECT InstanceName FROM WmiMonitorBrightnessMethods"))
+                using (ManagementObjectCollection col = s.Get())
                 {
-                    foreach (ManagementBaseObject o in s.Get())
+                    foreach (ManagementBaseObject o in col)
                     {
                         string inst = Convert.ToString(o["InstanceName"]);
                         if (wmiInstance.Length > 0 && !string.Equals(inst, wmiInstance, StringComparison.OrdinalIgnoreCase))

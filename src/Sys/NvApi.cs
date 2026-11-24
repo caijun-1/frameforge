@@ -16,10 +16,9 @@ namespace FrameForge.Sys
         // 这些编号在 NVIDIA 驱动里多年没变过,属于事实上的稳定 ABI。
         private const uint IdInitialize = 0x0150E828;
         private const uint IdEnumDisplay = 0x9ABDD40D;
-        private const uint IdEnumPhysicalGpu = 0xE5AC921F;
         private const uint IdGetDvcInfo = 0x4085DE45;
         private const uint IdSetDvcLevel = 0x172409B4;
-        private const uint IdSetDvcLevelEx = 0x4A54C2DE;
+        private const uint IdUnload = 0xD22BDD7E;
 
         private const int Ok = 0;
         // NV_DVC_INFO 实际是 16 字节(version/current/min/max),传 8 字节版本会被判为
@@ -42,20 +41,21 @@ namespace FrameForge.Sys
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int EnumDisplayFn(uint index, out IntPtr handle);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        private delegate int EnumGpuFn(IntPtr[] handles, out uint count);
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int GetDvcFn(IntPtr handle, uint outputId, ref DvcInfo info);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int SetDvcFn(IntPtr handle, uint outputId, int level);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int UnloadFn();
 
         private static bool probed;
         private static bool available;
         private static IntPtr lib;
         private static GetDvcFn getDvc;
         private static SetDvcFn setDvc;
+        private static UnloadFn unload;
 
-        // 能读能写的输出句柄(优先显示句柄,退而用物理 GPU 句柄),
-        // 以及每个输出当前的 DVC 值和上限,还原与按比例抬升都靠它们。
+        // 能读能写的显示句柄。FF-029：不再退回物理 GPU 句柄——Optimus 笔记本上
+        // 物理句柄对应的是核显输出的那块屏，写进去只会改错显示器。
         private static IntPtr[] targets = new IntPtr[0];
         private static int[] saved = new int[0];
         private static int[] maxes = new int[0];
@@ -129,6 +129,8 @@ namespace FrameForge.Sys
         public static void Release()
         {
             try { Restore(); } catch { }
+            // FF-029：先 NvAPI_Unload 再 FreeLibrary，否则驱动的会话计数会一直挂着。
+            if (unload != null) { try { unload(); } catch { } }
             if (lib != IntPtr.Zero)
             {
                 try { Native.FreeLibrary(lib); } catch { }
@@ -136,6 +138,7 @@ namespace FrameForge.Sys
             }
             getDvc = null;
             setDvc = null;
+            unload = null;
             targets = new IntPtr[0];
             saved = new int[0];
             maxes = new int[0];
@@ -167,13 +170,19 @@ namespace FrameForge.Sys
                 if (((InitializeFn)Marshal.GetDelegateForFunctionPointer(pInit, typeof(InitializeFn)))() != Ok) return;
 
                 IntPtr pGet = query(IdGetDvcInfo);
-                IntPtr pSet = query(IdSetDvcLevelEx);
-                if (pSet == IntPtr.Zero) pSet = query(IdSetDvcLevel);
+                // FF-029：SetDVCLevelEx 的签名是 (handle, outputId, NV_DVC_INFO*)，
+                // 按 int 等级强转会把结构体指针当成等级，轻则无效、重则栈破坏。
+                // 只绑定语义明确的 SetDVCLevel(handle, outputId, level)。
+                IntPtr pSet = query(IdSetDvcLevel);
                 if (pGet == IntPtr.Zero || pSet == IntPtr.Zero) return;
                 getDvc = (GetDvcFn)Marshal.GetDelegateForFunctionPointer(pGet, typeof(GetDvcFn));
                 setDvc = (SetDvcFn)Marshal.GetDelegateForFunctionPointer(pSet, typeof(SetDvcFn));
+                IntPtr pUnload = query(IdUnload);
+                if (pUnload != IntPtr.Zero)
+                    unload = (UnloadFn)Marshal.GetDelegateForFunctionPointer(pUnload, typeof(UnloadFn));
 
-                // 先按显示句柄找:绝大多数单屏/多屏桌面都能直接读到。
+                // 只认显示句柄。物理 GPU 句柄在 Optimus 机器上对应核显输出，
+                // 写 DVC 会改到错误的显示器，宁可放弃接管。
                 var list = new List<IntPtr>();
                 IntPtr pEnum = query(IdEnumDisplay);
                 if (pEnum != IntPtr.Zero)
@@ -184,22 +193,6 @@ namespace FrameForge.Sys
                         IntPtr h;
                         if (en(i, out h) != Ok || h == IntPtr.Zero) break;
                         list.Add(h);
-                    }
-                }
-                if (list.Count == 0)
-                {
-                    // 少数驱动/笔记本内屏上显示句柄枚举为空,退回物理 GPU 句柄。
-                    IntPtr pGpu = query(IdEnumPhysicalGpu);
-                    if (pGpu != IntPtr.Zero)
-                    {
-                        var arr = new IntPtr[16];
-                        uint count;
-                        var eg = (EnumGpuFn)Marshal.GetDelegateForFunctionPointer(pGpu, typeof(EnumGpuFn));
-                        if (eg(arr, out count) == Ok)
-                        {
-                            for (uint i = 0; i < count && i < arr.Length; i++)
-                                if (arr[i] != IntPtr.Zero) list.Add(arr[i]);
-                        }
                     }
                 }
 

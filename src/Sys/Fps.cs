@@ -98,13 +98,32 @@ namespace FrameForge.Sys
         {
             get
             {
-                try
-                {
-                    var f = new FileInfo(ExePath);
-                    return f.Exists && f.Length > 200 * 1024;
-                }
-                catch { return false; }
+                // 大小检查挡不住被替换的文件;可执行文件必须同时通过 Intel 验签。
+                // 结果按路径 + 写时间缓存,避免界面轮询时反复调用 WinVerifyTrust。
+                return VerifiedOurs(ExePath);
             }
+        }
+
+        private static string verifiedPath;
+        private static long verifiedStamp;
+        private static bool verifiedOk;
+
+        private static bool VerifiedOurs(string path)
+        {
+            try
+            {
+                var f = new FileInfo(path);
+                if (!f.Exists) return false;
+                long stamp = f.LastWriteTimeUtc.Ticks;
+                if (string.Equals(path, verifiedPath, StringComparison.OrdinalIgnoreCase) && stamp == verifiedStamp)
+                    return verifiedOk;
+                bool ok = f.Length > 200 * 1024 && SignedByIntel(path);
+                verifiedPath = path;
+                verifiedStamp = stamp;
+                verifiedOk = ok;
+                return ok;
+            }
+            catch { return false; }
         }
 
         /// <summary>下载 PresentMon 到 %LOCALAPPDATA%\FrameForge\bin。返回空串表示成功。</summary>
@@ -192,7 +211,7 @@ namespace FrameForge.Sys
         {
             // 先只查本机缓存,避免离线/墙内环境下 WinVerifyTrust 卡在取根证书上;
             // 缓存里没有中间证书时再允许联网补一次。
-            if (!VerifyTrust(path, true) && !VerifyTrust(path, false)) return false;
+            if (!HasTrustedSignature(path)) return false;
             try
             {
                 X509Certificate cert = X509Certificate.CreateFromSignedFile(path);
@@ -205,6 +224,13 @@ namespace FrameForge.Sys
                 Log.Write("presentmon signature inspect: " + ex.Message);
                 return false;
             }
+        }
+
+        /// <summary>只校验签名链可信,不限定签名方;更新包与第三方安装包用它做完整性确认。</summary>
+        public static bool HasTrustedSignature(string path)
+        {
+            try { return VerifyTrust(path, true) || VerifyTrust(path, false); }
+            catch { return false; }
         }
 
         private static readonly Guid VerifyAction = new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
@@ -330,7 +356,6 @@ namespace FrameForge.Sys
             }
             if (pid <= 0) { Stop(); return; }
             if (!Installed) { trackedPid = pid; Status = FpsStatus.NotInstalled; return; }
-
             // PresentMon 2.x 在普通权限下也能采集同账户进程的帧事件(只有跨账户/短命进程
             // 才需要提权),以前在这里直接因"不是管理员"返回,叠加层就永远只显示 --。
             // 但它异常退出后会占着 ETW 会话名,失败后先等 3 秒再重启,避免每秒开一次进程。
@@ -351,6 +376,8 @@ namespace FrameForge.Sys
             lock (startGate)
             {
                 if (pid != trackedPid) return;
+                // 重启路径(看门狗/卡顿恢复)也要过一遍验签,防止运行期间 exe 被替换。
+                if (!Installed) { Status = FpsStatus.NotInstalled; return; }
                 // 界面心跳(Track)和看门狗会同时走到这里。两个 PresentMon 抢同一个
                 // ETW 会话名时,后启动的会把先启动的踢掉,日志里就是 start 紧跟一行
                 // exited code=0,帧率窗口被反复清空,叠加上层统计全是抖的。
@@ -529,7 +556,7 @@ namespace FrameForge.Sys
         {
             try
             {
-                var psi = new ProcessStartInfo("logman", args);
+                var psi = new ProcessStartInfo(Native.System32("logman.exe"), args);
                 psi.UseShellExecute = false;
                 psi.CreateNoWindow = true;
                 psi.RedirectStandardOutput = capture;

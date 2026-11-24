@@ -101,7 +101,9 @@ namespace FrameForge.Sys
             {
                 if (ms == null) return false;
                 object v = ms.GetValue("MSISupported");
-                if (v == null) return true;
+                // FF-028：没有显式开启 MSI 的设备不能假定为已开启，否则会把中断
+                // 绑到并不支持消息信号中断的网卡上。
+                if (v == null) return false;
                 try { return Convert.ToInt32(v, CultureInfo.InvariantCulture) != 0; }
                 catch { return false; }
             }
@@ -172,7 +174,19 @@ namespace FrameForge.Sys
                 {
                     if (s.CreatedKey)
                     {
-                        Registry.LocalMachine.DeleteSubKeyTree(s.Path, false);
+                        // FF-028：只删自己写入的两个值；驱动或系统在这期间补进来的
+                        // 其它值要保留，全部删空后才回收空键。
+                        bool empty = false;
+                        using (RegistryKey ap = Registry.LocalMachine.OpenSubKey(s.Path, true))
+                        {
+                            if (ap != null)
+                            {
+                                ap.DeleteValue("DevicePolicy", false);
+                                ap.DeleteValue("AssignmentSetOverride", false);
+                                empty = ap.ValueCount == 0 && ap.SubKeyCount == 0;
+                            }
+                        }
+                        if (empty) Registry.LocalMachine.DeleteSubKey(s.Path, false);
                         continue;
                     }
                     using (RegistryKey ap = Registry.LocalMachine.OpenSubKey(s.Path, true))

@@ -134,11 +134,12 @@ namespace FrameForge.Sys
                 bool offNow = ReadValue(RegistryHive.LocalMachine, Compat.DwmPath, Compat.MpoName, 0) == 5;
                 if (offNow == !on) { r.Ok = true; return r; }
 
+                // on = 开启 MPO(系统默认);禁用 MPO 才写 OverlayTestMode=5。
                 Remember(RegistryHive.LocalMachine, Compat.DwmPath, Compat.MpoName);
                 bool admin;
                 bool ok;
-                if (on) ok = Write(RegistryHive.LocalMachine, Compat.DwmPath, Compat.MpoName, 5, out admin);
-                else ok = DeleteValue(RegistryHive.LocalMachine, Compat.DwmPath, Compat.MpoName, out admin);
+                if (on) ok = DeleteValue(RegistryHive.LocalMachine, Compat.DwmPath, Compat.MpoName, out admin);
+                else ok = Write(RegistryHive.LocalMachine, Compat.DwmPath, Compat.MpoName, 5, out admin);
                 if (!ok) return Fail(r, admin);
                 r.Ok = true; r.Applied = 1; r.NeedReboot = true;
             }
@@ -495,6 +496,9 @@ namespace FrameForge.Sys
                     {
                         string[] p = line.Substring(4).Split('|');
                         if (p.Length < 5) continue;
+                        // 日志放在便携目录里,普通用户也能改;伪造 reg= 行可让管理员权限的
+                        // 「恢复原样」往任意键写值(报告 FF-005)。只接受本程序实际管理的键。
+                        if (!AllowedJournalKey(p[0], p[1])) continue;
                         var s = new Saved();
                         s.Hive = p[0];
                         s.Path = p[1];
@@ -513,8 +517,29 @@ namespace FrameForge.Sys
                         saved.Add(s);
                     }
                 }
+                // 电源方案同样来自日志:不是合法 GUID 就丢弃,避免把非法串塞给 powercfg。
+                Guid scheme;
+                if (savedScheme.Length > 0 && !Guid.TryParse(savedScheme, out scheme)) savedScheme = "";
             }
             catch (Exception ex) { Log.Write("tune journal load: " + ex.Message); }
+        }
+
+        /// <summary>
+        /// tune.journal 的可信键白名单。只涵盖「系统优化」页真正会写的分支,
+        /// 防止被篡改的日志成为管理员权限下的任意 HKLM 写入原语。
+        /// </summary>
+        private static bool AllowedJournalKey(string hive, string path)
+        {
+            if (string.IsNullOrEmpty(hive) || string.IsNullOrEmpty(path)) return false;
+            if (hive != "HKLM" && hive != "HKCU") return false;
+            string p = path.ToUpperInvariant();
+            return p.StartsWith(@"SYSTEM\CURRENTCONTROLSET\CONTROL\DEVICEGUARD", StringComparison.Ordinal)
+                || p.StartsWith(@"SYSTEM\CURRENTCONTROLSET\CONTROL\GRAPHICSDRIVERS", StringComparison.Ordinal)
+                || p.StartsWith(@"SOFTWARE\MICROSOFT\WINDOWS\DWM", StringComparison.Ordinal)
+                || p.StartsWith(@"SOFTWARE\MICROSOFT\DIRECTX\USERGPUPREFERENCES", StringComparison.Ordinal)
+                || p.StartsWith(@"SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\GAMEDVR", StringComparison.Ordinal)
+                || p.StartsWith(@"SOFTWARE\MICROSOFT\WINDOWS NT\CURRENTVERSION\APPCOMPATFLAGS\LAYERS", StringComparison.Ordinal)
+                || p.StartsWith(@"SOFTWARE\MICROSOFT\WINDOWS NT\CURRENTVERSION\IMAGE FILE EXECUTION OPTIONS", StringComparison.Ordinal);
         }
 
         private static void SaveJournal()

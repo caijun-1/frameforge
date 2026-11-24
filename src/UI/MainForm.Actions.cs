@@ -91,10 +91,17 @@ namespace FrameForge.UI
                     I18n.T("set.restoreall.ok"), I18n.T("dialog.cancel"))) return;
 
             // 先按日志还原:日志里记的是原始值,而且会顺带清掉日志;
-            // 再走一次内存里的还原,把还挂起着的后台进程恢复回来。
+            // 再走一次健康页的系统项还原,最后把还挂起着的后台进程恢复回来。
             int n = 0;
             try { n = BoostJournal.RestoreAll(); }
             catch (Exception ex) { Log.Write("restore all: " + ex.Message); }
+            try
+            {
+                bool needAdmin;
+                n += Tune.RestoreAll(out needAdmin);
+                if (needAdmin) Log.Write("restore all: some registry items need admin");
+            }
+            catch (Exception ex) { Log.Write("restore tune: " + ex.Message); }
             RestoreBoost(false);
 
             if (setPage != null) setPage.SyncState();
@@ -831,7 +838,7 @@ namespace FrameForge.UI
         {
             try
             {
-                var psi = new System.Diagnostics.ProcessStartInfo("schtasks.exe", args);
+                var psi = new System.Diagnostics.ProcessStartInfo(Native.System32("schtasks.exe"), args);
                 psi.UseShellExecute = false;
                 psi.CreateNoWindow = true;
                 using (System.Diagnostics.Process p = System.Diagnostics.Process.Start(psi))
@@ -848,7 +855,7 @@ namespace FrameForge.UI
             try
             {
                 if (!System.IO.Directory.Exists(Settings.Dir)) System.IO.Directory.CreateDirectory(Settings.Dir);
-                System.Diagnostics.Process.Start("explorer.exe", "\"" + Settings.Dir + "\"");
+                System.Diagnostics.Process.Start(Native.Windows("explorer.exe"), "\"" + Settings.Dir + "\"");
             }
             catch (Exception ex) { Log.Write("open log: " + ex.Message); }
         }

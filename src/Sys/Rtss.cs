@@ -312,22 +312,25 @@ namespace FrameForge.Sys
             {
                 PrepareHttp();
                 Directory.CreateDirectory(dir);
-                string zip = Path.Combine(dir, "RTSSSetup737.zip");
-                string unpack = Path.Combine(dir, "rtss-setup");
+                // %TEMP% 是用户可写目录:以前"解压目录已存在就跳过下载与 SHA-256"
+                // 等于把提权安装权交给任何能预置文件的本地程序(报告 FF-002)。
+                // 现在每次都下载到随机文件名,只用当次校验过的包解压到全新目录。
+                string stamp = Guid.NewGuid().ToString("N");
+                string zip = Path.Combine(dir, "rtss-" + stamp + ".zip");
+                string unpack = Path.Combine(dir, "rtss-setup-" + stamp);
                 string exe = Path.Combine(unpack, InstallerExe);
 
-                if (!File.Exists(exe))
+                Download(zip, cb);
+                if (Sha256(zip) != InstallerSha)
                 {
-                    if (File.Exists(zip)) File.Delete(zip);
-                    Download(zip, cb);
-                    if (Sha256(zip) != InstallerSha) throw new InvalidDataException("sha256 mismatch");
-
-                    if (cb != null) cb(100, "unzip");
-                    if (Directory.Exists(unpack)) Directory.Delete(unpack, true);
-                    ZipFile.ExtractToDirectory(zip, unpack);
-                    File.Delete(zip);
-                    if (!File.Exists(exe)) throw new FileNotFoundException(InstallerExe);
+                    try { File.Delete(zip); } catch { }
+                    throw new InvalidDataException("sha256 mismatch");
                 }
+
+                if (cb != null) cb(100, "unzip");
+                ZipFile.ExtractToDirectory(zip, unpack);
+                try { File.Delete(zip); } catch { }
+                if (!File.Exists(exe)) throw new FileNotFoundException(InstallerExe);
 
                 // NSIS 的 /S 是静默安装。本程序本身就带管理员权限,不会再多弹一次 UAC。
                 if (cb != null) cb(100, "run");

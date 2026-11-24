@@ -476,15 +476,33 @@ namespace FrameForge.UI
                 }
                 else if (Kind == Glyph.Theme)
                 {
-                    // 两张参考图都使用太阳图标,主题按钮不再随夜间模式换成月亮。
-                    using (var b = new SolidBrush(fg))
-                        g.FillEllipse(b, cx - r * 0.55f, cy - r * 0.55f, r * 1.1f, r * 1.1f);
-                    for (int i = 0; i < 8; i++)
+                    if (Theme.Dark)
                     {
-                        double a = i * Math.PI / 4;
-                        g.DrawLine(pen,
-                            cx + (float)(Math.Cos(a) * r * 0.95), cy + (float)(Math.Sin(a) * r * 0.95),
-                            cx + (float)(Math.Cos(a) * r * 1.35), cy + (float)(Math.Sin(a) * r * 1.35));
+                        // 夜间模式画月牙:用两个等半径圆的外弧围成,
+                        // 比「整圆挖洞」干净——Region 填充没有抗锯齿,小尺寸下会出锯齿。
+                        float mr = r * 1.15f;
+                        float delta = mr * 0.55f;
+                        float th = (float)(Math.Acos(delta / (2 * mr)) * 180 / Math.PI);
+                        using (var path = new GraphicsPath())
+                        using (var b = new SolidBrush(fg))
+                        {
+                            path.AddArc(cx - mr, cy - mr, mr * 2, mr * 2, th, 360 - 2 * th);
+                            path.AddArc(cx - mr + delta, cy - mr, mr * 2, mr * 2, 180 + th, -2 * th);
+                            path.CloseFigure();
+                            g.FillPath(b, path);
+                        }
+                    }
+                    else
+                    {
+                        using (var b = new SolidBrush(fg))
+                            g.FillEllipse(b, cx - r * 0.55f, cy - r * 0.55f, r * 1.1f, r * 1.1f);
+                        for (int i = 0; i < 8; i++)
+                        {
+                            double a = i * Math.PI / 4;
+                            g.DrawLine(pen,
+                                cx + (float)(Math.Cos(a) * r * 0.95), cy + (float)(Math.Sin(a) * r * 0.95),
+                                cx + (float)(Math.Cos(a) * r * 1.35), cy + (float)(Math.Sin(a) * r * 1.35));
+                        }
                     }
                 }
             }
@@ -1241,7 +1259,16 @@ namespace FrameForge.UI
                 BackColor = Theme.Card;
                 DoubleBuffered = true;
                 float s = Ui.S;
-                ClientSize = new Size((int)(400 * s), (int)((initial != null ? 240 : 190) * s));
+                // FF-015：高度按正文实际换行数算。旧实现固定 190/240，高 DPI 下
+                // 长文案会被按钮压住；现在量一遍正文再取较大值。
+                int width = (int)(400 * s);
+                int bodyWidth = width - (int)(44 * s);
+                int bodyHeight = TextRenderer.MeasureText(dBody ?? "",
+                    Theme.F(9.5f, FontStyle.Regular), new Size(Math.Max(bodyWidth, 40), 10000),
+                    TextFormatFlags.Left | TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height;
+                int need = (int)(50 * s) + bodyHeight + (int)(16 * s) + (int)(52 * s);
+                int minHeight = (int)((initial != null ? 240 : 190) * s);
+                ClientSize = new Size(width, Math.Max(minHeight, need));
                 KeyPreview = true;
 
                 if (initial != null)
@@ -1287,7 +1314,21 @@ namespace FrameForge.UI
                 KeyDown += delegate (object o, KeyEventArgs k)
                 {
                     if (k.KeyCode == Keys.Escape && btnCancel != null) { DialogResult = DialogResult.Cancel; Close(); }
-                    if (k.KeyCode == Keys.Enter) { DialogResult = DialogResult.OK; Close(); }
+                    if (k.KeyCode == Keys.Enter)
+                    {
+                        // FF-015：带取消按钮且没有输入框的就是危险确认(清理/还原/结束进程)，
+                        // 回车必须等于「取消」，否则用户顺手回车就把系统改了。
+                        if (btnCancel != null && edit == null)
+                        {
+                            DialogResult = DialogResult.Cancel;
+                            Close();
+                        }
+                        else
+                        {
+                            DialogResult = DialogResult.OK;
+                            Close();
+                        }
+                    }
                 };
             }
 
@@ -1296,6 +1337,7 @@ namespace FrameForge.UI
                 base.OnShown(e);
                 // 输入框要在窗口显示后再抢焦点,构造函数里设置会被按钮抢走。
                 if (edit != null) { edit.Focus(); edit.SelectAll(); }
+                else if (btnCancel != null) btnCancel.Focus();
             }
 
             private void OnDrag(object sender, MouseEventArgs e)
@@ -1331,7 +1373,11 @@ namespace FrameForge.UI
                 TextRenderer.DrawText(g, dTitle, Theme.F(11.5f, FontStyle.Bold), titleRect, Theme.Text,
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
 
-                var bodyRect = new Rectangle((int)(22 * s), (int)(50 * s), Width - (int)(44 * s), (int)(edit == null ? 78 : 44));
+                // FF-015：正文高度跟随窗口，不再写死 78/44 这些未缩放的数字。
+                int bodyTop = (int)(50 * s);
+                int bodyBottom = edit != null ? (int)(96 * s) : ClientSize.Height - (int)(66 * s);
+                var bodyRect = new Rectangle((int)(22 * s), bodyTop, Width - (int)(44 * s),
+                    Math.Max((int)(20 * s), bodyBottom - bodyTop));
                 TextRenderer.DrawText(g, dBody, Theme.F(9.5f, FontStyle.Regular), bodyRect, Theme.Sub,
                     TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
             }

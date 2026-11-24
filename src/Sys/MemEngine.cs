@@ -201,17 +201,19 @@ namespace FrameForge.Sys
 
         public static bool ClearFileCache()
         {
-            IntPtr buf = IntPtr.Zero;
             try
             {
-                int cb = IntPtr.Size * 2;
-                buf = Marshal.AllocHGlobal(cb);
-                Marshal.WriteIntPtr(buf, IntPtr.Zero);
-                Marshal.WriteIntPtr(buf, IntPtr.Size, IntPtr.Zero);
-                return Native.NtSetSystemInformation(Native.SystemFileCacheInformation, buf, cb) == 0;
+                // FF-028：旧实现向 SystemFileCacheInformation 传 16 字节全零缓冲，
+                // 内核按参数非法拒绝，永远返回 false。改用官方 API，-1/-1 表示
+                // 由内存管理器按当前压力重算缓存上下限，等价于把文件缓存压回去。
+                EnablePrivilege("SeIncreaseQuotaPrivilege");
+                return Native.SetSystemFileCacheSize(new IntPtr(-1), new IntPtr(-1), 0);
             }
-            catch { return false; }
-            finally { if (buf != IntPtr.Zero) Marshal.FreeHGlobal(buf); }
+            catch (Exception ex)
+            {
+                Log.Write("clear file cache: " + ex.Message);
+                return false;
+            }
         }
 
         private static bool SetMemoryList(int command)
@@ -238,7 +240,9 @@ namespace FrameForge.Sys
             public int CompareTo(ProcEntry o)
             {
                 if (o == null) return 1;
-                return WorkingSet.CompareTo(o.WorkingSet);
+                // FF-028：按工作集降序，先归还闲置的大进程；旧实现升序先裁小进程，
+                // 活跃的小工具被裁掉后马上缺页重读，反而制造卡顿。
+                return o.WorkingSet.CompareTo(WorkingSet);
             }
         }
 

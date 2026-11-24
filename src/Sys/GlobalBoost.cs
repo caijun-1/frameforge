@@ -36,11 +36,18 @@ namespace FrameForge.Sys
         };
 
         /// <summary>常用程序:即使没在前台,也把同名进程提一档,后台同步/消息拉取更跟手。</summary>
-        private static readonly string[] CommonNames =
+        private static readonly HashSet<string> CommonSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "chrome", "msedge", "firefox", "brave", "opera", "360chrome", "qqbrowser",
             "QQ", "WeChat", "Weixin", "Telegram", "Discord"
         };
+
+        /// <summary>
+        /// FF-026：提权失败的 PID 冷却表。旧实现每 5 秒对同一个受保护进程重复
+        /// 「记 PENDING + 记 FAILED」两次落盘，SSD 与 CPU 都被白白消耗。
+        /// </summary>
+        private readonly Dictionary<int, DateTime> failedUntil = new Dictionary<int, DateTime>();
+        private const int FailCooldownSeconds = 300;
 
         /// <summary>
         /// 被本模式改过优先级的进程及改动前的档位。
@@ -407,9 +414,22 @@ namespace FrameForge.Sys
         private void SaveRealtimeTxLocked()
         {
             if (realtimeTx == null || realtimeTx.Actions.Count == 0) return;
+            PruneRealtimeActionsLocked();
             realtimeTx.Res = SystemResourceArbiter.Instance.Snapshot();
             BoostJournal.Save(realtimeTx);
             BoostEngine.EnsureWatchdog();
+        }
+
+        /// <summary>
+        /// FF-026：常驻模式一开几小时，每个进过前台的进程都会留一条 action，
+        /// 日志只增不减。超过上限时优先丢掉已经还原完的记录，保留仍在生效的。
+        /// </summary>
+        private void PruneRealtimeActionsLocked()
+        {
+            if (realtimeTx.Actions.Count <= 256) return;
+            for (int i = realtimeTx.Actions.Count - 1; i >= 0 && realtimeTx.Actions.Count > 128; i--)
+                if (realtimeTx.Actions[i].Status == ActionStatus.REVERTED)
+                    realtimeTx.Actions.RemoveAt(i);
         }
 
         private JournalAction FindRealtimePriority(int pid, bool pendingOnly)
@@ -533,24 +553,24 @@ namespace FrameForge.Sys
         /// <summary>常用浏览器/聊天软件即使不在前台,也把它们的同名进程提到高于正常。</summary>
         private void BoostCommon()
         {
-            for (int i = 0; i < CommonNames.Length; i++)
+            // FF-026：一次全表枚举代替 13 次 GetProcessesByName，5 秒一轮的开销降一个量级。
+            Process[] all = null;
+            try { all = Process.GetProcesses(); }
+            catch (Exception ex) { Log.Write("global boost common: " + ex.Message); return; }
+
+            for (int i = 0; i < all.Length; i++)
             {
-                Process[] list = null;
-                try { list = Process.GetProcessesByName(CommonNames[i]); }
-                catch (Exception ex) { Log.Write("global boost common: " + ex.Message); }
-                if (list == null) continue;
-                for (int j = 0; j < list.Length; j++)
+                Process p = all[i];
+                try
                 {
-                    Process p = list[j];
-                    try
-                    {
-                        int id = p.Id;
-                        if (id == SelfPid || p.SessionId == 0) continue;
-                        BoostProcess(id, CommonNames[i], Native.ABOVE_NORMAL_PRIORITY_CLASS, 2);
-                    }
-                    catch { }
-                    finally { p.Dispose(); }
+                    int id = p.Id;
+                    if (id == SelfPid || p.SessionId == 0) continue;
+                    string name = p.ProcessName;
+                    if (name.Length == 0 || !CommonSet.Contains(name)) continue;
+                    BoostProcess(id, name, Native.ABOVE_NORMAL_PRIORITY_CLASS, 2);
                 }
+                catch { }
+                finally { p.Dispose(); }
             }
         }
 
@@ -612,8 +632,11 @@ namespace FrameForge.Sys
             lock (gate)
             {
                 if (!active || saved.ContainsKey(pid)) return;
+                DateTime until;
+                if (failedUntil.TryGetValue(pid, out until) && DateTime.UtcNow < until) return;
                 uint prev;
                 if (SetPrioritySmart(pid, name, want, out prev) == 1) Record(pid, name, prev, role);
+                else failedUntil[pid] = DateTime.UtcNow.AddSeconds(FailCooldownSeconds);
             }
         }
 
@@ -672,7 +695,7 @@ namespace FrameForge.Sys
                     using (Process p = Process.GetProcessById(pid))
                     {
                         item.StartTime = p.StartTime.Ticks;
-                        try { item.Path = p.MainModule.FileName; } catch { item.Path = ""; }
+                        try { item.Path = Native.ProcessPath(p.Id); } catch { item.Path = ""; }
                     }
                 }
                 catch { item.StartTime = 0; item.Path = ""; }
@@ -690,7 +713,11 @@ namespace FrameForge.Sys
                 if (oldPid <= 0 || oldPid == newPid) return;
 
                 SavedPriority target = null;
-                if (saved.TryGetValue(oldPid, out target) && target.Role == 1) saved.Remove(oldPid);
+                if (saved.TryGetValue(oldPid, out target) && target.Role == 1)
+                {
+                    saved.Remove(oldPid);
+                    failedUntil.Remove(oldPid);
+                }
                 else target = null;
                 if (target == null) return;
 
@@ -729,8 +756,9 @@ namespace FrameForge.Sys
                     if (s.StartTime > 0 && p.StartTime.Ticks != s.StartTime) return false;
                     if (s.Path.Length > 0)
                     {
-                        string actual = p.MainModule.FileName;
-                        if (!string.Equals(actual, s.Path, StringComparison.OrdinalIgnoreCase)) return false;
+                        // 走 QueryFullProcessImageName,避免 MainModule 触发 PROCESS_VM_READ。
+                        string actual = Native.ProcessPath(s.Pid);
+                        if (actual.Length > 0 && !string.Equals(actual, s.Path, StringComparison.OrdinalIgnoreCase)) return false;
                     }
                     return true;
                 }
@@ -793,7 +821,20 @@ namespace FrameForge.Sys
                 {
                     if (!Matches(kv.Value)) dead.Add(kv.Key);
                 }
-                for (int i = 0; i < dead.Count; i++) saved.Remove(dead[i]);
+                for (int i = 0; i < dead.Count; i++)
+                {
+                    saved.Remove(dead[i]);
+                    failedUntil.Remove(dead[i]);
+                }
+                // 冷却表本身也要收敛:超过阈值时顺手清掉已过期的 PID。
+                if (failedUntil.Count > 64)
+                {
+                    var expired = new List<int>();
+                    DateTime now = DateTime.UtcNow;
+                    foreach (KeyValuePair<int, DateTime> kv in failedUntil)
+                        if (kv.Value <= now) expired.Add(kv.Key);
+                    for (int i = 0; i < expired.Count; i++) failedUntil.Remove(expired[i]);
+                }
             }
         }
 
@@ -827,6 +868,11 @@ namespace FrameForge.Sys
                 if (!Native.GlobalMemoryStatusEx(ref mem)) return;
                 if (mem.ullTotalPhys == 0) return;
                 if (mem.ullAvailPhys * 100 >= mem.ullTotalPhys * MemLowPercent) return;
+
+                // 只在确实有全屏游戏时清理待命列表:桌面/办公场景下清空全系统 Standby
+                // 会让浏览器、微信下次访问时重新读盘,反而更卡(报告 FF-009)。
+                int gamePid;
+                if (!Monitor.FindFullscreenWindow(out gamePid)) return;
 
                 // A-9：与一键加速共享节流窗口，避免两项叠加反复挤压工作集造成抖动。
                 if (!SystemResourceArbiter.TryNoteMemoryTrim()) return;

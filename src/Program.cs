@@ -13,11 +13,18 @@ namespace FrameForge
 {
     internal static class Program
     {
-        private const string MutexName = "Global\\FrameForge.SingleInstance";
+        // FF-042：同一用户会话内单实例即可。Global\ 会让远程桌面/快速切换用户时
+        // 互相挡住，而且把进程名暴露在整个终端的命名空间里。
+        private const string MutexName = "Local\\FrameForge.SingleInstance";
 
         [STAThread]
         private static int Main(string[] args)
         {
+            // 在任何厂商 DLL(nvml/atiadlxx/dwmapi/pdh/wintrust)被 P/Invoke 解析之前,
+            // 把默认 DLL 搜索目录锁到 System32。便携版 exe 常放在用户可写目录,
+            // 否则同名 DLL 会被优先加载并以管理员权限运行(报告 FF-001)。
+            try { Native.SetDefaultDllDirectories(0x00000800); } catch { }
+
             bool minimized = HasArg(args, "--minimized");
             bool selftest = HasArg(args, "--selftest");
 
@@ -889,7 +896,82 @@ namespace FrameForge
             }
             catch (Exception ex) { check("health paint", false, ex.Message); }
 
-            // 19. 程序图标读取:战绩、报告、保护名单共用的 exe 图标
+            // 19. 滤镜矩阵:行向量转置 + 灰度中性 + 参数安全区间(v1.5.1 规格)
+            try
+            {
+                float[] gray = Filter.BuildCore(8, 0, 0, 0, 0);
+                System.Drawing.Color gw = Filter.Transform(System.Drawing.Color.White, gray);
+                System.Drawing.Color gg = Filter.Transform(System.Drawing.Color.Lime, gray);
+                check("filter gray neutral",
+                    Math.Abs(gw.R - gw.G) <= 1 && Math.Abs(gw.G - gw.B) <= 1
+                    && Math.Abs(gg.R - gg.G) <= 1 && Math.Abs(gg.G - gg.B) <= 1
+                    && Math.Abs(gg.R - 182) <= 3 && Math.Abs(gw.R - 255) <= 1,
+                    "white=" + gw.R + "," + gw.G + "," + gw.B + " green=" + gg.R + "," + gg.G + "," + gg.B);
+
+                float[] t = Filter.Transpose(gray);
+                check("filter row-vector export",
+                    Math.Abs(t[20] - gray[4]) < 0.0001f && t[4] == 0f, "offset -> m20");
+
+                float[] night = Filter.BuildCore(7, 0, 0, 0, 0);
+                System.Drawing.Color nw = Filter.Transform(System.Drawing.Color.White, night);
+                double nightLum = (0.2126 * nw.R + 0.7152 * nw.G + 0.0722 * nw.B) / 255.0;
+                check("filter night range", night[4] >= 0f && night[4] <= 0.009f
+                    && nightLum >= 0.86 && nightLum <= 0.97,
+                    "y0=" + night[4].ToString("0.0000") + " y1=" + nightLum.ToString("0.000"));
+
+                float[] cs2 = Filter.BuildCore(17, 0, 0, 0, 0);
+                System.Drawing.Color cs2g = Filter.Transform(System.Drawing.Color.FromArgb(26, 26, 26), cs2);
+                double cs2Lum = (0.2126 * cs2g.R + 0.7152 * cs2g.G + 0.0722 * cs2g.B);
+                check("filter cs2 shadows", cs2Lum >= 26.5, "10% grey=" + cs2Lum.ToString("0.0"));
+            }
+            catch (Exception ex) { check("filter gray neutral", false, ex.Message); }
+
+            // HDR / 自动颜色管理探测:只报告状态,探测失败也算可诊断信息而不是失败。
+            try
+            {
+                bool hdr = Display.HdrOrAcmActive();
+                check("advanced color probe", true,
+                    "active=" + hdr + " detail=" + Display.AdvancedColorDetail);
+            }
+            catch (Exception ex) { check("advanced color probe", false, ex.Message); }
+
+            // 21. 仲裁者并发:两个引擎同时抢计时器,各自持锁外回调,不允许互等死锁。
+            try
+            {
+                ISystemResourceOwner one = new SelftestResourceOwner(OwnerKind.ONE_SHOT);
+                ISystemResourceOwner real = new SelftestResourceOwner(OwnerKind.REALTIME);
+                SystemResourceArbiter arb = SystemResourceArbiter.Instance;
+                Exception threadError = null;
+                ParameterizedThreadStart work = delegate(object state)
+                {
+                    ISystemResourceOwner me = (ISystemResourceOwner)state;
+                    try
+                    {
+                        for (int i = 0; i < 30; i++)
+                        {
+                            AcquireResult r = arb.Acquire(me, ResourceKind.TimerResolution,
+                                delegate { return "10000"; },
+                                delegate { Thread.Sleep(2); return true; });
+                            if (!r.Ok) throw new InvalidOperationException("acquire denied: " + r.Reason);
+                            arb.Release(me, ResourceKind.TimerResolution,
+                                delegate(string oldValue) { Thread.Sleep(2); return true; });
+                        }
+                    }
+                    catch (Exception ex) { threadError = ex; }
+                };
+                var t1 = new Thread(work);
+                var t2 = new Thread(work);
+                t1.IsBackground = true;
+                t2.IsBackground = true;
+                t1.Start(one);
+                t2.Start(real);
+                bool joined = t1.Join(8000) & t2.Join(8000);
+                check("arbiter concurrent", joined && threadError == null,
+                    !joined ? "deadlock/timeout" : (threadError == null ? "60 cycles" : threadError.Message));
+            }
+            catch (Exception ex) { check("arbiter concurrent", false, ex.Message); }
+
+            // 20. 程序图标读取:战绩、报告、保护名单共用的 exe 图标
             try
             {
                 System.Drawing.Image ico = UI.AppIcons.Load(Path.Combine(Environment.SystemDirectory, "notepad.exe"));

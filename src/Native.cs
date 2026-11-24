@@ -398,6 +398,11 @@ namespace FrameForge
         [DllImport("ntdll.dll")]
         public static extern int NtSetSystemInformation(int cls, IntPtr info, int length);
 
+        /// <summary>FF-028：把系统文件缓存压到默认下限/上限；传 -1,-1 表示按当前压力重算。</summary>
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool SetSystemFileCacheSize(IntPtr minFileCacheSize, IntPtr maxFileCacheSize, uint flags);
+
         [DllImport("ntdll.dll")]
         public static extern int NtQuerySystemInformation(int cls, IntPtr info, int length, out int returnLength);
 
@@ -622,6 +627,30 @@ namespace FrameForge
 
         // ---------------- 辅助 ----------------
 
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool SetDefaultDllDirectories(int directoryFlags);
+
+        /// <summary>
+        /// 返回 System32 下系统工具的绝对路径。直接写 "powercfg"/"cmd.exe" 会按
+        /// CreateProcess 搜索顺序先命中应用目录,给同名文件留下劫持面(报告 FF-006)。
+        /// </summary>
+        public static string System32(string name)
+        {
+            try { return System.IO.Path.Combine(Environment.SystemDirectory, name); }
+            catch { return name; }
+        }
+
+        /// <summary>返回 Windows 目录下系统程序的绝对路径(如 explorer.exe)。</summary>
+        public static string Windows(string name)
+        {
+            try
+            {
+                string dir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+                return string.IsNullOrEmpty(dir) ? name : System.IO.Path.Combine(dir, name);
+            }
+            catch { return name; }
+        }
+
         public static ulong PagesToBytes(IntPtr pages, ulong pageSize)
         {
             long v = pages.ToInt64();
@@ -648,6 +677,27 @@ namespace FrameForge
                 if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
                     name = name.Substring(0, name.Length - 4);
                 return name;
+            }
+            catch { return ""; }
+            finally { CloseHandle(h); }
+        }
+
+        /// <summary>
+        /// 按进程 ID 取完整可执行文件路径;取不到返回空串。
+        /// 只申请 PROCESS_QUERY_LIMITED_INFORMATION,不再碰 Process.MainModule
+        /// (后者隐含 PROCESS_VM_READ,会被反作弊/系统进程拒绝并留下审计噪音)。
+        /// </summary>
+        public static string ProcessPath(int pid)
+        {
+            if (pid <= 0) return "";
+            IntPtr h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+            if (h == IntPtr.Zero) return "";
+            try
+            {
+                var sb = new StringBuilder(1024);
+                int size = sb.Capacity;
+                if (!QueryFullProcessImageName(h, 0, sb, ref size)) return "";
+                return sb.ToString(0, size);
             }
             catch { return ""; }
             finally { CloseHandle(h); }
@@ -721,7 +771,9 @@ namespace FrameForge
                             new IntPtr(buf.ToInt64() + (long)i * size),
                             typeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION));
                         idle[i] = info.IdleTime;
-                        busy[i] = info.KernelTime + info.UserTime;
+                        // FF-026：KernelTime 已经包含 IdleTime，不减掉空闲时间会把负载压缩到
+                        // 0.5~1.0，空载核也显示成一半忙。
+                        busy[i] = (info.KernelTime - info.IdleTime) + info.UserTime;
                     }
                     return count;
                 }

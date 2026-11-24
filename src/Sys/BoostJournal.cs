@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using Microsoft.Win32;
@@ -270,8 +271,15 @@ namespace FrameForge.Sys
                   .Append(BuildFlags(a)).Append('|')
                   .Append(EncodeMeta(a)).Append('\n');
             }
-            tx.Checksum = Fnv1a(sb.ToString());
-            sb.Append("sum=").Append(tx.Checksum).Append('\n');
+            string body = sb.ToString();
+            tx.Checksum = Fnv1a(body);
+            // 日志放在便携目录,普通用户可改;FNV 只能防手滑不能防伪造。
+            // 用管理员侧密钥再做一次 HMAC,阻止伪造事务在下次提权启动时被"还原"。
+            // 两个摘要写在同一行(checksum:hmac),加载时共用同一份 body,避免重建偏差。
+            byte[] key = MacKey();
+            sb.Append("sum=").Append(tx.Checksum);
+            if (key != null) sb.Append(':').Append(Hmac(key, body));
+            sb.Append('\n');
             return sb.ToString();
         }
 
@@ -290,6 +298,52 @@ namespace FrameForge.Sys
                 hash *= 16777619u;
             }
             return hash.ToString("x8", CultureInfo.InvariantCulture);
+        }
+
+        private static byte[] macKey;
+        private static bool macTried;
+        private static bool macExisted;
+
+        /// <summary>
+        /// 日志 HMAC 密钥:首次在 %ProgramData%\FrameForge 下生成(普通用户无写权限),
+        /// 之后只读不改。拿不到时返回 null,退回纯 FNV 校验,不阻断自检与受限场景。
+        /// </summary>
+        private static byte[] MacKey()
+        {
+            if (macTried) return macKey;
+            macTried = true;
+            try
+            {
+                string dir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "FrameForge");
+                string file = Path.Combine(dir, "journal.key");
+                if (File.Exists(file))
+                {
+                    byte[] k = File.ReadAllBytes(file);
+                    if (k.Length == 32) { macExisted = true; macKey = k; return macKey; }
+                }
+                byte[] rnd = new byte[32];
+                using (var rng = new RNGCryptoServiceProvider()) rng.GetBytes(rnd);
+                Directory.CreateDirectory(dir);
+                File.WriteAllBytes(file, rnd);
+                macKey = rnd;
+            }
+            catch (Exception ex) { Log.Write("journal key: " + ex.Message); macKey = null; }
+            return macKey;
+        }
+
+        private static string Hmac(byte[] key, string text)
+        {
+            using (var h = new HMACSHA256(key))
+                return Convert.ToBase64String(h.ComputeHash(Encoding.UTF8.GetBytes(text ?? "")));
+        }
+
+        private static bool MacEquals(string a, string b)
+        {
+            if (a == null || b == null || a.Length != b.Length) return false;
+            int diff = 0;
+            for (int i = 0; i < a.Length; i++) diff |= a[i] ^ b[i];
+            return diff == 0;
         }
 
         /// <summary>改动前/确认点/提交点统一原子落盘。</summary>
@@ -348,6 +402,14 @@ namespace FrameForge.Sys
                     }
                 }
                 if (sumAt < 0) { Quarantine(owner, "bad", "missing checksum"); return null; }
+                string fnv = sum;
+                string mac = null;
+                int colon = sum.IndexOf(':');
+                if (colon > 0)
+                {
+                    fnv = sum.Substring(0, colon);
+                    mac = sum.Substring(colon + 1);
+                }
                 var body = new StringBuilder();
                 for (int i = 0; i < lines.Length; i++)
                 {
@@ -358,14 +420,34 @@ namespace FrameForge.Sys
                     if (i == lines.Length - 1 && lines[i].Length == 0) continue;
                     body.Append(lines[i]).Append('\n');
                 }
-                if (!string.Equals(Fnv1a(body.ToString()), sum, StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(Fnv1a(body.ToString()), fnv, StringComparison.OrdinalIgnoreCase))
                 {
                     Quarantine(owner, "bad", "checksum mismatch");
                     return null;
                 }
 
+                // HMAC：密钥文件已存在时,缺失或对不上都视为伪造(防止删掉 mac 降级)。
+                if (mac != null)
+                {
+                    byte[] key = MacKey();
+                    if (key != null && !MacEquals(Hmac(key, body.ToString()), mac))
+                    {
+                        Quarantine(owner, "bad", "mac mismatch");
+                        return null;
+                    }
+                }
+                else
+                {
+                    byte[] key = MacKey();
+                    if (key != null && macExisted)
+                    {
+                        Quarantine(owner, "bad", "missing mac");
+                        return null;
+                    }
+                }
+
                 Transaction tx = ParseV2(lines);
-                if (tx != null) tx.Checksum = sum;
+                if (tx != null) tx.Checksum = fnv;
                 else Quarantine(owner, "bad", "parse failed");
                 return tx;
             }
