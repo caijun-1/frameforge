@@ -16,7 +16,23 @@
   <img src="https://img.shields.io/badge/version-1.6.5-orange" alt="1.6.5">
 </p>
 
-<p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
+<p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest"><b>⬇️ 下载最新版 (v1.6.5)</b></a> · <a href="#为什么选择-frameforge">为什么选它</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
+
+<p align="center"><img src="docs/screenshots/v1.6.5/overlay-hud.png" width="840" alt="FrameForge v1.6.5 Modern HUD Overlay"></p>
+
+> **觉得有帮助的话，欢迎在右上角点个 ⭐ Star 支持一下！**
+
+---
+
+## 为什么选择 FrameForge
+
+| 对比维度 | FrameForge | 传统优化/监控组合（小飞机 / 游戏加加 / 加速软件） |
+| --- | --- | --- |
+| **体积与部署** | 单文件 ~7 MB，免安装绿色便携，无后台服务残留 | 通常数十至数百 MB，需安装多套驱动/服务 |
+| **反作弊兼容性** | **默认零 DLL 注入**（ETW 采集帧率），可选 RTSS | 多数需注入渲染钩子，易与部分反作弊冲突 |
+| **系统改动安全** | **SCTL v2 事务日志**，崩溃/强杀后自动或一键全量回滚 | 改完注册表/电源计划常无事务记录 |
+| **功能集成度** | 加速 + 实时监测 + 现代 HUD + 硬件滤镜/ICC + 赛后报告 | 往往需要同时开 2~3 个软件 |
+| **开源与隐私** | MIT 全量开源（可 `build.ps1` 自编译），零遥测零广告 | 闭源、常带广告/弹窗或账号体系 |
 
 ---
 
@@ -71,9 +87,9 @@
 | --- | --- |
 | ![我的游戏](docs/screenshots/v1.5.0/games.png) | ![滤镜](docs/screenshots/v1.5.0/filter.png) |
 
-| 叠加层（RTSS 接管） | 战绩 |
+| 叠加层（v1.6.5 现代 HUD） | 战绩 |
 | --- | --- |
-| ![叠加层](docs/screenshots/v1.5.0/overlay.png) | ![战绩](docs/screenshots/v1.5.0/report.png) |
+| ![叠加层](docs/screenshots/v1.6.5/overlay-hud.png) | ![战绩](docs/screenshots/v1.5.0/report.png) |
 
 | 优化（系统体检） | 设置 |
 | --- | --- |
