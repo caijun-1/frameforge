@@ -17,6 +17,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Noto+Serif+SC:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/gsap.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/ScrollTrigger.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/lenis@1.1.20/dist/lenis.min.js" defer></script>
   <style>
     :root {
       --bg: #050507;
@@ -148,11 +149,28 @@
       font-family: var(--serif);
       font-size: clamp(40px, 5.4vw, 68px);
       font-weight: 500;
-      line-height: 1.14;
+      line-height: 1.16;
       letter-spacing: -0.01em;
       color: var(--text);
       margin-bottom: 24px;
     }
+    .char-mask {
+      display: inline-block;
+      overflow: hidden;
+      vertical-align: bottom;
+      padding-bottom: 4px;
+    }
+    .char-inner {
+      display: inline-block;
+      will-change: transform, opacity;
+    }
+    .hud-spotlight {
+      position: absolute; inset: 0; z-index: 2; pointer-events: none;
+      opacity: 0; transition: opacity 0.35s var(--ease);
+      background: radial-gradient(360px circle at var(--mx, 50%) var(--my, 50%), rgba(238, 234, 225, 0.08), transparent 62%);
+    }
+    .hud-canvas:hover .hud-spotlight { opacity: 1; }
+    .magnetic { will-change: transform; }
     .hero-copy p {
       font-size: 16px;
       line-height: 1.8;
@@ -596,21 +614,21 @@
             单文件约 7 MB 的 Windows FPS 增效工具。通过 Intel PresentMon ETW 采集帧率与 1% Low，默认零 DLL 注入；所有系统优化由签名事务日志全程托管，退出或崩溃后自动还原。
           </p>
           <div class="hero-actions gs-hero">
-            <a class="btn-primary" href="https://github.com/caijun-1/frameforge/releases/latest" data-i18n="cta_dl">下载 FrameForge v1.6.5</a>
-            <a class="btn-secondary" href="https://github.com/caijun-1/frameforge" target="_blank" rel="noopener" data-i18n="cta_src">查看 GitHub 源码</a>
+            <a class="btn-primary magnetic" href="https://github.com/caijun-1/frameforge/releases/latest" data-i18n="cta_dl">下载 FrameForge v1.6.5</a>
+            <a class="btn-secondary magnetic" href="https://github.com/caijun-1/frameforge" target="_blank" rel="noopener" data-i18n="cta_src">查看 GitHub 源码</a>
           </div>
 
           <div class="hero-facts gs-hero">
             <div>
-              <div class="fact-val">7.1 MB</div>
+              <div class="fact-val" data-count="7.1" data-suffix=" MB" data-decimals="1">7.1 MB</div>
               <div class="fact-label" data-i18n="f1">单文件绿色便携</div>
             </div>
             <div>
-              <div class="fact-val">0 DLL</div>
+              <div class="fact-val" data-count="0" data-suffix=" DLL" data-decimals="0">0 DLL</div>
               <div class="fact-label" data-i18n="f2">默认不注入游戏进程</div>
             </div>
             <div>
-              <div class="fact-val">100%</div>
+              <div class="fact-val" data-count="100" data-suffix="%" data-decimals="0">100%</div>
               <div class="fact-label" data-i18n="f3">SCTL v2 事务级回滚</div>
             </div>
           </div>
@@ -629,9 +647,10 @@
         </div>
 
         <div class="hud-showcase gs-reveal">
-          <div class="hud-canvas">
+          <div class="hud-canvas" id="hudCanvas">
             <img class="hud-canvas-bg" src="assets/hero-blade.jpg" alt="In-game preview backdrop">
             <div class="hud-canvas-shade"></div>
+            <div class="hud-spotlight"></div>
 
             <div class="ff-hud bd-hud layout-stack" id="liveHud">
               <div class="ff-accent-pill" id="hudAccent"></div>
@@ -1015,15 +1034,86 @@
       });
     });
 
-    // GSAP 3 + ScrollTrigger restrained cinematic orchestration
+    // MotionSites-inspired GSAP 3 + ScrollTrigger + Lenis smooth orchestration
     window.addEventListener("DOMContentLoaded", () => {
       if (typeof gsap === "undefined" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
       gsap.registerPlugin(ScrollTrigger);
 
-      const tl = gsap.timeline({ defaults: { ease: "power3.out" } });
-      tl.to("#heroImg", { scale: 1.0, duration: 1.6 }, 0)
-        .from(".gs-hero", { y: 20, opacity: 0, duration: 0.75, stagger: 0.1 }, 0.15);
+      // 1. Lenis smooth inertial scrolling synced with ScrollTrigger
+      if (typeof Lenis !== "undefined") {
+        const lenis = new Lenis({
+          duration: 1.15,
+          easing: t => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+          smoothWheel: true
+        });
+        lenis.on("scroll", ScrollTrigger.update);
+        gsap.ticker.add(time => lenis.raf(time * 1000));
+        gsap.ticker.lagSmoothing(0);
+      }
 
+      // 2. Masked split-character blade reveal on hero headline
+      const h1 = document.querySelector(".hero-copy h1");
+      function splitHeadline() {
+        const text = h1.textContent;
+        h1.innerHTML = Array.from(text).map(ch =>
+          ch === " " ? " " : '<span class="char-mask"><span class="char-inner">' + ch + "</span></span>"
+        ).join("");
+      }
+      splitHeadline();
+
+      const tl = gsap.timeline({ defaults: { ease: "power3.out" } });
+      tl.to("#heroImg", { scale: 1.0, duration: 1.8, ease: "power2.out" }, 0)
+        .from(".hero-copy h1 .char-inner", { yPercent: 112, opacity: 0, duration: 0.72, stagger: 0.032 }, 0.12)
+        .from(".hero-copy p, .hero-actions, .hero-facts", { y: 20, opacity: 0, duration: 0.72, stagger: 0.1 }, 0.34);
+
+      // 3. Telemetry count-up on initial reveal
+      document.querySelectorAll(".fact-val[data-count]").forEach(el => {
+        const target = parseFloat(el.dataset.count);
+        const decimals = parseInt(el.dataset.decimals || "0", 10);
+        const suffix = el.dataset.suffix || "";
+        const obj = { val: 0 };
+        gsap.to(obj, {
+          val: target,
+          duration: 1.25,
+          delay: 0.45,
+          ease: "power2.out",
+          onUpdate: () => { el.textContent = obj.val.toFixed(decimals) + suffix; }
+        });
+      });
+
+      // 4. Magnetic CTA buttons (subtle 6px pull)
+      document.querySelectorAll(".magnetic").forEach(btn => {
+        const qx = gsap.quickTo(btn, "x", { duration: 0.35, ease: "power3.out" });
+        const qy = gsap.quickTo(btn, "y", { duration: 0.35, ease: "power3.out" });
+        btn.addEventListener("pointermove", e => {
+          const r = btn.getBoundingClientRect();
+          qx(((e.clientX - r.left) / r.width - 0.5) * 12);
+          qy(((e.clientY - r.top) / r.height - 0.5) * 10);
+        });
+        btn.addEventListener("pointerleave", () => { qx(0); qy(0); });
+      });
+
+      // 5. Pointer depth parallax on hero scene & HUD specular spotlight
+      const heroSec = document.getElementById("hero");
+      const heroX = gsap.quickTo("#heroImg", "x", { duration: 0.9, ease: "power2.out" });
+      const heroY = gsap.quickTo("#heroImg", "y", { duration: 0.9, ease: "power2.out" });
+      heroSec.addEventListener("pointermove", e => {
+        const r = heroSec.getBoundingClientRect();
+        heroX(((e.clientX - r.left) / r.width - 0.5) * -16);
+        heroY(((e.clientY - r.top) / r.height - 0.5) * -10);
+      });
+      heroSec.addEventListener("pointerleave", () => { heroX(0); heroY(0); });
+
+      const hudCanvas = document.getElementById("hudCanvas");
+      if (hudCanvas) {
+        hudCanvas.addEventListener("pointermove", e => {
+          const r = hudCanvas.getBoundingClientRect();
+          hudCanvas.style.setProperty("--mx", (e.clientX - r.left) + "px");
+          hudCanvas.style.setProperty("--my", (e.clientY - r.top) + "px");
+        });
+      }
+
+      // 6. Scroll-linked depth parallax & staggered architecture list
       gsap.to("#heroImg", {
         yPercent: 12,
         ease: "none",
@@ -1037,11 +1127,20 @@
         scrollTrigger: { trigger: "#core", start: "top bottom", end: "bottom top", scrub: true }
       });
 
+      gsap.from(".core-list li", {
+        y: 18,
+        opacity: 0,
+        duration: 0.65,
+        stagger: 0.1,
+        ease: "power2.out",
+        scrollTrigger: { trigger: ".core-list", start: "top 82%", once: true }
+      });
+
       gsap.utils.toArray(".gs-reveal").forEach(el => {
         gsap.from(el, {
           y: 22,
           opacity: 0,
-          duration: 0.7,
+          duration: 0.72,
           ease: "power2.out",
           scrollTrigger: { trigger: el, start: "top 84%", once: true }
         });
