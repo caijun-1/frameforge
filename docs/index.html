@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>FrameForge — 影刃级轻量 Windows FPS 增效工具</title>
-  <meta name="description" content="Lightweight 7 MB portable Windows FPS booster, PresentMon/RTSS modern HUD overlay, hardware screen filters & 100% reversible transactional boost — zero DLL injection.">
-  <meta property="og:title" content="FrameForge — Lightweight 7 MB Windows FPS Toolkit">
-  <meta property="og:description" content="One-click reversible boost, PresentMon/RTSS modern HUD overlay, non-invasive screen filters & post-match FPS reports. Single 7 MB portable exe, MIT open source.">
+  <title>FrameForge — Windows FPS 增效与帧率监测工具</title>
+  <meta name="description" content="约 7 MB 单文件 Windows FPS 增效工具：一键事务级可回滚加速、PresentMon / RTSS 现代 HUD、硬件级画面滤镜与赛后战绩，默认零 DLL 注入。">
+  <meta property="og:title" content="FrameForge — 7 MB Portable Windows FPS Toolkit">
+  <meta property="og:description" content="One-click reversible boost, PresentMon/RTSS modern HUD, non-invasive hardware screen filters & post-match FPS reports. Single 7 MB portable exe, MIT open source.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://caijun-1.github.io/frameforge/">
   <meta property="og:image" content="https://caijun-1.github.io/frameforge/social-preview.png">
@@ -14,638 +14,909 @@
   <link rel="icon" type="image/png" href="icon-1.5.0.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Noto+Serif+SC:wght@400;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Noto+Serif+SC:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/gsap.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/ScrollTrigger.min.js" defer></script>
   <style>
     :root {
-      --bg: #060608;
-      --bg-panel: #0c0d11;
-      --bg-card: rgba(14, 15, 19, 0.86);
-      --line: rgba(232, 224, 210, 0.10);
-      --line-strong: rgba(232, 224, 210, 0.22);
-      --ink: #eae4d9;
-      --ink-soft: #9a968e;
-      --ink-dim: #66635e;
-      --crimson: #b82925;
-      --crimson-hi: #df3a33;
-      --crimson-glow: rgba(184, 41, 37, 0.22);
-      --bronze: #bfa37a;
-      --serif: "Noto Serif SC", "Songti SC", "STSong", "SimSun", Georgia, serif;
+      --bg: #050507;
+      --surface: #0b0c0f;
+      --surface-raised: #12141a;
+      --line: rgba(235, 230, 220, 0.08);
+      --line-strong: rgba(235, 230, 220, 0.18);
+      --text: #eeeae1;
+      --text-secondary: #a19d95;
+      --text-muted: #66635d;
+      --accent: #c8322c;
+      --accent-hover: #dc3c35;
+      --serif: "Noto Serif SC", "Songti SC", "STSong", Georgia, serif;
       --display: "Cormorant Garamond", "Noto Serif SC", Georgia, serif;
       --sans: "Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
       --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+      --ease: cubic-bezier(0.22, 1, 0.36, 1);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html { scroll-behavior: smooth; }
+    html { scroll-behavior: smooth; background: var(--bg); }
     body {
-      background:
-        radial-gradient(680px 360px at 80% 4%, rgba(168, 28, 24, 0.20), transparent 62%),
-        radial-gradient(720px 460px at 14% 26%, rgba(191, 163, 122, 0.06), transparent 65%),
-        radial-gradient(900px 520px at 50% 96%, rgba(140, 24, 22, 0.12), transparent 65%),
-        var(--bg);
-      color: var(--ink);
+      background: var(--bg);
+      color: var(--text);
       font-family: var(--sans);
+      font-size: 15px;
       line-height: 1.7;
       -webkit-font-smoothing: antialiased;
       overflow-x: hidden;
     }
 
-    /* Subtle Xuan-paper / cold-iron grain */
-    body::before {
-      content: "";
-      position: fixed;
-      inset: 0;
-      z-index: 90;
-      pointer-events: none;
-      opacity: 0.04;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.78' numOctaves='3'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
-    }
-
     a { color: inherit; text-decoration: none; }
-    .wrap { max-width: 1120px; margin: 0 auto; padding: 0 28px; position: relative; z-index: 2; }
+    button { font-family: inherit; }
 
-    /* Top scroll blade line */
-    .scroll-blade {
-      position: fixed; top: 0; left: 0; height: 2px; width: 0%;
-      background: linear-gradient(90deg, transparent, var(--crimson), var(--crimson-hi));
-      z-index: 100;
-      box-shadow: 0 0 12px var(--crimson-hi);
-      transition: width 0.08s linear;
+    /* Signature detail: 1px scroll blade progress */
+    .scroll-progress {
+      position: fixed; top: 0; left: 0; height: 1px; width: 0;
+      background: var(--accent);
+      z-index: 120;
+      pointer-events: none;
     }
 
-    /* Header */
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 32px;
+      position: relative;
+      z-index: 3;
+    }
+
+    /* Quiet Navigation */
     header {
-      position: sticky; top: 0; z-index: 50;
-      background: rgba(6, 6, 8, 0.82);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      border-bottom: 1px solid var(--line);
+      position: fixed; top: 0; left: 0; right: 0; z-index: 60;
+      transition: background-color 0.3s var(--ease), border-color 0.3s var(--ease);
+      border-bottom: 1px solid transparent;
+    }
+    header.scrolled {
+      background: rgba(5, 5, 7, 0.84);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom-color: var(--line);
     }
     .nav {
-      height: 68px;
+      height: 72px;
       display: flex; align-items: center; justify-content: space-between;
     }
     .brand {
-      display: flex; align-items: center; gap: 14px;
-    }
-    .brand img {
-      width: 34px; height: 34px;
-      border: 1px solid var(--line-strong);
-      filter: contrast(1.06);
-    }
-    .brand-name {
+      display: flex; align-items: center; gap: 12px;
       font-family: var(--display);
-      font-size: 22px; font-weight: 600; letter-spacing: 0.06em;
+      font-size: 22px; font-weight: 500; letter-spacing: 0.03em;
     }
-    .brand-seal {
-      font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em;
-      color: var(--bronze);
-      border: 1px solid rgba(191, 163, 122, 0.32);
-      padding: 2px 8px;
+    .brand img { width: 28px; height: 28px; border-radius: 6px; }
+    .nav-right {
+      display: flex; align-items: center; gap: 28px;
+      font-size: 14px; color: var(--text-secondary);
     }
-    .nav-links {
-      display: flex; align-items: center; gap: 26px;
-      font-size: 13px; letter-spacing: 0.12em; color: var(--ink-soft);
-    }
-    .nav-links a { position: relative; padding: 4px 0; transition: color 0.2s; }
-    .nav-links a:hover { color: var(--ink); }
-    .nav-links a::after {
-      content: ""; position: absolute; left: 0; bottom: 0; width: 0; height: 1px;
-      background: var(--crimson-hi); transition: width 0.22s ease;
-    }
-    .nav-links a:hover::after { width: 100%; }
+    .nav-right a { transition: color 0.2s var(--ease); }
+    .nav-right a:hover { color: var(--text); }
     .lang-btn {
-      font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em;
-      color: var(--ink); background: transparent;
-      border: 1px solid var(--line-strong);
-      padding: 5px 12px; cursor: pointer;
-      transition: border-color 0.2s, color 0.2s, background 0.2s;
+      font-size: 13px; color: var(--text-secondary);
+      background: transparent; border: 1px solid var(--line-strong);
+      border-radius: 6px; padding: 6px 12px; cursor: pointer;
+      transition: color 0.2s var(--ease), border-color 0.2s var(--ease);
     }
-    .lang-btn:hover { border-color: var(--crimson-hi); color: #fff; background: var(--crimson-glow); }
+    .lang-btn:hover { color: var(--text); border-color: var(--text-secondary); }
+    .nav-cta {
+      font-size: 13px; font-weight: 500;
+      color: #0b0c0f !important; background: var(--text);
+      padding: 8px 16px; border-radius: 6px;
+      transition: background-color 0.2s var(--ease), transform 0.15s var(--ease);
+    }
+    .nav-cta:hover { background: #ffffff; }
+    .nav-cta:active { transform: scale(0.98); }
 
-    /* Hero */
+    /* ACT I: Full-bleed Cinematic Scene Hero */
     .hero {
-      padding: 84px 0 64px;
       position: relative;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      overflow: hidden;
+      padding: 112px 0 88px;
     }
-    .hero-top {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 32px;
-      align-items: end;
-      margin-bottom: 42px;
-    }
-    .kicker {
-      display: flex; align-items: center; gap: 14px;
-      font-family: var(--mono); font-size: 11px; letter-spacing: 0.24em;
-      color: var(--bronze); text-transform: uppercase;
-      margin-bottom: 20px;
-    }
-    .kicker::before {
-      content: ""; width: 34px; height: 1px; background: var(--crimson-hi);
-    }
-    .hero h1 {
-      font-family: var(--serif);
-      font-size: clamp(36px, 5.2vw, 60px);
-      font-weight: 700; line-height: 1.15; letter-spacing: 0.04em;
-      color: var(--ink);
-      margin-bottom: 18px;
-    }
-    .hero h1 .crimson-accent {
-      color: var(--crimson-hi);
-      font-weight: 600;
-    }
-    .hero-lead {
-      max-width: 660px;
-      font-size: 15px; line-height: 1.9; color: var(--ink-soft);
-      margin-bottom: 32px;
-    }
-
-    /* Vertical Cinnabar Seal */
-    .seal-stack {
-      display: flex; gap: 10px; align-self: start; padding-top: 8px;
-    }
-    .seal {
-      writing-mode: vertical-rl;
-      font-family: var(--serif); font-size: 12px; letter-spacing: 0.28em;
-      color: var(--crimson-hi);
-      border: 1px solid rgba(223, 58, 51, 0.55);
-      background: rgba(184, 41, 37, 0.08);
-      padding: 10px 6px;
-      user-select: none;
-    }
-    .seal.muted {
-      color: var(--bronze);
-      border-color: rgba(191, 163, 122, 0.34);
-      background: rgba(191, 163, 122, 0.05);
-    }
-
-    /* Blade-cut Buttons */
-    .cta-row { display: flex; flex-wrap: wrap; gap: 14px; }
-    .btn {
-      position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 10px;
-      padding: 13px 28px; font-size: 14px; font-weight: 600; letter-spacing: 0.12em;
-      clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
-      transition: transform 0.18s ease, background 0.2s ease, color 0.2s ease;
+    .hero-media {
+      position: absolute; inset: 0; z-index: 0;
       overflow: hidden;
     }
-    .btn-blade {
-      background: linear-gradient(135deg, var(--crimson), #8f1d1b);
-      color: #f7f3ec;
+    .hero-media img {
+      width: 100%; height: 100%;
+      object-fit: cover; object-position: 68% center;
+      transform: scale(1.06);
+      will-change: transform;
     }
-    .btn-blade::after {
-      content: ""; position: absolute; top: 0; left: -120%; width: 70%; height: 100%;
-      background: linear-gradient(110deg, transparent, rgba(255, 255, 255, 0.22), transparent);
-      transition: left 0.45s ease;
-    }
-    .btn-blade:hover { background: linear-gradient(135deg, var(--crimson-hi), var(--crimson)); transform: translateY(-1px); }
-    .btn-blade:hover::after { left: 140%; }
-
-    .btn-iron {
-      background: rgba(255, 255, 255, 0.03);
-      color: var(--ink);
-      box-shadow: inset 0 0 0 1px var(--line-strong);
-    }
-    .btn-iron:hover {
-      background: rgba(232, 224, 210, 0.08);
-      box-shadow: inset 0 0 0 1px var(--bronze);
-    }
-
-    /* Banner Frame with Corner Brackets */
-    .frame-box {
-      position: relative;
-      background: #08090c;
-      border: 1px solid var(--line);
-      padding: 8px;
-      box-shadow: 0 36px 90px rgba(0, 0, 0, 0.72);
-    }
-    .frame-box::before, .frame-box::after {
-      content: ""; position: absolute; width: 18px; height: 18px; pointer-events: none;
-    }
-    .frame-box::before {
-      top: -1px; left: -1px;
-      border-top: 2px solid var(--crimson-hi);
-      border-left: 2px solid var(--crimson-hi);
-    }
-    .frame-box::after {
-      bottom: -1px; right: -1px;
-      border-bottom: 2px solid var(--bronze);
-      border-right: 2px solid var(--bronze);
-    }
-    .frame-box img { width: 100%; display: block; }
-
-    /* Section Headers */
-    section.block { padding: 72px 0; border-top: 1px solid var(--line); }
-    .sec-head {
-      display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 16px;
-      margin-bottom: 36px;
-    }
-    .sec-tag {
-      font-family: var(--mono); font-size: 11px; letter-spacing: 0.24em;
-      color: var(--crimson-hi); text-transform: uppercase; margin-bottom: 10px;
-    }
-    .sec-head h2 {
-      font-family: var(--serif); font-size: clamp(24px, 3vw, 32px);
-      font-weight: 600; letter-spacing: 0.06em;
-    }
-    .sec-desc { max-width: 460px; font-size: 14px; color: var(--ink-soft); }
-
-    /* Four Tenets */
-    .tenets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
-    .tenet {
-      position: relative;
-      background: var(--bg-card);
-      border: 1px solid var(--line);
-      padding: 26px 22px 24px;
-      transition: border-color 0.22s ease, transform 0.22s ease;
-    }
-    .tenet::before {
-      content: ""; position: absolute; top: 0; left: 0; width: 26px; height: 2px;
-      background: var(--crimson-hi); transition: width 0.28s ease;
-    }
-    .tenet:hover { border-color: var(--line-strong); transform: translateY(-2px); }
-    .tenet:hover::before { width: 100%; }
-    .tenet-num {
-      font-family: var(--serif); font-size: 13px; color: var(--bronze);
-      letter-spacing: 0.2em; margin-bottom: 14px;
-      display: flex; justify-content: space-between; align-items: center;
-    }
-    .tenet-num span.en { font-family: var(--mono); font-size: 10px; color: var(--ink-dim); }
-    .tenet h3 {
-      font-family: var(--serif); font-size: 17px; font-weight: 600;
-      letter-spacing: 0.04em; margin-bottom: 10px;
-    }
-    .tenet p { font-size: 13px; color: var(--ink-soft); line-height: 1.8; }
-
-    /* Interactive HUD Simulator */
-    .hud-lab {
-      display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 24px;
-      background: var(--bg-card); border: 1px solid var(--line);
-      padding: 24px; margin-bottom: 24px;
-    }
-    .hud-controls { display: flex; flex-direction: column; gap: 20px; }
-    .ctrl-label {
-      font-family: var(--mono); font-size: 11px; letter-spacing: 0.2em;
-      color: var(--bronze); text-transform: uppercase; margin-bottom: 10px;
-    }
-    .seg-group { display: flex; flex-wrap: wrap; gap: 8px; }
-    .seg-btn {
-      font-family: var(--sans); font-size: 12px; letter-spacing: 0.06em;
-      color: var(--ink-soft); background: rgba(255, 255, 255, 0.02);
-      border: 1px solid var(--line); padding: 6px 12px; cursor: pointer;
-      transition: all 0.16s ease;
-    }
-    .seg-btn:hover { color: var(--ink); border-color: var(--line-strong); }
-    .seg-btn.active {
-      color: #fff; border-color: var(--crimson-hi);
-      background: rgba(184, 41, 37, 0.22);
-    }
-    .hud-stage {
-      position: relative; min-height: 230px;
+    .hero-vignette {
+      position: absolute; inset: 0; z-index: 1;
       background:
-        radial-gradient(circle at 74% 34%, rgba(190, 44, 38, 0.34), transparent 28%),
-        linear-gradient(180deg, #111319 0%, #1c181a 56%, #0c0d10 100%);
-      border: 1px solid var(--line);
-      display: flex; align-items: center; justify-content: center;
-      padding: 28px; overflow: hidden;
+        linear-gradient(90deg, rgba(5, 5, 7, 0.92) 0%, rgba(5, 5, 7, 0.72) 38%, rgba(5, 5, 7, 0.14) 72%, rgba(5, 5, 7, 0.32) 100%),
+        linear-gradient(180deg, rgba(5, 5, 7, 0.48) 0%, transparent 22%, transparent 72%, #050507 100%);
     }
-    .hud-stage::after {
-      content: "IN-GAME HUD PREVIEW · LIVE CSS SIMULATION";
-      position: absolute; right: 14px; bottom: 10px;
-      font-family: var(--mono); font-size: 10px; letter-spacing: 0.18em;
-      color: rgba(234, 228, 217, 0.32);
+    #atmosphere {
+      position: absolute; inset: 0; z-index: 2;
+      pointer-events: none;
+      opacity: 0.75;
     }
-    .hud-widget {
-      position: relative; min-width: 248px; padding: 12px 16px 12px 20px;
-      font-family: var(--mono); font-size: 13px; line-height: 1.55;
-      transition: all 0.2s ease;
+    .hero-copy {
+      max-width: 560px;
     }
-    .hud-widget.bd-hud {
-      background: linear-gradient(180deg, rgba(16, 18, 24, 0.86), rgba(10, 11, 15, 0.90));
+    .hero-copy h1 {
+      font-family: var(--serif);
+      font-size: clamp(40px, 5.4vw, 68px);
+      font-weight: 500;
+      line-height: 1.14;
+      letter-spacing: -0.01em;
+      color: var(--text);
+      margin-bottom: 24px;
+    }
+    .hero-copy p {
+      font-size: 16px;
+      line-height: 1.8;
+      color: var(--text-secondary);
+      margin-bottom: 36px;
+      max-width: 480px;
+    }
+    .hero-actions {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 16px;
+    }
+    .btn-primary {
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 48px; padding: 0 28px; border-radius: 8px;
+      background: var(--accent); color: #f8f5f0;
+      font-size: 15px; font-weight: 500;
+      transition: background-color 0.2s var(--ease), transform 0.15s var(--ease);
+    }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-primary:active { transform: scale(0.98); }
+
+    .btn-secondary {
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 48px; padding: 0 24px; border-radius: 8px;
+      background: rgba(238, 234, 225, 0.06);
+      border: 1px solid var(--line-strong);
+      color: var(--text); font-size: 15px; font-weight: 400;
+      transition: background-color 0.2s var(--ease), border-color 0.2s var(--ease);
+    }
+    .btn-secondary:hover { background: rgba(238, 234, 225, 0.12); border-color: rgba(238, 234, 225, 0.32); }
+
+    .hero-facts {
+      margin-top: 56px;
+      padding-top: 24px;
+      border-top: 1px solid var(--line);
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 24px;
+    }
+    .fact-val {
+      font-family: var(--mono);
+      font-variant-numeric: tabular-nums;
+      font-size: 20px; font-weight: 500;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+    .fact-label {
+      font-size: 13px; color: var(--text-muted);
+    }
+
+    /* ACT II: Live Interactive HUD Showcase */
+    .stage-section {
+      padding: 120px 0;
+      border-top: 1px solid var(--line);
+    }
+    .section-header {
+      max-width: 600px;
+      margin-bottom: 48px;
+    }
+    .section-header h2 {
+      font-family: var(--serif);
+      font-size: clamp(28px, 3.6vw, 42px);
+      font-weight: 500;
+      line-height: 1.24;
+      color: var(--text);
+      margin-bottom: 16px;
+    }
+    .section-header p {
+      font-size: 15px;
+      color: var(--text-secondary);
+      line-height: 1.8;
+    }
+
+    .hud-showcase {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.75fr);
+      gap: 24px;
+      align-items: stretch;
+    }
+    .hud-canvas {
+      position: relative;
+      min-height: 440px;
+      border-radius: 14px;
+      border: 1px solid var(--line-strong);
+      overflow: hidden;
+      background: #090a0d;
+      display: flex;
+      align-items: flex-start;
+      justify-content: flex-start;
+      padding: 28px;
+    }
+    .hud-canvas-bg {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      object-fit: cover; object-position: center;
+      filter: brightness(0.76) contrast(1.06);
+      transform: scale(1.02);
+    }
+    .hud-canvas-shade {
+      position: absolute; inset: 0;
+      background: linear-gradient(180deg, rgba(5, 5, 7, 0.32) 0%, rgba(5, 5, 7, 0.08) 45%, rgba(5, 5, 7, 0.52) 100%);
+    }
+
+    /* Real-scale FrameForge v1.6.5 HUD */
+    .ff-hud {
+      position: relative; z-index: 4;
+      font-family: var(--mono);
+      font-variant-numeric: tabular-nums;
+      transition: background-color 0.2s var(--ease), border-color 0.2s var(--ease), padding 0.2s var(--ease);
+      user-select: none;
+    }
+    .ff-hud.bd-hud {
+      background: linear-gradient(180deg, rgba(16, 18, 24, 0.86), rgba(10, 11, 16, 0.90));
       border: 1px solid rgba(255, 255, 255, 0.14);
-      border-radius: 6px;
-      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+      border-radius: 10px;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.09);
     }
-    .hud-widget.bd-subtle {
-      background: rgba(10, 11, 14, 0.48);
+    .ff-hud.bd-subtle {
+      background: rgba(8, 9, 12, 0.52);
       border: 1px solid transparent;
-      border-radius: 4px;
+      border-radius: 6px;
     }
-    .hud-widget.bd-none {
+    .ff-hud.bd-none {
       background: transparent;
       border: 1px solid transparent;
       text-shadow: 0 1px 2px #000, 0 -1px 2px #000, 1px 0 2px #000, -1px 0 2px #000;
     }
-    .hud-bar {
-      position: absolute; left: 7px; top: 10px; bottom: 10px; width: 3px; border-radius: 2px;
-      transition: opacity 0.2s ease, background 0.2s ease;
-    }
-    .hud-widget:not(.bd-hud) .hud-bar { opacity: 0; }
-    .hud-top { display: flex; align-items: baseline; gap: 10px; padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.10); }
-    .hud-fps { font-size: 24px; font-weight: 700; line-height: 1; }
-    .hud-unit { font-size: 11px; opacity: 0.78; margin-left: -6px; }
-    .hud-sub { font-size: 12px; }
-    .hud-row { display: flex; justify-content: space-between; gap: 18px; }
-    .hud-k { color: #b8c1ce; width: 42px; display: inline-block; }
-    .hud-v { color: #f3f5f8; font-weight: 600; }
-    .hud-amb { margin-top: 4px; font-size: 11px; color: #8c96a6; display: flex; justify-content: space-between; }
 
-    /* Gallery */
-    .gallery { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-    .shot {
-      background: var(--bg-panel); border: 1px solid var(--line);
-      overflow: hidden; transition: border-color 0.2s;
+    .ff-hud.layout-stack { width: 256px; padding: 14px 18px 14px 22px; }
+    .ff-hud.layout-row { display: flex; align-items: center; gap: 16px; padding: 10px 18px 10px 20px; }
+    .ff-hud.layout-mini { display: flex; align-items: center; gap: 14px; padding: 10px 16px 10px 20px; }
+
+    .ff-accent-pill {
+      position: absolute; left: 8px; top: 10px; bottom: 10px; width: 3px; border-radius: 2px;
+      transition: background-color 0.2s var(--ease), opacity 0.2s var(--ease);
     }
-    .shot:hover { border-color: var(--line-strong); }
-    .shot.wide { grid-column: span 2; }
-    .shot img { width: 100%; display: block; }
-    .shot figcaption {
-      padding: 13px 18px; border-top: 1px solid var(--line);
-      display: flex; justify-content: space-between; align-items: center; gap: 12px;
-      font-size: 13px; color: var(--ink-soft);
+    .ff-hud:not(.bd-hud) .ff-accent-pill { opacity: 0; }
+
+    .ff-hero-row {
+      display: flex; align-items: baseline; gap: 10px;
     }
-    .shot figcaption span.meta {
-      font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; color: var(--bronze);
+    .ff-hud.layout-stack .ff-hero-row {
+      padding-bottom: 8px; margin-bottom: 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+    }
+    .ff-fps { font-size: 26px; font-weight: 600; line-height: 1; }
+    .ff-unit { font-size: 11px; margin-left: -6px; opacity: 0.78; }
+    .ff-sub { font-size: 12px; }
+
+    .ff-metrics { display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+    .ff-hud.layout-row .ff-metrics {
+      flex-direction: row; align-items: center; gap: 14px;
+      padding-left: 14px; border-left: 1px solid rgba(255, 255, 255, 0.12);
+    }
+    .ff-hud.layout-mini .ff-metrics {
+      flex-direction: row; align-items: center; gap: 12px;
+      padding-left: 12px; border-left: 1px solid rgba(255, 255, 255, 0.12);
+    }
+    .ff-hud.layout-mini .m-cpu,
+    .ff-hud.layout-mini .m-ram,
+    .ff-hud.layout-mini .ff-ambient { display: none; }
+    .ff-hud.layout-row .ff-ambient { display: none; }
+
+    .ff-row { display: flex; justify-content: space-between; gap: 16px; }
+    .ff-k { color: #b6c0ce; width: 38px; display: inline-block; }
+    .ff-v { color: #f3f5f8; font-weight: 500; }
+    .ff-ambient {
+      margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.06);
+      font-size: 11px; color: #8c96a6;
+      display: flex; justify-content: space-between;
     }
 
-    /* Comparison Table */
-    .table-box {
-      border: 1px solid var(--line); background: var(--bg-card); overflow-x: auto;
+    .hud-controls-panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 28px;
+      display: flex; flex-direction: column; justify-content: space-between; gap: 28px;
+    }
+    .ctrl-group h3 {
+      font-size: 13px; font-weight: 500; color: var(--text-secondary);
+      margin-bottom: 12px;
+    }
+    .ctrl-options {
+      display: flex; flex-wrap: wrap; gap: 8px;
+    }
+    .ctrl-btn {
+      height: 36px; padding: 0 14px; border-radius: 8px;
+      border: 1px solid var(--line); background: transparent;
+      color: var(--text-secondary); font-size: 13px; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 8px;
+      transition: background-color 0.18s var(--ease), border-color 0.18s var(--ease), color 0.18s var(--ease);
+    }
+    .ctrl-btn:hover { color: var(--text); border-color: var(--line-strong); }
+    .ctrl-btn.active {
+      background: var(--surface-raised);
+      border-color: var(--line-strong);
+      color: var(--text);
+    }
+    .swatch {
+      width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+    }
+    .hud-meta-note {
+      padding-top: 20px; border-top: 1px solid var(--line);
+      font-size: 13px; color: var(--text-muted); line-height: 1.7;
+    }
+
+    /* ACT III: Full-bleed 3D Forged Core Architecture */
+    .core-section {
+      position: relative;
+      min-height: 82vh;
+      display: flex; align-items: center;
+      overflow: hidden;
+      border-top: 1px solid var(--line);
+      padding: 120px 0;
+    }
+    .core-media {
+      position: absolute; inset: 0; z-index: 0;
+    }
+    .core-media img {
+      width: 100%; height: 100%;
+      object-fit: cover; object-position: 72% center;
+      transform: scale(1.08);
+      will-change: transform;
+    }
+    .core-vignette {
+      position: absolute; inset: 0; z-index: 1;
+      background:
+        linear-gradient(90deg, #050507 0%, rgba(5, 5, 7, 0.90) 42%, rgba(5, 5, 7, 0.25) 76%, rgba(5, 5, 7, 0.52) 100%),
+        linear-gradient(180deg, #050507 0%, transparent 18%, transparent 82%, #050507 100%);
+    }
+    .core-content {
+      max-width: 540px;
+    }
+    .core-content h2 {
+      font-family: var(--serif);
+      font-size: clamp(28px, 3.6vw, 44px);
+      font-weight: 500; line-height: 1.22;
+      margin-bottom: 20px;
+    }
+    .core-content > p {
+      font-size: 15px; color: var(--text-secondary); margin-bottom: 36px; line-height: 1.8;
+    }
+    .core-list {
+      list-style: none;
+      border-top: 1px solid var(--line);
+    }
+    .core-list li {
+      padding: 18px 0;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      grid-template-columns: 140px minmax(0, 1fr);
+      gap: 20px;
+      align-items: baseline;
+    }
+    .core-list strong {
+      font-size: 14px; font-weight: 500; color: var(--text);
+    }
+    .core-list span {
+      font-size: 14px; color: var(--text-secondary); line-height: 1.7;
+    }
+
+    /* ACT IV: Interactive Night / Day Wuxia UI Split Slider */
+    .split-section {
+      padding: 120px 0;
+      border-top: 1px solid var(--line);
+    }
+    .split-frame {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 10;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid var(--line-strong);
+      background: #0a0b0e;
+      cursor: ew-resize;
+      user-select: none;
+      touch-action: none;
+    }
+    .split-frame img {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+      pointer-events: none;
+    }
+    .split-top {
+      position: absolute; inset: 0;
+      clip-path: inset(0 50% 0 0);
+      will-change: clip-path;
+    }
+    .split-divider {
+      position: absolute; top: 0; bottom: 0; left: 50%;
+      width: 1px; background: rgba(238, 234, 225, 0.72);
+      z-index: 6; pointer-events: none;
+    }
+    .split-knob {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 40px; height: 40px; border-radius: 50%;
+      background: rgba(11, 12, 15, 0.90);
+      border: 1px solid rgba(238, 234, 225, 0.48);
+      display: flex; align-items: center; justify-content: center;
+      color: var(--text); font-family: var(--mono); font-size: 12px;
+      z-index: 7; pointer-events: none;
+    }
+    .split-tag {
+      position: absolute; bottom: 20px; z-index: 5;
+      background: rgba(5, 5, 7, 0.76);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 12px; color: var(--text-secondary);
+      pointer-events: none;
+    }
+    .split-tag.left { left: 20px; }
+    .split-tag.right { right: 20px; }
+
+    /* ACT V: Comparison & Source Verification */
+    .compare-section {
+      padding: 112px 0;
+      border-top: 1px solid var(--line);
+    }
+    .compare-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.9fr);
+      gap: 40px;
+      align-items: start;
+    }
+    .table-wrap {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+      overflow-x: auto;
     }
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
-    th, td { padding: 16px 20px; text-align: left; border-bottom: 1px solid var(--line); }
-    th {
-      font-family: var(--serif); font-weight: 600; letter-spacing: 0.08em;
-      color: var(--bronze); background: rgba(255, 255, 255, 0.02);
+    th, td {
+      padding: 16px 20px; text-align: left;
+      border-bottom: 1px solid var(--line);
     }
+    th { font-weight: 500; color: var(--text-secondary); background: rgba(255, 255, 255, 0.015); }
     tr:last-child td { border-bottom: none; }
-    td.dim { color: var(--ink-soft); width: 180px; font-family: var(--serif); }
-    td.ff { color: var(--ink); font-weight: 500; }
-    td.other { color: var(--ink-dim); }
+    td.col-k { color: var(--text-muted); width: 132px; }
+    td.col-ff { color: var(--text); }
+    td.col-old { color: var(--text-muted); }
 
-    /* Terminal / Verification */
-    .code-panel {
-      background: #08090c; border: 1px solid var(--line);
-      padding: 20px 24px; font-family: var(--mono); font-size: 13px;
-      line-height: 1.9; color: #dcd6ca; overflow-x: auto;
-      position: relative;
+    .verify-card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 28px;
     }
-    .code-panel .cmt { color: #6c6a64; }
-    .code-panel .hl { color: var(--bronze); }
+    .verify-card h3 {
+      font-family: var(--serif); font-size: 20px; font-weight: 500;
+      margin-bottom: 12px;
+    }
+    .verify-card p {
+      font-size: 14px; color: var(--text-secondary); margin-bottom: 20px;
+    }
+    .cmd-block {
+      background: #060709;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      font-family: var(--mono); font-size: 12px; line-height: 1.85;
+      color: #d6d2c8; overflow-x: auto;
+      margin-bottom: 16px;
+    }
+    .cmd-block .dim { color: var(--text-muted); }
+    .copy-btn {
+      width: 100%; height: 40px; border-radius: 8px;
+      background: var(--surface-raised); border: 1px solid var(--line-strong);
+      color: var(--text); font-size: 13px; cursor: pointer;
+      transition: background-color 0.2s var(--ease), border-color 0.2s var(--ease);
+    }
+    .copy-btn:hover { background: #1a1d26; border-color: rgba(238, 234, 225, 0.3); }
 
     /* Footer */
     footer {
       border-top: 1px solid var(--line);
-      padding: 36px 0 54px;
-      display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px;
-      font-size: 13px; color: var(--ink-dim);
+      padding: 40px 0 56px;
     }
-    footer .links { display: flex; flex-wrap: wrap; gap: 24px; }
-    footer a:hover { color: var(--ink); }
+    .foot-inner {
+      display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px;
+      font-size: 13px; color: var(--text-muted);
+    }
+    .foot-links { display: flex; flex-wrap: wrap; gap: 24px; }
+    .foot-links a { transition: color 0.2s var(--ease); }
+    .foot-links a:hover { color: var(--text); }
 
     @media (max-width: 960px) {
-      .tenets { grid-template-columns: repeat(2, 1fr); }
-      .hud-lab { grid-template-columns: 1fr; }
-      .gallery { grid-template-columns: 1fr; }
-      .shot.wide { grid-column: span 1; }
+      .hud-showcase, .compare-grid { grid-template-columns: 1fr; }
+      .hud-canvas { min-height: 340px; }
+      .hero-media img { object-position: 78% center; }
+      .core-media img { opacity: 0.35; }
     }
     @media (max-width: 640px) {
-      .hero-top { grid-template-columns: 1fr; }
-      .seal-stack { display: none; }
-      .tenets { grid-template-columns: 1fr; }
-      .nav-links a.hide-sm { display: none; }
+      .wrap { padding: 0 20px; }
+      .nav-right a.hide-sm { display: none; }
+      .hero-facts { grid-template-columns: 1fr; gap: 16px; }
+      .core-list li { grid-template-columns: 1fr; gap: 4px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      #atmosphere { display: none; }
     }
   </style>
 </head>
 <body>
-  <div class="scroll-blade" id="scrollBlade"></div>
+  <div class="scroll-progress" id="scrollProgress"></div>
 
-  <header>
+  <header id="siteHeader">
     <div class="wrap nav">
       <a class="brand" href="#">
         <img src="icon-1.5.0.png" alt="FrameForge">
-        <span class="brand-name">FrameForge</span>
-        <span class="brand-seal">v1.6.5</span>
+        <span>FrameForge</span>
       </a>
-      <nav class="nav-links">
-        <a class="hide-sm" href="#tenets" data-i18n="nav_tenets">核心准则</a>
-        <a class="hide-sm" href="#hud" data-i18n="nav_hud">影刃 HUD</a>
-        <a class="hide-sm" href="#compare" data-i18n="nav_compare">对比</a>
-        <a href="https://cjcode.xyz" target="_blank" rel="noopener">cjcode.xyz</a>
-        <a href="https://github.com/caijun-1/frameforge" target="_blank" rel="noopener">GitHub</a>
+      <div class="nav-right">
+        <a class="hide-sm" href="#hud" data-i18n="nav_hud">叠加层</a>
+        <a class="hide-sm" href="#core" data-i18n="nav_core">内核架构</a>
+        <a class="hide-sm" href="#themes" data-i18n="nav_themes">双主题</a>
+        <a class="hide-sm" href="https://cjcode.xyz" target="_blank" rel="noopener">cjcode.xyz</a>
         <button class="lang-btn" id="langToggle" type="button">EN</button>
-      </nav>
+        <a class="nav-cta" href="https://github.com/caijun-1/frameforge/releases/latest" data-i18n="nav_dl">下载 v1.6.5</a>
+      </div>
     </div>
   </header>
 
-  <main class="wrap">
-    <section class="hero">
-      <div class="hero-top">
-        <div>
-          <div class="kicker" data-i18n="kicker">PHANTOM TELEMETRY · MIT OPEN SOURCE · 7 MB PORTABLE</div>
-          <h1 data-i18n-html="hero_title">出鞘无痕，<span class="crimson-accent">帧帧见锋</span></h1>
-          <p class="hero-lead" data-i18n="hero_lead">
-            FrameForge 是一款仅约 7 MB 的单文件 Windows FPS 游戏增效工具。默认零 DLL 注入，基于 Intel PresentMon ETW 与 SCTL v2 事务日志构建，集一键可回滚加速、现代毛玻璃 HUD、硬件级画面滤镜与赛后战绩报告于一体。
+  <main>
+    <!-- ACT I: Cinematic Scene Hero -->
+    <section class="hero" id="hero">
+      <div class="hero-media">
+        <img id="heroImg" src="assets/hero-blade.jpg" alt="FrameForge dark wuxia scene">
+      </div>
+      <div class="hero-vignette"></div>
+      <canvas id="atmosphere"></canvas>
+
+      <div class="wrap">
+        <div class="hero-copy">
+          <h1 class="gs-hero" data-i18n="hero_title">出鞘无痕，帧帧见锋</h1>
+          <p class="gs-hero" data-i18n="hero_desc">
+            单文件约 7 MB 的 Windows FPS 增效工具。通过 Intel PresentMon ETW 采集帧率与 1% Low，默认零 DLL 注入；所有系统优化由签名事务日志全程托管，退出或崩溃后自动还原。
           </p>
-          <div class="cta-row">
-            <a class="btn btn-blade" href="https://github.com/caijun-1/frameforge/releases/latest" data-i18n="cta_dl">下载最新版 v1.6.5</a>
-            <a class="btn btn-iron" href="https://github.com/caijun-1/frameforge" target="_blank" rel="noopener" data-i18n="cta_gh">GitHub 源码</a>
-            <a class="btn btn-iron" href="https://github.com/caijun-1/frameforge/discussions" target="_blank" rel="noopener" data-i18n="cta_dis">社区讨论</a>
+          <div class="hero-actions gs-hero">
+            <a class="btn-primary" href="https://github.com/caijun-1/frameforge/releases/latest" data-i18n="cta_dl">下载 FrameForge v1.6.5</a>
+            <a class="btn-secondary" href="https://github.com/caijun-1/frameforge" target="_blank" rel="noopener" data-i18n="cta_src">查看 GitHub 源码</a>
+          </div>
+
+          <div class="hero-facts gs-hero">
+            <div>
+              <div class="fact-val">7.1 MB</div>
+              <div class="fact-label" data-i18n="f1">单文件绿色便携</div>
+            </div>
+            <div>
+              <div class="fact-val">0 DLL</div>
+              <div class="fact-label" data-i18n="f2">默认不注入游戏进程</div>
+            </div>
+            <div>
+              <div class="fact-val">100%</div>
+              <div class="fact-label" data-i18n="f3">SCTL v2 事务级回滚</div>
+            </div>
           </div>
         </div>
-        <div class="seal-stack" aria-hidden="true">
-          <div class="seal">零注入</div>
-          <div class="seal muted">可回滚</div>
-        </div>
-      </div>
-
-      <div class="frame-box">
-        <img id="heroBanner" src="social-preview.zh-CN.png" alt="FrameForge v1.6.5 Banner">
       </div>
     </section>
 
-    <section class="block" id="tenets">
-      <div class="sec-head">
-        <div>
-          <div class="sec-tag">FOUR TENETS</div>
-          <h2 data-i18n="tenets_title">克制如铁，收放自如</h2>
-        </div>
-        <p class="sec-desc" data-i18n="tenets_desc">摒弃臃肿常驻驱动与无节制的系统魔改，每一项优化皆有日志可溯、崩溃亦可自愈。</p>
-      </div>
-      <div class="tenets">
-        <article class="tenet">
-          <div class="tenet-num"><span>壹</span><span class="en">01 / PORTABLE</span></div>
-          <h3 data-i18n="t1_h">七兆单文件</h3>
-          <p data-i18n="t1_p">纯 C# 与原生 GDI+ 实现，由系统自带 csc.exe 直接编译。双击即用，无安装残留，零广告零遥测。</p>
-        </article>
-        <article class="tenet">
-          <div class="tenet-num"><span>贰</span><span class="en">02 / ZERO HOOK</span></div>
-          <h3 data-i18n="t2_h">默认零注入</h3>
-          <p data-i18n="t2_p">通过 Intel PresentMon ETW 采集帧率与 1% Low，默认分层窗口绘制；独占全屏下可无缝交由 RTSS 渲染。</p>
-        </article>
-        <article class="tenet">
-          <div class="tenet-num"><span>叁</span><span class="en">03 / ATOMIC WAL</span></div>
-          <h3 data-i18n="t3_h">事务级回滚</h3>
-          <p data-i18n="t3_p">所有系统改动先落盘 HMAC 签名日志（SCTL v2），配合独立看门狗，崩溃或强杀后自动还原系统原貌。</p>
-        </article>
-        <article class="tenet">
-          <div class="tenet-num"><span>肆</span><span class="en">04 / DISPLAY</span></div>
-          <h3 data-i18n="t4_h">硬件滤镜与校色</h3>
-          <p data-i18n="t4_p">23 套通用与游戏预设、Gamma LUT + NVAPI 数字振动、DDC/CI 硬件背光与显示器 ICC 配置文件导入。</p>
-        </article>
-      </div>
-    </section>
-
-    <section class="block" id="hud">
-      <div class="sec-head">
-        <div>
-          <div class="sec-tag">V1.6.5 OVERLAY ENGINE</div>
-          <h2 data-i18n="hud_title">现代 HUD 与水墨双境</h2>
-        </div>
-        <p class="sec-desc" data-i18n="hud_desc">五套统一配色与三档底板自由切换，自绘叠加层、RTSS 输出与设置预览共享同一绘制管线。</p>
-      </div>
-
-      <div class="hud-lab">
-        <div class="hud-controls">
-          <div>
-            <div class="ctrl-label" data-i18n="ctrl_theme">配色主题 / THEME</div>
-            <div class="seg-group" id="themeBtns">
-              <button class="seg-btn active" data-theme="cinnabar">朱砂</button>
-              <button class="seg-btn" data-theme="green">翠绿</button>
-              <button class="seg-btn" data-theme="pink">粉紫</button>
-              <button class="seg-btn" data-theme="cyan">青蓝</button>
-              <button class="seg-btn" data-theme="mono">极简</button>
-            </div>
-          </div>
-          <div>
-            <div class="ctrl-label" data-i18n="ctrl_bd">底板模式 / BACKDROP</div>
-            <div class="seg-group" id="bdBtns">
-              <button class="seg-btn active" data-bd="hud">现代 HUD</button>
-              <button class="seg-btn" data-bd="subtle">轻透</button>
-              <button class="seg-btn" data-bd="none">无底板</button>
-            </div>
-          </div>
-          <p style="font-size:12px;color:var(--ink-dim);line-height:1.8;" data-i18n="ctrl_note">
-            点击上方选项即可实时预览 v1.6.5 叠加层的色彩层级与底板质感，等宽字形保证数字跳动不抖列。
+    <!-- ACT II: Live Interactive HUD Showcase -->
+    <section class="stage-section" id="hud">
+      <div class="wrap">
+        <div class="section-header gs-reveal">
+          <h2 data-i18n="hud_h">游戏内现代 HUD，自绘与 RTSS 同步</h2>
+          <p data-i18n="hud_p">
+            v1.6.5 重构了整套叠加层视觉。等宽数字保证帧率波动不抖列，五套配色与三档底板在自绘分层窗口、RTSS 与设置预览之间完全一致。
           </p>
         </div>
 
-        <div class="hud-stage">
-          <div class="hud-widget bd-hud" id="hudPreview">
-            <div class="hud-bar" id="hudBar"></div>
-            <div class="hud-top">
-              <span class="hud-fps" id="hudFps">144</span>
-              <span class="hud-unit" id="hudUnit">FPS</span>
-              <span class="hud-sub" id="hudLow">1% 112</span>
-              <span class="hud-sub" id="hudFt">6.9ms</span>
+        <div class="hud-showcase gs-reveal">
+          <div class="hud-canvas">
+            <img class="hud-canvas-bg" src="assets/hero-blade.jpg" alt="In-game preview backdrop">
+            <div class="hud-canvas-shade"></div>
+
+            <div class="ff-hud bd-hud layout-stack" id="liveHud">
+              <div class="ff-accent-pill" id="hudAccent"></div>
+              <div class="ff-hero-row">
+                <span class="ff-fps" id="valFps">144</span>
+                <span class="ff-unit" id="valUnit">FPS</span>
+                <span class="ff-sub" id="valLow">1% 112</span>
+                <span class="ff-sub" id="valFt">6.9ms</span>
+              </div>
+              <div class="ff-metrics">
+                <div class="ff-row m-cpu">
+                  <span><span class="ff-k">CPU</span><span class="ff-v" id="valCpu">38%</span></span>
+                </div>
+                <div class="ff-row m-gpu">
+                  <span><span class="ff-k">GPU</span><span class="ff-v" id="valGpu">76%</span></span>
+                  <span class="ff-v" id="valTemp">64°C</span>
+                </div>
+                <div class="ff-row m-ram">
+                  <span><span class="ff-k">RAM</span><span class="ff-v">9.8G</span></span>
+                  <span class="ff-v">62%</span>
+                </div>
+              </div>
+              <div class="ff-ambient">
+                <span>TIME</span>
+                <span id="valTime">21:40:36</span>
+              </div>
             </div>
-            <div class="hud-row"><span><span class="hud-k">CPU</span><span class="hud-v">38%</span></span><span></span></div>
-            <div class="hud-row"><span><span class="hud-k">GPU</span><span class="hud-v">76%</span></span><span class="hud-v">64°C</span></div>
-            <div class="hud-row"><span><span class="hud-k">RAM</span><span class="hud-v">9.8G</span></span><span class="hud-v">62%</span></div>
-            <div class="hud-amb"><span>TIME</span><span>21:40:36</span></div>
+          </div>
+
+          <div class="hud-controls-panel">
+            <div>
+              <div class="ctrl-group" style="margin-bottom: 24px;">
+                <h3 data-i18n="ctrl_theme">配色主题</h3>
+                <div class="ctrl-options" id="themeGroup">
+                  <button class="ctrl-btn active" data-theme="cinnabar"><span class="swatch" style="background:#E05246"></span><span data-i18n="th_cinnabar">朱砂</span></button>
+                  <button class="ctrl-btn" data-theme="green"><span class="swatch" style="background:#4ADE80"></span><span data-i18n="th_green">翠绿</span></button>
+                  <button class="ctrl-btn" data-theme="pink"><span class="swatch" style="background:#FF5CE1"></span><span data-i18n="th_pink">粉紫</span></button>
+                  <button class="ctrl-btn" data-theme="cyan"><span class="swatch" style="background:#38BDF8"></span><span data-i18n="th_cyan">青蓝</span></button>
+                  <button class="ctrl-btn" data-theme="mono"><span class="swatch" style="background:#D4D8E0"></span><span data-i18n="th_mono">极简</span></button>
+                </div>
+              </div>
+
+              <div class="ctrl-group" style="margin-bottom: 24px;">
+                <h3 data-i18n="ctrl_bd">底板模式</h3>
+                <div class="ctrl-options" id="bdGroup">
+                  <button class="ctrl-btn active" data-bd="hud" data-i18n="bd_hud">现代 HUD</button>
+                  <button class="ctrl-btn" data-bd="subtle" data-i18n="bd_subtle">轻透</button>
+                  <button class="ctrl-btn" data-bd="none" data-i18n="bd_none">无底板</button>
+                </div>
+              </div>
+
+              <div class="ctrl-group">
+                <h3 data-i18n="ctrl_layout">排版结构</h3>
+                <div class="ctrl-options" id="layoutGroup">
+                  <button class="ctrl-btn active" data-layout="stack" data-i18n="ly_stack">竖向</button>
+                  <button class="ctrl-btn" data-layout="row" data-i18n="ly_row">横向</button>
+                  <button class="ctrl-btn" data-layout="mini" data-i18n="ly_mini">简洁</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="hud-meta-note" data-i18n="hud_note">
+              无边框窗口模式下由自带分层窗口直接绘制，不触碰游戏渲染管线；独占全屏下可一键交由 RTSS 同步呈现同等配色与主视觉字号。
+            </div>
           </div>
         </div>
       </div>
+    </section>
 
-      <div class="gallery">
-        <figure class="shot wide">
-          <img src="screenshots/v1.6.5/overlay-hud.png" alt="FrameForge v1.6.5 HUD Showcase">
-          <figcaption>
-            <span data-i18n="cap_hud">v1.6.5 全场景 HUD 效果 · 竖向 / 横向 / 简洁胶囊 / RTSS 同步</span>
-            <span class="meta">OVERLAY · V1.6.5</span>
-          </figcaption>
-        </figure>
-        <figure class="shot">
-          <img src="screenshots/v1.5.0/boost-dark.png" alt="Shadow Blade Night Theme">
-          <figcaption>
-            <span data-i18n="cap_dark">影刃夜间主题 · 一键加速与硬件实时表盘</span>
-            <span class="meta">SHADOW BLADE</span>
-          </figcaption>
-        </figure>
-        <figure class="shot">
+    <!-- ACT III: Forged Core Architecture (3D Key Visual + Parallax) -->
+    <section class="core-section" id="core">
+      <div class="core-media">
+        <img id="coreImg" src="assets/forge-core.jpg" alt="FrameForge transactional boost engine">
+      </div>
+      <div class="core-vignette"></div>
+
+      <div class="wrap">
+        <div class="core-content gs-reveal">
+          <h2 data-i18n="core_h">每一项系统改动，皆可对账还原</h2>
+          <p data-i18n="core_p">
+            传统游戏加速工具往往留下难以追查的注册表与电源残留。FrameForge 将底层调度收束为可验证的事务内核，不装驱动，不留后患。
+          </p>
+          <ul class="core-list">
+            <li>
+              <strong data-i18n="c1_k">SCTL v2 事务日志</strong>
+              <span data-i18n="c1_v">所有电源计划、1 ms 计时器、进程优先级与核心调度改动先落盘 HMAC 签名原值，配合独立看门狗进程在崩溃或强杀后自动恢复。</span>
+            </li>
+            <li>
+              <strong data-i18n="c2_k">核心拓扑软引导</strong>
+              <span data-i18n="c2_v">支持自动、P 核优先与单 CCD 策略，每 2 分钟采样最闲核心软引导游戏主线程，不强锁亲和性掩码。</span>
+            </li>
+            <li>
+              <strong data-i18n="c3_k">硬件滤镜与 ICC</strong>
+              <span data-i18n="c3_v">23 套预设通过放大镜矩阵、Gamma LUT 与 NVIDIA NVAPI 数字振动实现零注入调色，支持 DDC/CI 硬件背光与 .icc 校色文件。</span>
+            </li>
+            <li>
+              <strong data-i18n="c4_k">赛后战绩归档</strong>
+              <span data-i18n="c4_v">退出游戏自动生成平均帧率、1% Low、温度与功耗报告，本地保留最近 300 局帧率曲线并支持导出 CSV。</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ACT IV: Interactive Night / Day Theme Comparison -->
+    <section class="split-section" id="themes">
+      <div class="wrap">
+        <div class="section-header gs-reveal">
+          <h2 data-i18n="theme_h">影刃夜间与宣纸白昼</h2>
+          <p data-i18n="theme_p">
+            纯原生 GDI+ 绘制整卡毛玻璃与水墨底纹，无第三方重型 UI 框架。左右拖动分界线对比两套内置主题界面。
+          </p>
+        </div>
+
+        <div class="split-frame gs-reveal" id="splitFrame">
           <img src="screenshots/v1.5.0/boost.png" alt="Paper Ink Day Theme">
-          <figcaption>
-            <span data-i18n="cap_light">宣纸白昼主题 · 核心拓扑与五维雷达</span>
-            <span class="meta">PAPER INK</span>
-          </figcaption>
-        </figure>
-      </div>
-    </section>
-
-    <section class="block" id="compare">
-      <div class="sec-head">
-        <div>
-          <div class="sec-tag">BENCHMARK</div>
-          <h2 data-i18n="cmp_title">与传统优化 / 监控套件对比</h2>
+          <div class="split-top" id="splitTop">
+            <img src="screenshots/v1.5.0/boost-dark.png" alt="Shadow Blade Night Theme">
+          </div>
+          <div class="split-divider" id="splitDivider"></div>
+          <div class="split-knob" id="splitKnob">&lt;&gt;</div>
+          <div class="split-tag left" data-i18n="tag_night">影刃 · 夜间</div>
+          <div class="split-tag right" data-i18n="tag_day">宣纸 · 白昼</div>
         </div>
-        <p class="sec-desc" data-i18n="cmp_desc">献给在意系统纯净度、反作弊兼容性与代码透明度的竞技玩家。</p>
-      </div>
-      <div class="table-box">
-        <table>
-          <thead>
-            <tr>
-              <th data-i18n="th_d">维度</th>
-              <th>FrameForge</th>
-              <th data-i18n="th_o">传统优化 / 监控组合</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td class="dim" data-i18n="r1_k">体积与驻留</td>
-              <td class="ff" data-i18n="r1_a">单文件约 7 MB，绿色便携，无常驻内核驱动</td>
-              <td class="other" data-i18n="r1_b">数十至数百 MB，常附带多项服务与驱动</td>
-            </tr>
-            <tr>
-              <td class="dim" data-i18n="r2_k">反作弊安全</td>
-              <td class="ff" data-i18n="r2_a">默认零 DLL 注入（ETW 采集），内置反作弊白名单</td>
-              <td class="other" data-i18n="r2_b">普遍注入渲染钩子，易触发反作弊拦截</td>
-            </tr>
-            <tr>
-              <td class="dim" data-i18n="r3_k">回滚机制</td>
-              <td class="ff" data-i18n="r3_a">SCTL v2 签名事务日志 + 看门狗，异常退出自动还原</td>
-              <td class="other" data-i18n="r3_b">缺少事务对账，修改注册表与电源方案易残留</td>
-            </tr>
-            <tr>
-              <td class="dim" data-i18n="r4_k">开源与隐私</td>
-              <td class="ff" data-i18n="r4_a">MIT 全量开源，本机 csc.exe 一键自编译，零遥测</td>
-              <td class="other" data-i18n="r4_b">闭源、弹窗广告或强制账号登录</td>
-            </tr>
-          </tbody>
-        </table>
       </div>
     </section>
 
-    <section class="block" id="verify">
-      <div class="sec-head">
-        <div>
-          <div class="sec-tag">BUILD &amp; VERIFY</div>
-          <h2 data-i18n="ver_title">源码构建与校验</h2>
+    <!-- ACT V: Comparison & Source Verification -->
+    <section class="compare-section" id="verify">
+      <div class="wrap">
+        <div class="section-header gs-reveal">
+          <h2 data-i18n="cmp_h">克制体积，公开校验</h2>
+          <p data-i18n="cmp_p">
+            所有代码以 MIT 协议开源，无需安装 Visual Studio，使用 Windows 自带 .NET Framework 4.8 编译器即可本机编译。
+          </p>
         </div>
-        <p class="sec-desc" data-i18n="ver_desc">无需安装 Visual Studio，Windows 自带 .NET Framework 4.8 编译器即可从源码直接构建。</p>
-      </div>
-      <div class="code-panel">
-        <div><span class="cmt"># Clone and compile with in-box csc.exe (Windows 10 / 11 x64)</span></div>
-        <div>git clone https://github.com/caijun-1/frameforge.git</div>
-        <div>cd frameforge &amp;&amp; powershell -ExecutionPolicy Bypass -File .\build.ps1</div>
-        <div>&nbsp;</div>
-        <div><span class="cmt"># Release v1.6.5 FrameForge.exe SHA-256</span></div>
-        <div class="hl">43da958dfb965f4659b3f027fd6d9f8495ec5fb02b8407d95edb1cb68daaf99a</div>
+
+        <div class="compare-grid gs-reveal">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th data-i18n="th_d">维度</th>
+                  <th>FrameForge</th>
+                  <th data-i18n="th_o">传统优化与监控套件</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="col-k" data-i18n="r1_k">体积与部署</td>
+                  <td class="col-ff" data-i18n="r1_a">单文件约 7 MB，免安装无服务残留</td>
+                  <td class="col-old" data-i18n="r1_b">数十至数百 MB，常附带多项后台服务</td>
+                </tr>
+                <tr>
+                  <td class="col-k" data-i18n="r2_k">反作弊兼容</td>
+                  <td class="col-ff" data-i18n="r2_a">默认零 DLL 注入，反作弊组件永久排除</td>
+                  <td class="col-old" data-i18n="r2_b">普遍注入渲染钩子，易与部分反作弊冲突</td>
+                </tr>
+                <tr>
+                  <td class="col-k" data-i18n="r3_k">系统回滚</td>
+                  <td class="col-ff" data-i18n="r3_a">签名事务日志加看门狗，崩溃自动还原</td>
+                  <td class="col-old" data-i18n="r3_b">缺少事务记录，异常退出常遗留改动</td>
+                </tr>
+                <tr>
+                  <td class="col-k" data-i18n="r4_k">隐私与源码</td>
+                  <td class="col-ff" data-i18n="r4_a">MIT 全量开源，零遥测零广告</td>
+                  <td class="col-old" data-i18n="r4_b">闭源、弹窗推广或强制登录</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="verify-card">
+            <h3 data-i18n="ver_h">源码构建与 SHA-256</h3>
+            <p data-i18n="ver_p">在 Windows 10 或 Windows 11 上直接编译，或核对 v1.6.5 发布件哈希。</p>
+            <div class="cmd-block">
+              <div class="dim"># Build with in-box csc.exe</div>
+              <div>git clone https://github.com/caijun-1/frameforge.git</div>
+              <div>cd frameforge</div>
+              <div>powershell -ExecutionPolicy Bypass -File .\build.ps1</div>
+              <div style="margin-top:10px" class="dim"># v1.6.5 FrameForge.exe SHA-256</div>
+              <div id="shaText">43da958dfb965f4659b3f027fd6d9f8495ec5fb02b8407d95edb1cb68daaf99a</div>
+            </div>
+            <button class="copy-btn" id="copySha" type="button" data-i18n="copy_sha">复制 SHA-256 校验值</button>
+          </div>
+        </div>
       </div>
     </section>
+  </main>
 
-    <footer>
-      <div>FrameForge · MIT Open Source · Crafted by <a href="https://cjcode.xyz" target="_blank" rel="noopener" style="color:var(--bronze);">caijun</a></div>
-      <div class="links">
+  <footer>
+    <div class="wrap foot-inner">
+      <div>FrameForge · MIT License · <a href="https://cjcode.xyz" target="_blank" rel="noopener">caijun</a></div>
+      <div class="foot-links">
         <a href="https://github.com/caijun-1/frameforge" target="_blank" rel="noopener">GitHub</a>
         <a href="https://github.com/caijun-1/frameforge/releases/latest" target="_blank" rel="noopener">Releases</a>
         <a href="https://github.com/caijun-1/frameforge/discussions" target="_blank" rel="noopener">Discussions</a>
         <a href="https://cjcode.xyz" target="_blank" rel="noopener">cjcode.xyz</a>
         <a href="https://github.com/caijun-1/frameforge/blob/main/SECURITY.md" target="_blank" rel="noopener">Security</a>
       </div>
-    </footer>
-  </main>
+    </div>
+  </footer>
 
   <script>
+    // Header & scroll blade
+    const header = document.getElementById("siteHeader");
+    const progress = document.getElementById("scrollProgress");
+    function onScroll() {
+      const y = window.scrollY;
+      header.classList.toggle("scrolled", y > 24);
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      progress.style.width = max > 0 ? Math.min(100, (y / max) * 100) + "%" : "0%";
+    }
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+
+    // Subtle rain & crimson ember atmosphere on hero canvas
+    (function initAtmosphere() {
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      const canvas = document.getElementById("atmosphere");
+      const ctx = canvas.getContext("2d");
+      let w = 0, h = 0;
+      const embers = [];
+      const rains = [];
+
+      function resize() {
+        w = canvas.width = canvas.offsetWidth;
+        h = canvas.height = canvas.offsetHeight;
+      }
+      resize();
+      window.addEventListener("resize", resize);
+
+      for (let i = 0; i < 24; i++) {
+        embers.push({
+          x: Math.random() * 1440,
+          y: Math.random() * 900,
+          r: 0.7 + Math.random() * 1.4,
+          vx: -0.15 - Math.random() * 0.25,
+          vy: -0.18 - Math.random() * 0.32,
+          a: 0.15 + Math.random() * 0.45
+        });
+      }
+      for (let i = 0; i < 42; i++) {
+        rains.push({
+          x: Math.random() * 1440,
+          y: Math.random() * 900,
+          len: 16 + Math.random() * 24,
+          speed: 7 + Math.random() * 5,
+          a: 0.04 + Math.random() * 0.07
+        });
+      }
+
+      function tick() {
+        ctx.clearRect(0, 0, w, h);
+        // Fine diagonal rain on right half
+        ctx.lineWidth = 1;
+        for (const r of rains) {
+          ctx.strokeStyle = "rgba(220, 224, 232," + r.a + ")";
+          ctx.beginPath();
+          ctx.moveTo(r.x, r.y);
+          ctx.lineTo(r.x - 2, r.y + r.len);
+          ctx.stroke();
+          r.y += r.speed;
+          r.x -= 0.4;
+          if (r.y > h) { r.y = -r.len; r.x = w * 0.35 + Math.random() * (w * 0.7); }
+        }
+        // Restrained drifting crimson ash embers
+        for (const e of embers) {
+          ctx.fillStyle = "rgba(214, 66, 56," + e.a + ")";
+          ctx.beginPath();
+          ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
+          ctx.fill();
+          e.x += e.vx;
+          e.y += e.vy;
+          if (e.y < -10 || e.x < -10) {
+            e.x = w * 0.48 + Math.random() * (w * 0.55);
+            e.y = h + 10;
+          }
+        }
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    })();
+
+    // Live interactive HUD simulation
     const themes = {
       cinnabar: { accent: "#E05246", fps: "#F25749", low: "#F5B8B0", ft: "#D9A066" },
       green:    { accent: "#4ADE80", fps: "#4ADE80", low: "#BBF7D0", ft: "#67E8F9" },
@@ -653,121 +924,210 @@
       cyan:     { accent: "#38BDF8", fps: "#38BDF8", low: "#BAE6FD", ft: "#A7F3D0" },
       mono:     { accent: "#D4D8E0", fps: "#F5F7FA", low: "#CBD2DC", ft: "#9CA6B5" }
     };
+    let hudState = { theme: "cinnabar", bd: "hud", layout: "stack" };
+    const liveHud = document.getElementById("liveHud");
+    const hudAccent = document.getElementById("hudAccent");
+    const valFps = document.getElementById("valFps");
+    const valUnit = document.getElementById("valUnit");
+    const valLow = document.getElementById("valLow");
+    const valFt = document.getElementById("valFt");
 
-    const hudPreview = document.getElementById("hudPreview");
-    const hudBar = document.getElementById("hudBar");
-    const hudFps = document.getElementById("hudFps");
-    const hudUnit = document.getElementById("hudUnit");
-    const hudLow = document.getElementById("hudLow");
-    const hudFt = document.getElementById("hudFt");
-
-    function setHudTheme(key) {
-      const t = themes[key] || themes.cinnabar;
-      hudBar.style.background = t.accent;
-      hudFps.style.color = t.fps;
-      hudUnit.style.color = t.fps;
-      hudLow.style.color = t.low;
-      hudFt.style.color = t.ft;
+    function renderHud() {
+      const t = themes[hudState.theme];
+      liveHud.className = "ff-hud bd-" + hudState.bd + " layout-" + hudState.layout;
+      hudAccent.style.backgroundColor = t.accent;
+      valFps.style.color = t.fps;
+      valUnit.style.color = t.fps;
+      valLow.style.color = t.low;
+      valFt.style.color = t.ft;
     }
 
-    document.querySelectorAll("#themeBtns .seg-btn").forEach(btn => {
+    document.querySelectorAll("#themeGroup .ctrl-btn").forEach(btn => {
       btn.addEventListener("click", () => {
-        document.querySelectorAll("#themeBtns .seg-btn").forEach(b => b.classList.remove("active"));
+        document.querySelectorAll("#themeGroup .ctrl-btn").forEach(b => b.classList.remove("active"));
         btn.classList.add("active");
-        setHudTheme(btn.dataset.theme);
+        hudState.theme = btn.dataset.theme;
+        renderHud();
+      });
+    });
+    document.querySelectorAll("#bdGroup .ctrl-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("#bdGroup .ctrl-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        hudState.bd = btn.dataset.bd;
+        renderHud();
+      });
+    });
+    document.querySelectorAll("#layoutGroup .ctrl-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("#layoutGroup .ctrl-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        hudState.layout = btn.dataset.layout;
+        renderHud();
+      });
+    });
+    renderHud();
+
+    // Realistic telemetry tick (tabular-nums)
+    setInterval(() => {
+      const fps = 141 + Math.floor(Math.random() * 5);
+      const low = 110 + Math.floor(Math.random() * 5);
+      const ft = (1000 / fps).toFixed(1) + "ms";
+      valFps.textContent = fps;
+      valLow.textContent = "1% " + low;
+      valFt.textContent = ft;
+      const now = new Date();
+      document.getElementById("valTime").textContent = now.toTimeString().slice(0, 8);
+    }, 1000);
+
+    // Interactive Night / Day split slider
+    (function initSplit() {
+      const frame = document.getElementById("splitFrame");
+      const top = document.getElementById("splitTop");
+      const div = document.getElementById("splitDivider");
+      const knob = document.getElementById("splitKnob");
+      let dragging = false;
+
+      function setPos(clientX) {
+        const rect = frame.getBoundingClientRect();
+        const pct = Math.max(6, Math.min(94, ((clientX - rect.left) / rect.width) * 100));
+        top.style.clipPath = "inset(0 " + (100 - pct) + "% 0 0)";
+        div.style.left = pct + "%";
+        knob.style.left = pct + "%";
+      }
+      frame.addEventListener("pointerdown", e => {
+        dragging = true;
+        frame.setPointerCapture(e.pointerId);
+        setPos(e.clientX);
+      });
+      frame.addEventListener("pointermove", e => { if (dragging) setPos(e.clientX); });
+      frame.addEventListener("pointerup", () => { dragging = false; });
+      frame.addEventListener("pointercancel", () => { dragging = false; });
+    })();
+
+    // Copy SHA-256
+    document.getElementById("copySha").addEventListener("click", function () {
+      const sha = document.getElementById("shaText").textContent.trim();
+      navigator.clipboard.writeText(sha).then(() => {
+        const orig = this.textContent;
+        this.textContent = lang === "zh" ? "已复制校验值" : "Copied SHA-256";
+        setTimeout(() => { this.textContent = orig; }, 1600);
       });
     });
 
-    document.querySelectorAll("#bdBtns .seg-btn").forEach(btn => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll("#bdBtns .seg-btn").forEach(b => b.classList.remove("active"));
-        btn.classList.add("active");
-        hudPreview.className = "hud-widget bd-" + btn.dataset.bd;
+    // GSAP 3 + ScrollTrigger restrained cinematic orchestration
+    window.addEventListener("DOMContentLoaded", () => {
+      if (typeof gsap === "undefined" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      gsap.registerPlugin(ScrollTrigger);
+
+      const tl = gsap.timeline({ defaults: { ease: "power3.out" } });
+      tl.to("#heroImg", { scale: 1.0, duration: 1.6 }, 0)
+        .from(".gs-hero", { y: 20, opacity: 0, duration: 0.75, stagger: 0.1 }, 0.15);
+
+      gsap.to("#heroImg", {
+        yPercent: 12,
+        ease: "none",
+        scrollTrigger: { trigger: "#hero", start: "top top", end: "bottom top", scrub: true }
+      });
+
+      gsap.to("#coreImg", {
+        yPercent: -10,
+        scale: 1.0,
+        ease: "none",
+        scrollTrigger: { trigger: "#core", start: "top bottom", end: "bottom top", scrub: true }
+      });
+
+      gsap.utils.toArray(".gs-reveal").forEach(el => {
+        gsap.from(el, {
+          y: 22,
+          opacity: 0,
+          duration: 0.7,
+          ease: "power2.out",
+          scrollTrigger: { trigger: el, start: "top 84%", once: true }
+        });
       });
     });
 
-    setHudTheme("cinnabar");
-
-    // Scroll blade progress
-    const blade = document.getElementById("scrollBlade");
-    window.addEventListener("scroll", () => {
-      const h = document.documentElement.scrollHeight - window.innerHeight;
-      blade.style.width = h > 0 ? Math.min(100, (window.scrollY / h) * 100) + "%" : "0%";
-    }, { passive: true });
-
-    // Bilingual i18n
+    // Bilingual switcher
     const dict = {
       zh: {
-        nav_tenets: "核心准则", nav_hud: "影刃 HUD", nav_compare: "对比",
-        kicker: "PHANTOM TELEMETRY · MIT OPEN SOURCE · 7 MB PORTABLE",
-        hero_title: '出鞘无痕，<span class="crimson-accent">帧帧见锋</span>',
-        hero_lead: "FrameForge 是一款仅约 7 MB 的单文件 Windows FPS 游戏增效工具。默认零 DLL 注入，基于 Intel PresentMon ETW 与 SCTL v2 事务日志构建，集一键可回滚加速、现代毛玻璃 HUD、硬件级画面滤镜与赛后战绩报告于一体。",
-        cta_dl: "下载最新版 v1.6.5", cta_gh: "GitHub 源码", cta_dis: "社区讨论",
-        tenets_title: "克制如铁，收放自如", tenets_desc: "摒弃臃肿常驻驱动与无节制的系统魔改，每一项优化皆有日志可溯、崩溃亦可自愈。",
-        t1_h: "七兆单文件", t1_p: "纯 C# 与原生 GDI+ 实现，由系统自带 csc.exe 直接编译。双击即用，无安装残留，零广告零遥测。",
-        t2_h: "默认零注入", t2_p: "通过 Intel PresentMon ETW 采集帧率与 1% Low，默认分层窗口绘制；独占全屏下可无缝交由 RTSS 渲染。",
-        t3_h: "事务级回滚", t3_p: "所有系统改动先落盘 HMAC 签名日志（SCTL v2），配合独立看门狗，崩溃或强杀后自动还原系统原貌。",
-        t4_h: "硬件滤镜与校色", t4_p: "23 套通用与游戏预设、Gamma LUT + NVAPI 数字振动、DDC/CI 硬件背光与显示器 ICC 配置文件导入。",
-        hud_title: "现代 HUD 与水墨双境", hud_desc: "五套统一配色与三档底板自由切换，自绘叠加层、RTSS 输出与设置预览共享同一绘制管线。",
-        ctrl_theme: "配色主题 / THEME", ctrl_bd: "底板模式 / BACKDROP",
-        ctrl_note: "点击上方选项即可实时预览 v1.6.5 叠加层的色彩层级与底板质感，等宽字形保证数字跳动不抖列。",
-        cap_hud: "v1.6.5 全场景 HUD 效果 · 竖向 / 横向 / 简洁胶囊 / RTSS 同步",
-        cap_dark: "影刃夜间主题 · 一键加速与硬件实时表盘",
-        cap_light: "宣纸白昼主题 · 核心拓扑与五维雷达",
-        cmp_title: "与传统优化 / 监控套件对比", cmp_desc: "献给在意系统纯净度、反作弊兼容性与代码透明度的竞技玩家。",
-        th_d: "维度", th_o: "传统优化 / 监控组合",
-        r1_k: "体积与驻留", r1_a: "单文件约 7 MB，绿色便携，无常驻内核驱动", r1_b: "数十至数百 MB，常附带多项服务与驱动",
-        r2_k: "反作弊安全", r2_a: "默认零 DLL 注入（ETW 采集），内置反作弊白名单", r2_b: "普遍注入渲染钩子，易触发反作弊拦截",
-        r3_k: "回滚机制", r3_a: "SCTL v2 签名事务日志 + 看门狗，异常退出自动还原", r3_b: "缺少事务对账，修改注册表与电源方案易残留",
-        r4_k: "开源与隐私", r4_a: "MIT 全量开源，本机 csc.exe 一键自编译，零遥测", r4_b: "闭源、弹窗广告或强制账号登录",
-        ver_title: "源码构建与校验", ver_desc: "无需安装 Visual Studio，Windows 自带 .NET Framework 4.8 编译器即可从源码直接构建。"
+        nav_hud: "叠加层", nav_core: "内核架构", nav_themes: "双主题", nav_dl: "下载 v1.6.5",
+        hero_title: "出鞘无痕，帧帧见锋",
+        hero_desc: "单文件约 7 MB 的 Windows FPS 增效工具。通过 Intel PresentMon ETW 采集帧率与 1% Low，默认零 DLL 注入；所有系统优化由签名事务日志全程托管，退出或崩溃后自动还原。",
+        cta_dl: "下载 FrameForge v1.6.5", cta_src: "查看 GitHub 源码",
+        f1: "单文件绿色便携", f2: "默认不注入游戏进程", f3: "SCTL v2 事务级回滚",
+        hud_h: "游戏内现代 HUD，自绘与 RTSS 同步",
+        hud_p: "v1.6.5 重构了整套叠加层视觉。等宽数字保证帧率波动不抖列，五套配色与三档底板在自绘分层窗口、RTSS 与设置预览之间完全一致。",
+        ctrl_theme: "配色主题", ctrl_bd: "底板模式", ctrl_layout: "排版结构",
+        th_cinnabar: "朱砂", th_green: "翠绿", th_pink: "粉紫", th_cyan: "青蓝", th_mono: "极简",
+        bd_hud: "现代 HUD", bd_subtle: "轻透", bd_none: "无底板",
+        ly_stack: "竖向", ly_row: "横向", ly_mini: "简洁",
+        hud_note: "无边框窗口模式下由自带分层窗口直接绘制，不触碰游戏渲染管线；独占全屏下可一键交由 RTSS 同步呈现同等配色与主视觉字号。",
+        core_h: "每一项系统改动，皆可对账还原",
+        core_p: "传统游戏加速工具往往留下难以追查的注册表与电源残留。FrameForge 将底层调度收束为可验证的事务内核，不装驱动，不留后患。",
+        c1_k: "SCTL v2 事务日志", c1_v: "所有电源计划、1 ms 计时器、进程优先级与核心调度改动先落盘 HMAC 签名原值，配合独立看门狗进程在崩溃或强杀后自动恢复。",
+        c2_k: "核心拓扑软引导", c2_v: "支持自动、P 核优先与单 CCD 策略，每 2 分钟采样最闲核心软引导游戏主线程，不强锁亲和性掩码。",
+        c3_k: "硬件滤镜与 ICC", c3_v: "23 套预设通过放大镜矩阵、Gamma LUT 与 NVIDIA NVAPI 数字振动实现零注入调色，支持 DDC/CI 硬件背光与 .icc 校色文件。",
+        c4_k: "赛后战绩归档", c4_v: "退出游戏自动生成平均帧率、1% Low、温度与功耗报告，本地保留最近 300 局帧率曲线并支持导出 CSV。",
+        theme_h: "影刃夜间与宣纸白昼",
+        theme_p: "纯原生 GDI+ 绘制整卡毛玻璃与水墨底纹，无第三方重型 UI 框架。左右拖动分界线对比两套内置主题界面。",
+        tag_night: "影刃 · 夜间", tag_day: "宣纸 · 白昼",
+        cmp_h: "克制体积，公开校验",
+        cmp_p: "所有代码以 MIT 协议开源，无需安装 Visual Studio，使用 Windows 自带 .NET Framework 4.8 编译器即可本机编译。",
+        th_d: "维度", th_o: "传统优化与监控套件",
+        r1_k: "体积与部署", r1_a: "单文件约 7 MB，免安装无服务残留", r1_b: "数十至数百 MB，常附带多项后台服务",
+        r2_k: "反作弊兼容", r2_a: "默认零 DLL 注入，反作弊组件永久排除", r2_b: "普遍注入渲染钩子，易与部分反作弊冲突",
+        r3_k: "系统回滚", r3_a: "签名事务日志加看门狗，崩溃自动还原", r3_b: "缺少事务记录，异常退出常遗留改动",
+        r4_k: "隐私与源码", r4_a: "MIT 全量开源，零遥测零广告", r4_b: "闭源、弹窗推广或强制登录",
+        ver_h: "源码构建与 SHA-256", ver_p: "在 Windows 10 或 Windows 11 上直接编译，或核对 v1.6.5 发布件哈希。",
+        copy_sha: "复制 SHA-256 校验值"
       },
       en: {
-        nav_tenets: "Tenets", nav_hud: "HUD Engine", nav_compare: "Compare",
-        kicker: "PHANTOM TELEMETRY · MIT OPEN SOURCE · 7 MB PORTABLE",
-        hero_title: 'Silent Blade, <span class="crimson-accent">Razor Frames</span>',
-        hero_lead: "FrameForge is a ~7 MB single-file Windows FPS toolkit built with zero DLL injection by default. Powered by Intel PresentMon ETW and an HMAC-signed SCTL v2 write-ahead journal — uniting reversible system boost, a modern translucent HUD, hardware filters, and match telemetry.",
-        cta_dl: "Download v1.6.5", cta_gh: "GitHub Source", cta_dis: "Discussions",
-        tenets_title: "Forged Light, Restored Clean", tenets_desc: "No bloated drivers and no permanent registry scars — every tweak is journaled and self-heals after crashes.",
-        t1_h: "7 MB Single-File", t1_p: "Pure C# and native GDI+, compiled directly via Windows in-box csc.exe. Portable, zero telemetry, zero ads.",
-        t2_h: "Zero Injection", t2_p: "Captures FPS & 1% Low through Intel PresentMon ETW on a layered window, with seamless RTSS handoff for exclusive fullscreen.",
-        t3_h: "Atomic Rollback", t3_p: "HMAC-signed SCTL v2 journal and out-of-process watchdog restore power plans, timers, and affinities even after force-kills.",
-        t4_h: "Filters & ICC", t4_p: "23 presets, Gamma LUT + NVAPI Digital Vibrance, hardware DDC/CI backlight control, and .icc/.icm calibration import.",
-        hud_title: "Modern HUD & Dual Wuxia UI", hud_desc: "Five unified themes and three backdrop tiers shared across the live overlay, RTSS output, and settings preview.",
-        ctrl_theme: "COLOUR THEME", ctrl_bd: "BACKDROP MODE",
-        ctrl_note: "Click above to preview v1.6.5 HUD colours and backdrops live. Monospaced columns keep numbers rock-steady.",
-        cap_hud: "v1.6.5 HUD Showcase · Stack / Row / Mini Capsule / RTSS Sync",
-        cap_dark: "Shadow Blade (Night) · One-Click Boost & Live Telemetry",
-        cap_light: "Paper Ink (Day) · Core Topology & 5-Axis Radar",
-        cmp_title: "How It Compares", cmp_desc: "Built for FPS players who value a clean OS, anti-cheat safety, and inspectable open-source code.",
-        th_d: "Dimension", th_o: "Typical Optimizer / Monitor Suites",
-        r1_k: "Footprint", r1_a: "Single ~7 MB portable .exe, no lingering kernel drivers", r1_b: "Tens to hundreds of MB with background services",
-        r2_k: "Anti-Cheat", r2_a: "Zero DLL injection by default (ETW), strict exclusions", r2_b: "Render hooks frequently conflict with anti-cheat",
-        r3_k: "Rollback", r3_a: "SCTL v2 signed journal + watchdog auto-restores on crash", r3_b: "Untracked registry/power tweaks left behind",
-        r4_k: "Open Source", r4_a: "MIT open source, compiles locally via csc.exe, zero telemetry", r4_b: "Closed source, popups, or mandatory accounts",
-        ver_title: "Build & Verify", ver_desc: "No Visual Studio required — compile directly from source with Windows' built-in .NET Framework 4.8 csc.exe."
+        nav_hud: "Overlay", nav_core: "Core", nav_themes: "Themes", nav_dl: "Download v1.6.5",
+        hero_title: "Silent blade, razor frames",
+        hero_desc: "A 7 MB single-file Windows FPS toolkit. Captures FPS and 1% Low via Intel PresentMon ETW with zero DLL injection by default, and guards every system tweak with an HMAC-signed rollback journal.",
+        cta_dl: "Download FrameForge v1.6.5", cta_src: "View GitHub source",
+        f1: "Single-file portable", f2: "Zero DLL injection", f3: "SCTL v2 atomic rollback",
+        hud_h: "Modern in-game HUD, synced with RTSS",
+        hud_p: "v1.6.5 rebuilds the entire overlay visual system. Tabular figures keep columns steady, and five colour themes stay consistent across the layered window, RTSS output, and settings preview.",
+        ctrl_theme: "Colour theme", ctrl_bd: "Backdrop", ctrl_layout: "Layout",
+        th_cinnabar: "Cinnabar", th_green: "Emerald", th_pink: "Neon", th_cyan: "Cyber", th_mono: "Mono",
+        bd_hud: "Modern HUD", bd_subtle: "Subtle", bd_none: "None",
+        ly_stack: "Stack", ly_row: "Row", ly_mini: "Mini",
+        hud_note: "Draws through a native layered window in borderless fullscreen without touching the game pipeline, or hands off to RTSS in exclusive fullscreen with matching themes and sizing.",
+        core_h: "Every system tweak, logged and reversible",
+        core_p: "Conventional game boosters leave untracked registry and power changes behind. FrameForge runs inside a verifiable transactional engine with no drivers installed.",
+        c1_k: "SCTL v2 journal", c1_v: "Power plans, 1 ms timers, priorities, and affinities are written to an HMAC-signed log first, backed by an out-of-process watchdog that restores state after crashes.",
+        c2_k: "Core topology steering", c2_v: "Auto, P-core first, and single-CCD policies gently steer the game's main thread toward the idlest core every two minutes without hard-locking affinity.",
+        c3_k: "Hardware filters & ICC", c3_v: "23 presets via Magnification, Gamma LUT, and NVIDIA NVAPI Digital Vibrance with zero injection, plus DDC/CI hardware backlight and .icc profile support.",
+        c4_k: "Post-match telemetry", c4_v: "Generates FPS, 1% Low, thermal, and power summaries on exit, keeping the last 300 match graphs locally with CSV export.",
+        theme_h: "Shadow Blade night and Paper Ink day",
+        theme_p: "Rendered directly with native GDI+ frosted surfaces and ink textures, without heavy UI frameworks. Drag the divider to compare both built-in themes.",
+        tag_night: "Shadow Blade · Night", tag_day: "Paper Ink · Day",
+        cmp_h: "Small footprint, verifiable build",
+        cmp_p: "Released under the MIT license. Compiles directly from source with Windows' built-in .NET Framework 4.8 compiler, no Visual Studio required.",
+        th_d: "Dimension", th_o: "Conventional suites",
+        r1_k: "Footprint", r1_a: "Single 7 MB portable exe, no lingering services", r1_b: "Tens to hundreds of MB with background services",
+        r2_k: "Anti-cheat safety", r2_a: "Zero DLL injection by default, strict exclusions", r2_b: "Render hooks often conflict with kernel anti-cheat",
+        r3_k: "Rollback", r3_a: "Signed journal and watchdog auto-restore on crash", r3_b: "Untracked tweaks remain after abnormal exits",
+        r4_k: "Privacy & source", r4_a: "MIT open source, zero telemetry, zero ads", r4_b: "Closed source, popups, or mandatory accounts",
+        ver_h: "Build & SHA-256", ver_p: "Compile on Windows 10 or 11 directly, or verify the v1.6.5 release binary.",
+        copy_sha: "Copy SHA-256 checksum"
       }
     };
 
     let lang = (navigator.language || "zh").toLowerCase().startsWith("zh") ? "zh" : "en";
     const langBtn = document.getElementById("langToggle");
-    const heroBanner = document.getElementById("heroBanner");
 
     function applyLang(l) {
       lang = l;
       document.documentElement.lang = l === "zh" ? "zh-CN" : "en";
       langBtn.textContent = l === "zh" ? "EN" : "中文";
-      heroBanner.src = l === "zh" ? "social-preview.zh-CN.png" : "social-preview.png";
       document.querySelectorAll("[data-i18n]").forEach(el => {
         const k = el.getAttribute("data-i18n");
         if (dict[l][k]) el.textContent = dict[l][k];
       });
-      document.querySelectorAll("[data-i18n-html]").forEach(el => {
-        const k = el.getAttribute("data-i18n-html");
-        if (dict[l][k]) el.innerHTML = dict[l][k];
-      });
     }
-
     langBtn.addEventListener("click", () => applyLang(lang === "zh" ? "en" : "zh"));
     applyLang(lang);
   </script>
