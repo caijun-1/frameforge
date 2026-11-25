@@ -16,11 +16,9 @@
   <img src="https://img.shields.io/badge/version-1.6.5-orange" alt="1.6.5">
 </p>
 
-<p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest"><b>⬇️ 下载最新版 (v1.6.5)</b></a> · <a href="#为什么选择-frameforge">为什么选它</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
+<p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版 (v1.6.5)</a> · <a href="#为什么选择-frameforge">对比优势</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
 
-<p align="center"><img src="docs/screenshots/v1.6.5/overlay-hud.png" width="840" alt="FrameForge v1.6.5 Modern HUD Overlay"></p>
-
-> **觉得有帮助的话，欢迎在右上角点个 ⭐ Star 支持一下！**
+<p align="center"><img src="docs/social-preview.zh-CN.png" width="840" alt="FrameForge v1.6.5"></p>
 
 ---
 
