@@ -97,3 +97,39 @@ Would love feedback from the optimization community — especially on the new HU
 ```powershell
 winget install JunCai.FrameForge
 ```
+
+
+---
+
+## 七、GitHub 站内 Awesome 列表与 Scoop PR 模板
+
+以下为 GitHub 站内高星聚合仓库的提交素材，直接 Fork 对应仓库并提交 PR 即可：
+
+### 1. Awesome 列表单行条目（英文）
+
+适用于 `Awesome-Windows`、`awesome-dotnet`、`awesome-csharp`、`awesome-gaming` 等仓库的 `Utilities` / `Gaming` 分类：
+
+```markdown
+- [FrameForge](https://github.com/caijun-1/frameforge) - Lightweight (~7 MB) portable Windows FPS toolkit with transactional reversible system boost, PresentMon/RTSS modern HUD overlay, and non-invasive hardware screen filters. (`MIT`)
+```
+
+**PR 标题**：`Add FrameForge (Windows FPS toolkit & modern HUD overlay)`
+
+**PR 描述**：
+```markdown
+Adds [FrameForge](https://github.com/caijun-1/frameforge), a lightweight (~7 MB) MIT-licensed portable Windows FPS toolkit written in C# (.NET Framework 4.8 / native GDI+):
+
+- One-click reversible system boost backed by an HMAC-signed write-ahead journal and crash-recovery watchdog
+- Zero-DLL-injection FPS & 1% Low monitoring via Intel PresentMon ETW with a modern translucent HUD (plus optional RTSS sync for exclusive fullscreen)
+- Non-invasive screen filters (Magnification / Gamma LUT + NVAPI Digital Vibrance), DDC/CI backlight control, and ICC profile support
+```
+
+### 2. Scoop 清单提交（`ScoopInstaller/Extras`）
+
+已在仓库内生成标准清单文件 `packaging/scoop/frameforge.json`（含 `v1.6.5` 精确 SHA-256 及 `checkver`/`autoupdate` 自动更新配置）。
+将该文件复制到 `ScoopInstaller/Extras` 仓库的 `bucket/frameforge.json` 提交 PR；合入后全球用户可通过以下命令直接安装：
+
+```powershell
+scoop bucket add extras
+scoop install frameforge
+```

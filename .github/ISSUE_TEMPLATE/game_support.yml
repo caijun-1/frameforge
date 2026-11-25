@@ -1,0 +1,42 @@
+name: 新游戏支持或滤镜预设 / Game Support & Filter Preset
+description: 请求内置游戏名识别、平台扫描支持或专属画面滤镜预设 / Request game detection or a tuned filter preset
+title: "[Game]: "
+labels: ["enhancement", "game-support"]
+body:
+  - type: input
+    id: game_name
+    attributes:
+      label: 游戏名称 / Game Title
+      placeholder: "例如：三角洲行动 / Delta Force"
+    validations:
+      required: true
+  - type: input
+    id: process_name
+    attributes:
+      label: 游戏进程名 / Executable Name
+      description: 可在任务管理器中查看（例如 Client-Win64-Shipping.exe）
+      placeholder: "GameName-Win64-Shipping.exe"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 启动平台 / Storefront or Launcher
+      options:
+        - Steam
+        - Epic Games
+        - WeGame
+        - Xbox / Microsoft Store
+        - GOG
+        - 独立启动器 / Standalone Launcher
+        - 其他 / Other
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: 需求说明 / Details
+      description: 说明是希望加入游戏库识别、排除误检，还是希望增加该游戏的专属画面滤镜预设。
+      placeholder: "希望支持该游戏名称识别，或在雾天/暗部场景提供竞技滤镜预设。"
+    validations:
+      required: true

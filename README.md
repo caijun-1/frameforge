@@ -16,7 +16,7 @@
   <img src="https://img.shields.io/badge/version-1.6.5-orange" alt="1.6.5">
 </p>
 
-<p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版 (v1.6.5)</a> · <a href="#为什么选择-frameforge">对比优势</a> · <a href="#功能">简体中文</a> · <a href="#english">English</a></p>
+<p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版 (v1.6.5)</a> · <a href="https://caijun-1.github.io/frameforge/">项目主页</a> · <a href="#为什么选择-frameforge">对比优势</a> · <a href="README.en.md">English</a></p>
 
 <p align="center"><img src="docs/social-preview.zh-CN.png" width="840" alt="FrameForge v1.6.5"></p>
 
@@ -51,7 +51,7 @@
 - [项目结构](#项目结构)
 - [已知限制](#已知限制)
 - [更新日志](#更新日志)
-- [English](#english)
+- [English (README.en.md)](README.en.md)
 
 ---
 

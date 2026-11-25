@@ -1,0 +1,41 @@
+name: Bug 反馈 / Bug Report
+description: 报告程序异常、界面错位、帧率或硬件读取问题 / Report a crash, UI glitch, or telemetry issue
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈问题。请尽量提供完整环境信息，以便快速定位修复。
+        Thanks for reporting an issue. Please share your environment details below.
+  - type: input
+    id: version
+    attributes:
+      label: FrameForge 版本 / Version
+      placeholder: "v1.6.5"
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: 系统与硬件环境 / OS & Hardware
+      description: Windows 版本、CPU、显卡型号及驱动版本
+      placeholder: "Windows 11 24H2 / R7 7800X3D / RTX 4070 Super (566.14)"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述与复现步骤 / Description & Steps to Reproduce
+      placeholder: |
+        1. 打开 ...
+        2. 启动游戏 ...
+        3. 出现现象 ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志或截图 / Logs or Screenshots (Optional)
+      description: 可粘贴 `%LOCALAPPDATA%\FrameForge\log.txt` 相关片段，或直接拖入截图（日志已自动脱敏用户名）。
+      render: text

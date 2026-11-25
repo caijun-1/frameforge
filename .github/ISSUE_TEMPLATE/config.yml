@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 问答与使用交流 / Q&A Discussions
+    url: https://github.com/caijun-1/frameforge/discussions
+    about: 使用疑问、硬件兼容咨询或优化心得交流 / Ask questions or share optimization tips
+  - name: 滤镜与 HUD 配色分享 / Presets & HUD Themes
+    url: https://github.com/caijun-1/frameforge/discussions
+    about: 分享自定义画面滤镜参数或叠加层主题搭配 / Share screen filter presets or HUD setups

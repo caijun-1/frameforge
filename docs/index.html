@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FrameForge — Lightweight 7 MB Windows FPS Toolkit</title>
+  <meta name="description" content="Lightweight 7 MB portable Windows FPS booster, PresentMon/RTSS modern HUD overlay, hardware screen filters & 100% reversible transactional boost — zero DLL injection.">
+  <meta property="og:title" content="FrameForge — Lightweight 7 MB Windows FPS Toolkit">
+  <meta property="og:description" content="One-click reversible boost, PresentMon/RTSS modern HUD overlay, non-invasive screen filters & post-match FPS reports. Single 7 MB portable exe, MIT open source.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://caijun-1.github.io/frameforge/">
+  <meta property="og:image" content="https://caijun-1.github.io/frameforge/social-preview.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" href="icon-1.5.0.png">
+  <style>
+    :root {
+      --bg: #0c0e12;
+      --bg-elev: #14171e;
+      --bg-card: rgba(24, 27, 34, 0.72);
+      --border: rgba(255, 255, 255, 0.08);
+      --border-strong: rgba(255, 255, 255, 0.16);
+      --text: #eceae4;
+      --text-muted: #9da3ae;
+      --accent: #d9483b;
+      --accent-hover: #ea5649;
+      --accent-soft: rgba(217, 72, 59, 0.14);
+      --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+      --sans: "Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: var(--sans);
+      background:
+        radial-gradient(900px 420px at 78% -4%, rgba(180, 42, 34, 0.16), transparent 62%),
+        radial-gradient(760px 460px at 14% 16%, rgba(86, 98, 120, 0.10), transparent 64%),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: inherit; text-decoration: none; }
+    .container { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+    /* Header */
+    header {
+      position: sticky; top: 0; z-index: 40;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      background: rgba(12, 14, 18, 0.78);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav {
+      height: 64px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .brand {
+      display: flex; align-items: center; gap: 12px;
+      font-weight: 700; font-size: 18px; letter-spacing: 0.2px;
+    }
+    .brand img { width: 32px; height: 32px; border-radius: 7px; }
+    .brand-ver {
+      font-family: var(--mono); font-size: 12px; font-weight: 500;
+      color: var(--text-muted); padding: 2px 8px;
+      border: 1px solid var(--border); border-radius: 999px;
+    }
+    .nav-links { display: flex; align-items: center; gap: 22px; font-size: 14px; color: var(--text-muted); }
+    .nav-links a:hover { color: var(--text); }
+    .lang-btn {
+      font-family: var(--mono); font-size: 12px;
+      color: var(--text); background: transparent;
+      border: 1px solid var(--border-strong); border-radius: 6px;
+      padding: 5px 10px; cursor: pointer; transition: border-color 0.15s, background 0.15s;
+    }
+    .lang-btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+
+    /* Hero */
+    .hero { padding: 72px 0 48px; text-align: center; }
+    .eyebrow {
+      display: inline-block;
+      font-family: var(--mono); font-size: 12px; letter-spacing: 0.6px;
+      color: #f0a29a; background: var(--accent-soft);
+      border: 1px solid rgba(217, 72, 59, 0.28);
+      padding: 4px 12px; border-radius: 999px; margin-bottom: 20px;
+    }
+    .hero h1 {
+      font-size: clamp(34px, 5vw, 54px);
+      line-height: 1.14; font-weight: 700; letter-spacing: -0.02em;
+      margin-bottom: 16px;
+    }
+    .hero p.lead {
+      max-width: 700px; margin: 0 auto 30px;
+      font-size: 17px; color: var(--text-muted);
+    }
+    .cta-row {
+      display: flex; flex-wrap: wrap; justify-content: center; gap: 12px;
+      margin-bottom: 42px;
+    }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 12px 22px; border-radius: 8px; font-size: 15px; font-weight: 600;
+      border: 1px solid transparent; transition: all 0.16s ease;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-hover); transform: translateY(-1px); }
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: var(--border-strong); color: var(--text);
+    }
+    .btn-secondary:hover { background: rgba(255, 255, 255, 0.09); border-color: rgba(255, 255, 255, 0.28); }
+
+    .hero-frame {
+      border-radius: 14px; overflow: hidden;
+      border: 1px solid var(--border-strong);
+      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.55);
+      background: #101216;
+    }
+    .hero-frame img { width: 100%; display: block; }
+
+    /* Pillars */
+    section { padding: 56px 0; }
+    .sec-head { margin-bottom: 28px; }
+    .sec-head h2 { font-size: 26px; font-weight: 700; margin-bottom: 8px; }
+    .sec-head p { color: var(--text-muted); font-size: 15px; }
+
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px; padding: 22px;
+      position: relative; overflow: hidden;
+    }
+    .card::before {
+      content: ""; position: absolute; left: 0; top: 18px; bottom: 18px; width: 3px;
+      background: var(--accent); border-radius: 0 3px 3px 0; opacity: 0.85;
+    }
+    .card h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; padding-left: 8px; }
+    .card p { font-size: 14px; color: var(--text-muted); padding-left: 8px; }
+
+    /* Showcase */
+    .showcase-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .shot {
+      background: var(--bg-elev); border: 1px solid var(--border);
+      border-radius: 12px; overflow: hidden;
+    }
+    .shot img { width: 100%; display: block; }
+    .shot figcaption {
+      padding: 12px 16px; font-size: 13px; color: var(--text-muted);
+      border-top: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .shot.wide { grid-column: span 2; }
+
+    /* Table */
+    .table-wrap {
+      overflow-x: auto; border: 1px solid var(--border);
+      border-radius: 12px; background: var(--bg-card);
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { padding: 14px 18px; text-align: left; border-bottom: 1px solid var(--border); }
+    th { color: var(--text-muted); font-weight: 600; background: rgba(255, 255, 255, 0.02); }
+    tr:last-child td { border-bottom: none; }
+    td.col-ff { color: var(--text); font-weight: 500; }
+    td.col-other { color: var(--text-muted); }
+
+    /* Checksum & Build */
+    .code-box {
+      background: #0a0c10; border: 1px solid var(--border);
+      border-radius: 10px; padding: 16px 20px;
+      font-family: var(--mono); font-size: 13px; color: #d5d8df;
+      overflow-x: auto; line-height: 1.8;
+    }
+    .code-box .dim { color: #6e7685; }
+
+    /* Footer */
+    footer {
+      margin-top: 32px; padding: 32px 0 48px;
+      border-top: 1px solid var(--border);
+      font-size: 13px; color: var(--text-muted);
+      display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px;
+    }
+    footer .links { display: flex; gap: 20px; }
+    footer a:hover { color: var(--text); }
+
+    @media (max-width: 900px) {
+      .grid-4 { grid-template-columns: repeat(2, 1fr); }
+      .showcase-grid { grid-template-columns: 1fr; }
+      .shot.wide { grid-column: span 1; }
+    }
+    @media (max-width: 600px) {
+      .grid-4 { grid-template-columns: 1fr; }
+      .nav-links a.hide-sm { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container nav">
+      <a class="brand" href="#">
+        <img src="icon-1.5.0.png" alt="FrameForge">
+        <span>FrameForge</span>
+        <span class="brand-ver">v1.6.5</span>
+      </a>
+      <nav class="nav-links">
+        <a class="hide-sm" href="#features" data-i18n="nav_features">核心特性</a>
+        <a class="hide-sm" href="#showcase" data-i18n="nav_showcase">界面与 HUD</a>
+        <a class="hide-sm" href="#compare" data-i18n="nav_compare">对比优势</a>
+        <a href="https://github.com/caijun-1/frameforge" target="_blank" rel="noopener">GitHub</a>
+        <button class="lang-btn" id="langToggle" type="button">EN</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <div class="eyebrow" data-i18n="eyebrow">MIT OPEN SOURCE · WINDOWS 10 / 11 (x64) · ~7 MB PORTABLE</div>
+      <h1 data-i18n="hero_title">轻量级 Windows FPS 游戏增效工具</h1>
+      <p class="lead" data-i18n="hero_lead">
+        一键可回滚系统加速、PresentMon / RTSS 现代毛玻璃 HUD 叠加层、非侵入式硬件画面滤镜与赛后帧率战绩。单文件免安装，默认零 DLL 注入，反作弊友好。
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/caijun-1/frameforge/releases/latest" data-i18n="cta_download">下载最新版 (v1.6.5)</a>
+        <a class="btn btn-secondary" href="https://github.com/caijun-1/frameforge" target="_blank" rel="noopener" data-i18n="cta_github">查看源码与 Star</a>
+        <a class="btn btn-secondary" href="https://github.com/caijun-1/frameforge/discussions" target="_blank" rel="noopener" data-i18n="cta_discuss">社区讨论</a>
+      </div>
+      <div class="hero-frame">
+        <img id="heroBanner" src="social-preview.zh-CN.png" alt="FrameForge v1.6.5 Banner">
+      </div>
+    </section>
+
+    <section id="features">
+      <div class="sec-head">
+        <h2 data-i18n="feat_title">为什么它更克制，也更可靠</h2>
+        <p data-i18n="feat_sub">去掉广告、常驻驱动与强制注入，把游戏优化与性能监控收敛为一个 7 MB 开源单文件。</p>
+      </div>
+      <div class="grid-4">
+        <div class="card">
+          <h3 data-i18n="f1_t">单文件 · 约 7 MB</h3>
+          <p data-i18n="f1_d">纯 C# 与原生 GDI+ 实现，直接由系统自带 csc.exe 编译。免安装、无后台服务残留、零遥测零广告。</p>
+        </div>
+        <div class="card">
+          <h3 data-i18n="f2_t">默认零 DLL 注入</h3>
+          <p data-i18n="f2_d">通过 Intel PresentMon ETW 采集帧率与 1% Low，默认采用分层窗口绘制叠加层；独占全屏可无缝切换至 RTSS。</p>
+        </div>
+        <div class="card">
+          <h3 data-i18n="f3_t">100% 原子级回滚</h3>
+          <p data-i18n="f3_d">基于带 HMAC 签名的 SCTL v2 事务预写日志与看门狗，即使游戏崩溃或强杀，也会自动还原电源、计时器与核心调度。</p>
+        </div>
+        <div class="card">
+          <h3 data-i18n="f4_t">硬件滤镜与 ICC 校色</h3>
+          <p data-i18n="f4_d">23 套通用及游戏专用预设、六维微调、DDC/CI 硬件背光控制，并支持导入显示器 .icc / .icm 校色文件。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="showcase">
+      <div class="sec-head">
+        <h2 data-i18n="show_title">v1.6.5 现代 HUD 与水墨双主题界面</h2>
+        <p data-i18n="show_sub">五套统一配色主题（朱砂、翠绿、粉紫、青蓝、极简）与三档底板模式，自绘叠加层、RTSS 与设置预览保持一致。</p>
+      </div>
+      <div class="showcase-grid">
+        <figure class="shot wide">
+          <img src="screenshots/v1.6.5/overlay-hud.png" alt="FrameForge v1.6.5 Overlay HUD">
+          <figcaption>
+            <span data-i18n="cap_hud">v1.6.5 现代毛玻璃 HUD · 三种排版 / 三档底板 / 五套主题 / RTSS 同步</span>
+            <span>PresentMon + RTSS</span>
+          </figcaption>
+        </figure>
+        <figure class="shot">
+          <img src="screenshots/v1.5.0/boost-dark.png" alt="FrameForge Dark Theme">
+          <figcaption>
+            <span data-i18n="cap_dark">影刃夜间主题 · 一键加速与硬件实时仪表</span>
+            <span>Night</span>
+          </figcaption>
+        </figure>
+        <figure class="shot">
+          <img src="screenshots/v1.5.0/boost.png" alt="FrameForge Light Theme">
+          <figcaption>
+            <span data-i18n="cap_light">宣纸白昼主题 · 核心拓扑与五维雷达</span>
+            <span>Day</span>
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section id="compare">
+      <div class="sec-head">
+        <h2 data-i18n="cmp_title">与传统游戏优化/监控组合的对比</h2>
+        <p data-i18n="cmp_sub">面向注重干净系统环境、反作弊兼容性与可控回滚的 FPS 玩家。</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th data-i18n="th_dim">对比维度</th>
+              <th>FrameForge</th>
+              <th data-i18n="th_other">传统优化 / 监控组合</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td data-i18n="r1_k">体积与部署</td>
+              <td class="col-ff" data-i18n="r1_a">单文件约 7 MB，绿色便携，无常驻驱动</td>
+              <td class="col-other" data-i18n="r1_b">数十至数百 MB，需安装多套服务与驱动</td>
+            </tr>
+            <tr>
+              <td data-i18n="r2_k">反作弊兼容性</td>
+              <td class="col-ff" data-i18n="r2_a">默认零 DLL 注入（ETW 采集），反作弊进程白名单保护</td>
+              <td class="col-other" data-i18n="r2_b">普遍依赖渲染钩子注入，易与部分反作弊冲突</td>
+            </tr>
+            <tr>
+              <td data-i18n="r3_k">系统改动安全</td>
+              <td class="col-ff" data-i18n="r3_a">SCTL v2 事务日志 + 独立看门狗，崩溃后自动对账还原</td>
+              <td class="col-other" data-i18n="r3_b">缺少事务记录，异常退出后常遗留系统改动</td>
+            </tr>
+            <tr>
+              <td data-i18n="r4_k">隐私与源码</td>
+              <td class="col-ff" data-i18n="r4_a">MIT 全量开源，支持本机一键自编译，零遥测</td>
+              <td class="col-other" data-i18n="r4_b">闭源、广告弹窗或强制登录账号</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="verify">
+      <div class="sec-head">
+        <h2 data-i18n="ver_title">获取与源码自编译</h2>
+        <p data-i18n="ver_sub">所有发布件均附带 SHA-256 校验值；你也可以无需安装 Visual Studio，直接用 Windows 自带编译器从源码构建。</p>
+      </div>
+      <div class="code-box">
+        <div><span class="dim"># Build from source on Windows 10 / 11 (in-box .NET Framework 4.8 csc.exe)</span></div>
+        <div>git clone https://github.com/caijun-1/frameforge.git</div>
+        <div>cd frameforge</div>
+        <div>powershell -ExecutionPolicy Bypass -File .\build.ps1</div>
+        <div>&nbsp;</div>
+        <div><span class="dim"># v1.6.5 FrameForge.exe SHA-256</span></div>
+        <div>43da958dfb965f4659b3f027fd6d9f8495ec5fb02b8407d95edb1cb68daaf99a</div>
+      </div>
+    </section>
+
+    <footer>
+      <div>FrameForge · MIT License</div>
+      <div class="links">
+        <a href="https://github.com/caijun-1/frameforge" target="_blank" rel="noopener">Repository</a>
+        <a href="https://github.com/caijun-1/frameforge/releases" target="_blank" rel="noopener">Releases</a>
+        <a href="https://github.com/caijun-1/frameforge/discussions" target="_blank" rel="noopener">Discussions</a>
+        <a href="https://github.com/caijun-1/frameforge/blob/main/SECURITY.md" target="_blank" rel="noopener">Security</a>
+      </div>
+    </footer>
+  </main>
+
+  <script>
+    const dict = {
+      zh: {
+        nav_features: "核心特性",
+        nav_showcase: "界面与 HUD",
+        nav_compare: "对比优势",
+        eyebrow: "MIT 开源 · WINDOWS 10 / 11 (x64) · 约 7 MB 单文件便携",
+        hero_title: "轻量级 Windows FPS 游戏增效工具",
+        hero_lead: "一键可回滚系统加速、PresentMon / RTSS 现代毛玻璃 HUD 叠加层、非侵入式硬件画面滤镜与赛后帧率战绩。单文件免安装，默认零 DLL 注入，反作弊友好。",
+        cta_download: "下载最新版 (v1.6.5)",
+        cta_github: "查看源码与 Star",
+        cta_discuss: "社区讨论",
+        feat_title: "为什么它更克制，也更可靠",
+        feat_sub: "去掉广告、常驻驱动与强制注入，把游戏优化与性能监控收敛为一个 7 MB 开源单文件。",
+        f1_t: "单文件 · 约 7 MB",
+        f1_d: "纯 C# 与原生 GDI+ 实现，直接由系统自带 csc.exe 编译。免安装、无后台服务残留、零遥测零广告。",
+        f2_t: "默认零 DLL 注入",
+        f2_d: "通过 Intel PresentMon ETW 采集帧率与 1% Low，默认采用分层窗口绘制叠加层；独占全屏可无缝切换至 RTSS。",
+        f3_t: "100% 原子级回滚",
+        f3_d: "基于带 HMAC 签名的 SCTL v2 事务预写日志与看门狗，即使游戏崩溃或强杀，也会自动还原电源、计时器与核心调度。",
+        f4_t: "硬件滤镜与 ICC 校色",
+        f4_d: "23 套通用及游戏专用预设、六维微调、DDC/CI 硬件背光控制，并支持导入显示器 .icc / .icm 校色文件。",
+        show_title: "v1.6.5 现代 HUD 与水墨双主题界面",
+        show_sub: "五套统一配色主题（朱砂、翠绿、粉紫、青蓝、极简）与三档底板模式，自绘叠加层、RTSS 与设置预览保持一致。",
+        cap_hud: "v1.6.5 现代毛玻璃 HUD · 三种排版 / 三档底板 / 五套主题 / RTSS 同步",
+        cap_dark: "影刃夜间主题 · 一键加速与硬件实时仪表",
+        cap_light: "宣纸白昼主题 · 核心拓扑与五维雷达",
+        cmp_title: "与传统游戏优化 / 监控组合的对比",
+        cmp_sub: "面向注重干净系统环境、反作弊兼容性与可控回滚的 FPS 玩家。",
+        th_dim: "对比维度",
+        th_other: "传统优化 / 监控组合",
+        r1_k: "体积与部署",
+        r1_a: "单文件约 7 MB，绿色便携，无常驻驱动",
+        r1_b: "数十至数百 MB，需安装多套服务与驱动",
+        r2_k: "反作弊兼容性",
+        r2_a: "默认零 DLL 注入（ETW 采集），反作弊进程白名单保护",
+        r2_b: "普遍依赖渲染钩子注入，易与部分反作弊冲突",
+        r3_k: "系统改动安全",
+        r3_a: "SCTL v2 事务日志 + 独立看门狗，崩溃后自动对账还原",
+        r3_b: "缺少事务记录，异常退出后常遗留系统改动",
+        r4_k: "隐私与源码",
+        r4_a: "MIT 全量开源，支持本机一键自编译，零遥测",
+        r4_b: "闭源、广告弹窗或强制登录账号",
+        ver_title: "获取与源码自编译",
+        ver_sub: "所有发布件均附带 SHA-256 校验值；你也可以无需安装 Visual Studio，直接用 Windows 自带编译器从源码构建。"
+      },
+      en: {
+        nav_features: "Features",
+        nav_showcase: "HUD & UI",
+        nav_compare: "Compare",
+        eyebrow: "MIT OPEN SOURCE · WINDOWS 10 / 11 (x64) · ~7 MB PORTABLE",
+        hero_title: "Lightweight Windows FPS Toolkit",
+        hero_lead: "One-click reversible boost, PresentMon / RTSS modern translucent HUD, non-invasive hardware screen filters & automatic post-match FPS reports. Single portable executable, zero DLL injection by default.",
+        cta_download: "Download Latest (v1.6.5)",
+        cta_github: "GitHub & Star",
+        cta_discuss: "Discussions",
+        feat_title: "Engineered to Stay Light and Reversible",
+        feat_sub: "No ads, no background drivers, and no forced injection — packed into a single 7 MB MIT-licensed executable.",
+        f1_t: "Single-File · ~7 MB",
+        f1_d: "Built in C# with native GDI+ and compiled directly via Windows in-box csc.exe. Portable, zero telemetry, zero bloat.",
+        f2_t: "Zero DLL Injection",
+        f2_d: "Captures FPS and 1% Low via Intel PresentMon ETW with a layered HUD window; optionally hands off to RTSS in exclusive fullscreen.",
+        f3_t: "100% Atomic Rollback",
+        f3_d: "HMAC-signed SCTL v2 write-ahead journal and out-of-process watchdog restore power plan, timer and core settings even after crashes.",
+        f4_t: "Hardware Filters & ICC",
+        f4_d: "23 general and per-game presets, 6-axis tuning, DDC/CI hardware backlight control, plus .icc / .icm display profile import.",
+        show_title: "v1.6.5 Modern HUD & Dual Wuxia Themes",
+        show_sub: "Five unified colour themes (Cinnabar, Emerald, Neon, Cyber, Mono) and three backdrop tiers shared across live HUD, RTSS and preview.",
+        cap_hud: "v1.6.5 Modern Translucent HUD · 3 Layouts / 3 Backdrops / 5 Themes / RTSS Sync",
+        cap_dark: "Shadow Blade (Night) · One-Click Boost & Live Telemetry",
+        cap_light: "Paper Ink (Day) · CPU Core Topology & 5-Axis Radar",
+        cmp_title: "How It Compares",
+        cmp_sub: "Designed for FPS players who want a clean Windows setup, anti-cheat safety, and verifiable rollback.",
+        th_dim: "Dimension",
+        th_other: "Typical Optimizer / Monitor Suites",
+        r1_k: "Footprint",
+        r1_a: "Single ~7 MB portable .exe, no lingering services",
+        r1_b: "Tens to hundreds of MB with multiple drivers and services",
+        r2_k: "Anti-Cheat Safety",
+        r2_a: "Zero DLL injection by default (ETW), strict anti-cheat exclusions",
+        r2_b: "Hook injection frequently conflicts with kernel anti-cheat",
+        r3_k: "Rollback Safety",
+        r3_a: "SCTL v2 journal + watchdog auto-restores after crashes",
+        r3_b: "Tweaks rarely tracked or rolled back cleanly",
+        r4_k: "Privacy & Source",
+        r4_a: "MIT open source, compiles locally with csc.exe, zero telemetry",
+        r4_b: "Closed source, popups, or mandatory accounts",
+        ver_title: "Verify & Build from Source",
+        ver_sub: "Every release includes a SHA-256 checksum, or compile directly from source with zero Visual Studio installation."
+      }
+    };
+
+    let currentLang = (navigator.language || "zh").toLowerCase().startsWith("zh") ? "zh" : "en";
+    const btn = document.getElementById("langToggle");
+    const banner = document.getElementById("heroBanner");
+
+    function applyLang(lang) {
+      currentLang = lang;
+      document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+      btn.textContent = lang === "zh" ? "EN" : "中文";
+      banner.src = lang === "zh" ? "social-preview.zh-CN.png" : "social-preview.png";
+      document.querySelectorAll("[data-i18n]").forEach(el => {
+        const key = el.getAttribute("data-i18n");
+        if (dict[lang][key]) el.textContent = dict[lang][key];
+      });
+    }
+
+    btn.addEventListener("click", () => applyLang(currentLang === "zh" ? "en" : "zh"));
+    applyLang(currentLang);
+  </script>
+</body>
+</html>

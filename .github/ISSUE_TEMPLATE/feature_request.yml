@@ -1,0 +1,24 @@
+name: 功能建议 / Feature Request
+description: 提出新功能想法或交互体验改进 / Suggest a new feature or UX improvement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 使用场景或痛点 / Use Case or Problem
+      placeholder: "描述你在玩游戏或使用 FrameForge 时遇到的具体痛点..."
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: 期望的实现方式 / Proposed Solution
+      placeholder: "描述你希望增加的功能或交互形式..."
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充说明 / Additional Context (Optional)
+      placeholder: "参考截图、竞品对比或硬件限制说明（可选）"
