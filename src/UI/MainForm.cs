@@ -819,6 +819,8 @@ namespace FrameForge.UI
                 try { if (ui != null) ui.Stop(); } catch (Exception ex) { Log.Write("exit ui timer: " + ex.Message); }
                 try { if (saveTimer != null) saveTimer.Stop(); } catch (Exception ex) { Log.Write("exit save timer: " + ex.Message); }
                 try { if (captureTimer != null) captureTimer.Stop(); } catch (Exception ex) { Log.Write("exit capture timer: " + ex.Message); }
+                try { if (warmTimer != null) warmTimer.Stop(); } catch (Exception ex) { Log.Write("exit warm timer: " + ex.Message); }
+                try { if (updateTimer != null) updateTimer.Stop(); } catch (Exception ex) { Log.Write("exit update timer: " + ex.Message); }
                 // 退出时正在玩的对局也要留下记录,否则关掉软件这局的成绩就丢了。
                 try { if (Tracker != null) Tracker.Flush(); } catch (Exception ex) { Log.Write("exit tracker: " + ex.Message); }
                 try { if (St != null) St.Save(); } catch (Exception ex) { Log.Write("exit settings: " + ex.Message); }

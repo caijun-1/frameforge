@@ -163,6 +163,9 @@ namespace FrameForge.Sys
             {
                 if (r == ResourceKind.PowerScheme) powerEffective = true;
                 else timerEffective = true;
+                // P1-1：一键加速释放并将 holder 移交给实时加速时，立刻把新所有权快照落盘，
+                // 避免后续强杀/崩溃对账时因 boost.realtime.journal 仍记录旧 holder 而跳过电源还原。
+                SaveRealtimeTxLocked();
             }
             Log.Write("global boost arbiter granted " + r + " ref=" + refCount);
         }

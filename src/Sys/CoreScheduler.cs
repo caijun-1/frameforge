@@ -23,6 +23,16 @@ namespace FrameForge.Sys
         private static DateTime cacheAt = DateTime.MinValue;
         private const double CacheSeconds = 2.0;
 
+        /// <summary>设置保存后立刻失效缓存，避免新策略延迟 2 秒才生效。</summary>
+        public static void Invalidate()
+        {
+            lock (Gate)
+            {
+                cache = null;
+                cacheAt = DateTime.MinValue;
+            }
+        }
+
         private static string Read(string key, string def)
         {
             lock (Gate)

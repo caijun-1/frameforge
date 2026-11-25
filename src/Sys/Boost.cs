@@ -1006,7 +1006,12 @@ namespace FrameForge.Sys
 
             if (plan.PowerPlan)
             {
-                string cur = ActiveSchemeGuid();
+                // P1-2：若实时加速已持有电源方案，系统当前已是高性能，必须优先取仲裁者保存的原始方案，
+                // 避免一键加速日志把 SchemeHigh 误记为原值。
+                string cur = SystemResourceArbiter.Instance.CurrentHolder(ResourceKind.PowerScheme) != OwnerKind.NONE
+                    ? SystemResourceArbiter.Instance.CurrentOld(ResourceKind.PowerScheme)
+                    : ActiveSchemeGuid();
+                if (string.IsNullOrEmpty(cur)) cur = ActiveSchemeGuid();
                 BoostJournal.NewAction(tx, ActionKind.POWER_SCHEME, new ProcessGuard(),
                     cur, SchemeHigh).Owner = OwnerKind.ONE_SHOT;
             }
@@ -1517,16 +1522,18 @@ namespace FrameForge.Sys
             lastSteer = DateTime.UtcNow;
             int pid = GamePid;
             int cores = steerCores;
+            Transaction tx = currentTx;
             CorePolicy policy = CoreConfig.Policy();
             ICoreScheduler scheduler = coreScheduler;
             ThreadPool.QueueUserWorkItem(delegate
             {
                 try
                 {
+                    if (!Active || currentTx != tx) return;
                     // P1：非 Auto 策略把再平衡决策交给策略层；返回 null 表示滞后不迁移。
                     if (policy == CorePolicy.Auto)
                     {
-                        SteerOnce(pid, cores, policy);
+                        SteerOnce(pid, cores, policy, tx);
                     }
                     else
                     {
@@ -1538,15 +1545,19 @@ namespace FrameForge.Sys
                         current.IdealCpu = SteerCpu;
                         current.Reason = "rebalance";
                         CorePlan next = scheduler.Rebalance(topo, tel, current);
-                        if (next != null && next.IdealCpu >= 0)
+                        if (next != null && next.IdealCpu >= 0 && Active && currentTx == tx)
                         {
                             int tid = MainThreadIdFor(pid);
-                            if (tid > 0 && SetIdealFor(tid, next.IdealCpu))
+                            if (tid > 0)
                             {
-                                SteerCpu = next.IdealCpu;
-                                IdealApplied = true;
-                                scheduler.MarkIdealApplied(policy, next.IdealCpu);
-                                Log.Write("boost steer rebalance pid=" + pid + " cpu=" + next.IdealCpu);
+                                NoteIdealAttempt(tx, pid, tid, next.IdealCpu);
+                                if (Active && currentTx == tx && SetIdealFor(tid, next.IdealCpu))
+                                {
+                                    SteerCpu = next.IdealCpu;
+                                    IdealApplied = true;
+                                    scheduler.MarkIdealApplied(policy, next.IdealCpu);
+                                    Log.Write("boost steer rebalance pid=" + pid + " cpu=" + next.IdealCpu);
+                                }
                             }
                         }
                     }
@@ -1581,12 +1592,19 @@ namespace FrameForge.Sys
 
         private int SteerOnce(int pid, int cores, CorePolicy policy)
         {
+            return SteerOnce(pid, cores, policy, currentTx);
+        }
+
+        private int SteerOnce(int pid, int cores, CorePolicy policy, Transaction expectedTx)
+        {
             int cpu = PickIdleCore(cores, policy);
             // P0-B：>64 核或采样失败时返回 -1（跳过），不再退化成 CPU 0。
             if (cpu < 0) return -1;
+            // 若在 400ms 采样期间用户已还原加速，绝不回写幽灵日志或改线程理想核。
+            if (expectedTx != null && (!Active || currentTx != expectedTx)) return -1;
             int tid = MainThreadId(pid);
             if (tid <= 0) return -1;
-            NoteIdealAttempt(currentTx, pid, tid, cpu);
+            NoteIdealAttempt(expectedTx, pid, tid, cpu);
             if (!SetIdeal(tid, cpu)) return -1;
 
             if (SteerCpu != cpu) Log.Write("boost steer pid=" + pid + " cpu=" + cpu);
@@ -1700,6 +1718,19 @@ namespace FrameForge.Sys
                 // SHARED 同样持有一个引用，停止时必须对称 Release。
                 powerAcquired = true;
                 if (ar.State == AcquireState.GRANTED) prevScheme = ar.Old;
+                // P1-2：无论 GRANTED 还是 SHARED，都把仲裁者确认的原值回写到当前事务的电源动作，
+                // 确保实时加速先退、一键加速接管 holder 后崩溃对账能还原回真正的原始电源方案。
+                if (!string.IsNullOrEmpty(ar.Old) && currentTx != null)
+                {
+                    for (int i = 0; i < currentTx.Actions.Count; i++)
+                    {
+                        if (currentTx.Actions[i].Kind == ActionKind.POWER_SCHEME)
+                        {
+                            currentTx.Actions[i].Old = ar.Old;
+                            break;
+                        }
+                    }
+                }
                 return true;
             }
             catch (Exception ex) { Log.Write("boost power: " + ex.Message); return false; }
@@ -1898,7 +1929,7 @@ namespace FrameForge.Sys
             }
             lastSteer = DateTime.MinValue;
             SteerCpu = -1;
-            steerBusy = 0;
+            // 不在这里强清 steerBusy：若后台软引导线程仍在运行，由其 finally 释放，防止并发重入。
 
             int restoredPid = GamePid;
             string restoredName = GameName;

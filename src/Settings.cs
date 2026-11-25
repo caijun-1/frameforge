@@ -28,8 +28,10 @@ namespace FrameForge
         public int OverlayY = -1;
         public double OverlayScale = 1.0;
         public bool OverlayLocked = true;
-        // 微底板：none = 纯文字；subtle = 极淡黑底（无圆角/描边）。默认保持纯文字。
-        public string OverlayBackdrop = "none";
+        // 底板风格：hud = 现代半透明毛玻璃 HUD（默认）；subtle = 轻透暗底；none = 纯文字无底板。
+        public string OverlayBackdrop = "hud";
+        // 叠加层配色主题：cinnabar(水墨朱砂) | green(电竞绿) | pink(小飞机粉) | cyan(赛博青) | mono(极简白)
+        public string OverlayTheme = "cinnabar";
         // 温度告警：>= warn 变黄，> hot 变浅红；0 表示关闭该档。
         public int OverlayTempWarn = 70;
         public int OverlayTempHot = 83;
@@ -166,6 +168,7 @@ namespace FrameForge
         public static Settings Load()
         {
             var s = new Settings();
+            bool hasOverlayTheme = false;
             try
             {
                 if (!File.Exists(FilePath)) return s;
@@ -177,10 +180,15 @@ namespace FrameForge
                     if (eq <= 0) continue;
                     string k = line.Substring(0, eq).Trim();
                     string v = line.Substring(eq + 1).Trim();
+                    if (string.Equals(k, "overlayTheme", StringComparison.OrdinalIgnoreCase))
+                        hasOverlayTheme = true;
                     s.Apply(k, v);
                 }
             }
             catch (Exception ex) { Log.Write("settings load: " + ex.Message); }
+            // 旧版配置只有 rtssColor（无 overlayTheme）：将粉/绿/青无损迁移到新主题键。
+            if (!hasOverlayTheme && (s.RtssColor == "pink" || s.RtssColor == "green" || s.RtssColor == "cyan"))
+                s.OverlayTheme = s.RtssColor;
             s.Sanitize();
             s.EnsureIccEntry();
             return s;
@@ -213,7 +221,8 @@ namespace FrameForge
 
             if (double.IsNaN(OverlayScale) || double.IsInfinity(OverlayScale)) OverlayScale = 1.0;
             OverlayScale = Math.Max(0.5, Math.Min(3.0, OverlayScale));
-            OverlayBackdrop = string.Equals(OverlayBackdrop, "subtle", StringComparison.OrdinalIgnoreCase) ? "subtle" : "none";
+            OverlayBackdrop = BackdropKey(OverlayBackdrop);
+            OverlayTheme = ThemeKey(OverlayTheme);
             if (OverlayTempWarn < 0 || OverlayTempWarn > 120) OverlayTempWarn = 70;
             if (OverlayTempHot < 0 || OverlayTempHot > 120) OverlayTempHot = 83;
             if (OverlayTempWarn > 0 && OverlayTempHot > 0 && OverlayTempHot < OverlayTempWarn)
@@ -285,7 +294,10 @@ namespace FrameForge
                     break;
                 case "rtssstacked": RtssStacked = Bool(v, true); break;
                 case "overlaybackdrop":
-                    OverlayBackdrop = string.Equals(v, "subtle", StringComparison.OrdinalIgnoreCase) ? "subtle" : "none";
+                    OverlayBackdrop = BackdropKey(v);
+                    break;
+                case "overlaytheme":
+                    OverlayTheme = ThemeKey(v);
                     break;
                 case "overlaytempwarn": OverlayTempWarn = Math.Max(0, Math.Min(120, Int(v, 70))); break;
                 case "overlaytemphot": OverlayTempHot = Math.Max(0, Math.Min(120, Int(v, 83))); break;
@@ -377,6 +389,7 @@ namespace FrameForge
                 sb.AppendLine("rtssColor=" + RtssColor);
                 sb.AppendLine("rtssStacked=" + B(RtssStacked));
                 sb.AppendLine("overlayBackdrop=" + OverlayBackdrop);
+                sb.AppendLine("overlayTheme=" + OverlayTheme);
                 sb.AppendLine("overlayTempWarn=" + OverlayTempWarn.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("overlayTempHot=" + OverlayTempHot.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("overlayKeepPos=" + B(OverlayKeepPos));
@@ -447,6 +460,7 @@ namespace FrameForge
                 sb.AppendLine("closeToTray=" + B(CloseToTray));
                 sb.AppendLine("askedElevation=" + B(AskedElevation));
                 SafeFile.WriteAllText(FilePath, sb.ToString(), new UTF8Encoding(false));
+                CoreConfig.Invalidate();
             }
             catch (Exception ex) { Log.Write("settings save: " + ex.Message); }
         }
@@ -675,6 +689,22 @@ namespace FrameForge
             n = n.Replace('|', ' ').Replace('\r', ' ').Replace('\n', ' ').Trim();
             if (n.Length > 64) n = n.Substring(0, 64).Trim();
             return n;
+        }
+
+        private static string BackdropKey(string s)
+        {
+            if (string.Equals(s, "none", StringComparison.OrdinalIgnoreCase)) return "none";
+            if (string.Equals(s, "subtle", StringComparison.OrdinalIgnoreCase)) return "subtle";
+            return "hud";
+        }
+
+        private static string ThemeKey(string s)
+        {
+            if (string.Equals(s, "green", StringComparison.OrdinalIgnoreCase)) return "green";
+            if (string.Equals(s, "pink", StringComparison.OrdinalIgnoreCase)) return "pink";
+            if (string.Equals(s, "cyan", StringComparison.OrdinalIgnoreCase)) return "cyan";
+            if (string.Equals(s, "mono", StringComparison.OrdinalIgnoreCase)) return "mono";
+            return "cinnabar";
         }
 
         private static string B(bool v) { return v ? "1" : "0"; }

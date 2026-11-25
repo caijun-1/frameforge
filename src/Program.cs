@@ -472,11 +472,13 @@ namespace FrameForge
             }
             catch (Exception ex) { check("fps aggregation 240fps", false, ex.Message); }
 
-            // 10. 叠加层可构造
+            // 10. 叠加层可构造与视觉管线自检
             try
             {
                 using (var ov = new Overlay(new Settings())) ov.ApplySettings();
-                check("overlay init", true, "layered window ready");
+                string ovNote;
+                bool ovOk = Overlay.SelfTestVisuals(out ovNote);
+                check("overlay init", ovOk, ovOk ? ovNote : ("visuals failed: " + ovNote));
             }
             catch (Exception ex) { check("overlay init", false, ex.Message); }
 

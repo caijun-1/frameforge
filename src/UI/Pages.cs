@@ -938,7 +938,7 @@ namespace FrameForge.UI
     {
         private readonly Card ovCard, rtssCard, itemCard, hintCard, prevCard;
         private readonly TextLabel ovTitle, onTitle, onSub, lockTitle, lockSub, hotkey;
-        private readonly TextLabel styleTitle, cornerTitle, itemTitle, itemNote, hintTitle, prevTitle, statusLbl;
+        private readonly TextLabel styleTitle, backdropTitle, themeTitle, cornerTitle, itemTitle, itemNote, hintTitle, prevTitle, statusLbl;
         private readonly TextLabel rtssTitle, rtssSub;
         // RTSS 接管叠加层时换成这张卡:只放 RTSS OSD 的样式,自绘那套设置全部收起。
         private readonly TextLabel rtssCardTitle, rtssCardSub, rtssColorTitle, rtssLayoutTitle, rtssNote;
@@ -954,7 +954,7 @@ namespace FrameForge.UI
         // 与设置页一致:进度只记字段,整行文案统一渲染,避免停在“97% + 已安装”。
         private int rtssPercent;
         private string rtssStage = "";
-        private readonly Segmented style, corner;
+        private readonly Segmented style, backdrop, theme, corner;
         private readonly Slider scale;
         private readonly OverlayPreview preview;
 
@@ -970,8 +970,8 @@ namespace FrameForge.UI
             "fps", "low", "frametime", "cpu", "gpu", "gputemp", "ram", "rampct", "clock", "session"
         };
         private static readonly string[] CornerKeys = { "auto", "tl", "tr", "bl", "br" };
-        // 与 Rtss.ColorHex 一一对应,设置页只暴露这几种颜色。
-        private static readonly string[] RtssColors = { "white", "pink", "green", "yellow", "cyan" };
+        private static readonly string[] BackdropKeys = { "hud", "subtle", "none" };
+        private static readonly string[] ThemeKeys = OverlayPalette.ThemeKeys;
 
         public OverlayPage(MainForm host) : base(host)
         {
@@ -1007,6 +1007,42 @@ namespace FrameForge.UI
                 // 换样式就把上次拖动保存的坐标清掉,让它按新样式重新摆放。
                 // P1：OverlayKeepPos=true 时保留用户拖动后的位置。
                 if (changed && !Host.St.OverlayKeepPos) { Host.St.OverlayX = -1; Host.St.OverlayY = -1; }
+                Host.St.Save();
+                if (Host.Ov != null) Host.Ov.ApplySettings();
+                preview.Invalidate();
+            };
+
+            backdropTitle = RowTitle(I18n.T("ov.backdrop"));
+            backdrop = new Segmented();
+            backdrop.Items = new string[]
+            {
+                I18n.T("ov.backdrop.hud"), I18n.T("ov.backdrop.subtle"), I18n.T("ov.backdrop.none")
+            };
+            backdrop.SetSilent(BackdropIndex(host.St.OverlayBackdrop));
+            backdrop.Changed += delegate
+            {
+                string key = BackdropKeys[backdrop.Selected];
+                if (Host.St.OverlayBackdrop == key) return;
+                Host.St.OverlayBackdrop = key;
+                Host.St.Save();
+                if (Host.Ov != null) Host.Ov.ApplySettings();
+                preview.Invalidate();
+            };
+
+            themeTitle = RowTitle(I18n.T("ov.theme"));
+            theme = new Segmented();
+            theme.Items = new string[]
+            {
+                I18n.T("ov.theme.cinnabar"), I18n.T("ov.theme.green"),
+                I18n.T("ov.theme.pink"), I18n.T("ov.theme.cyan"), I18n.T("ov.theme.mono")
+            };
+            theme.SetSilent(ThemeIndex(host.St.OverlayTheme));
+            theme.Changed += delegate
+            {
+                string key = ThemeKeys[theme.Selected];
+                if (Host.St.OverlayTheme == key) return;
+                Host.St.OverlayTheme = key;
+                if (rtssColor != null) rtssColor.SetSilent(theme.Selected);
                 Host.St.Save();
                 if (Host.Ov != null) Host.Ov.ApplySettings();
                 preview.Invalidate();
@@ -1056,6 +1092,8 @@ namespace FrameForge.UI
                 Host.St.OverlayLocked = lockToggle.Checked;
                 Host.St.Save();
                 if (Host.Ov != null) Host.Ov.ApplySettings();
+                // 桌面状态下解锁时立刻唤出叠加层供拖动，重新锁定时自动收起。
+                Host.SyncOverlay();
             };
 
             hotkey = new TextLabel();
@@ -1102,6 +1140,10 @@ namespace FrameForge.UI
             ovCard.Controls.Add(onToggle);
             ovCard.Controls.Add(styleTitle);
             ovCard.Controls.Add(style);
+            ovCard.Controls.Add(backdropTitle);
+            ovCard.Controls.Add(backdrop);
+            ovCard.Controls.Add(themeTitle);
+            ovCard.Controls.Add(theme);
             ovCard.Controls.Add(scale);
             ovCard.Controls.Add(cornerTitle);
             ovCard.Controls.Add(corner);
@@ -1151,20 +1193,20 @@ namespace FrameForge.UI
                 preview.Invalidate();
             };
 
-            rtssColorTitle = RowTitle(I18n.T("ov.rtss.color"));
+            rtssColorTitle = RowTitle(I18n.T("ov.theme"));
             rtssColor = new Segmented();
             rtssColor.Items = new string[]
             {
-                I18n.T("ov.rtss.color.white"), I18n.T("ov.rtss.color.pink"),
-                I18n.T("ov.rtss.color.green"), I18n.T("ov.rtss.color.yellow"),
-                I18n.T("ov.rtss.color.cyan")
+                I18n.T("ov.theme.cinnabar"), I18n.T("ov.theme.green"),
+                I18n.T("ov.theme.pink"), I18n.T("ov.theme.cyan"), I18n.T("ov.theme.mono")
             };
-            rtssColor.SetSilent(RtssColorIndex(host.St.RtssColor));
+            rtssColor.SetSilent(ThemeIndex(host.St.OverlayTheme));
             rtssColor.Changed += delegate
             {
-                string key = RtssColors[rtssColor.Selected];
-                if (Host.St.RtssColor == key) return;
-                Host.St.RtssColor = key;
+                string key = ThemeKeys[rtssColor.Selected];
+                if (Host.St.OverlayTheme == key) return;
+                Host.St.OverlayTheme = key;
+                if (theme != null) theme.SetSilent(rtssColor.Selected);
                 Host.St.Save();
                 if (Host.Ov != null) Host.Ov.ApplySettings();
                 preview.Invalidate();
@@ -1334,9 +1376,17 @@ namespace FrameForge.UI
             return v;
         }
 
-        private static int RtssColorIndex(string key)
+        private static int BackdropIndex(string s)
         {
-            for (int i = 0; i < RtssColors.Length; i++) if (RtssColors[i] == key) return i;
+            for (int i = 0; i < BackdropKeys.Length; i++)
+                if (string.Equals(BackdropKeys[i], s, StringComparison.OrdinalIgnoreCase)) return i;
+            return 0;
+        }
+
+        private static int ThemeIndex(string s)
+        {
+            for (int i = 0; i < ThemeKeys.Length; i++)
+                if (string.Equals(ThemeKeys[i], s, StringComparison.OrdinalIgnoreCase)) return i;
             return 0;
         }
 
@@ -1458,7 +1508,8 @@ namespace FrameForge.UI
             bool on = Host.St.RtssOsd && Rtss.Running;
             ovCard.Visible = !on;
             rtssCard.Visible = on;
-            // 两张卡各有一个开关,切卡时把状态对齐(SetSilent 不触发事件)。
+            // 两张卡各有一个开关,切卡或快捷键切换时把状态对齐(SetSilent 不触发事件)。
+            if (onToggle != null) onToggle.SetSilent(Host.St.OverlayOn);
             if (rtssOnToggle != null) rtssOnToggle.SetSilent(Host.St.OverlayOn);
             if (preview != null && preview.RtssMode != on)
             {
@@ -1607,22 +1658,32 @@ namespace FrameForge.UI
             LayoutCards();
         }
 
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && rtssTip != null)
+            {
+                try { rtssTip.Dispose(); } catch { }
+            }
+            base.Dispose(disposing);
+        }
+
         private void LayoutCards()
         {
             if (Width <= 0 || Height <= 0) return;
-            int gap = Ui.Px(16);
-            int itemH = Ui.Px(116);
+            int gap = Ui.Px(12);
+            int itemH = Ui.Px(102);
             // 说明卡只留状态、快捷键和一行限制说明,不再单独占用标题行。
-            int hintH = Ui.Px(124);
+            int hintH = Ui.Px(96);
             int cardH = Height - itemH - hintH - gap * 2;
-            if (cardH < Ui.Px(306))
+            int minCardH = Ui.Px(336);
+            if (cardH < minCardH)
             {
-                cardH = Ui.Px(306);
-                hintH = Math.Max(Ui.Px(116), Height - itemH - cardH - gap * 2);
+                cardH = minCardH;
+                hintH = Math.Max(Ui.Px(88), Height - itemH - cardH - gap * 2);
             }
 
             // 预览是主工作区，设置放在右侧；窄窗口优先保留设置的可操作性。
-            int leftW = (int)(Width * 0.44);
+            int leftW = (int)(Width * 0.46);
             int rightW = Width - leftW - gap;
             if (rightW < Ui.Px(260))
             {
@@ -1637,50 +1698,57 @@ namespace FrameForge.UI
             itemCard.SetBounds(0, cardH + gap, Width, itemH);
             hintCard.SetBounds(0, cardH + itemH + gap * 2, Width, hintH);
 
-            int pad = Ui.Px(24);
+            int pad = Ui.Px(22);
             int right = ovCard.Width - pad;
             int toggleW = Ui.Px(48);
 
             prevTitle.SetBounds(pad, Ui.Px(12), prevCard.Width - pad * 2, Ui.Px(20));
-            preview.SetBounds(pad, Ui.Px(38), prevCard.Width - pad * 2, Math.Max(Ui.Px(120), cardH - Ui.Px(56)));
+            preview.SetBounds(pad, Ui.Px(38), prevCard.Width - pad * 2, Math.Max(Ui.Px(120), cardH - Ui.Px(54)));
 
-            ovTitle.SetBounds(pad, Ui.Px(12), ovCard.Width - pad * 2, Ui.Px(20));
+            ovTitle.SetBounds(pad, Ui.Px(10), ovCard.Width - pad * 2, Ui.Px(20));
 
-            // 卡片多出来的高度均摊进行距:行与行自然拉开,
-            // 而不是在标题下方留一块空、底部再留一块空。
-            int extra = Math.Max(0, cardH - Ui.Px(306));
-            int top = extra / 7;
-            int step = (extra - top) / 6;
-            int off1 = top, off2 = top + step, off3 = top + step * 2;
-            int off4 = top + step * 3, off5 = top + step * 4, off6 = top + step * 5;
+            int extra = Math.Max(0, cardH - minCardH);
+            int top = extra / 9;
+            int step = (extra - top) / 8;
+            int off1 = top, off2 = top + step, off3 = top + step * 2, off4 = top + step * 3;
+            int off5 = top + step * 4, off6 = top + step * 5, off7 = top + step * 6, off8 = top + step * 7;
 
             int leftText = ovCard.Width - pad * 2 - toggleW - Ui.Px(12);
-            onTitle.SetBounds(pad, Ui.Px(50) + off1, leftText, Ui.Px(20));
-            onSub.SetBounds(pad, Ui.Px(70) + off1, leftText, Ui.Px(18));
-            onToggle.SetBounds(right - toggleW, Ui.Px(52) + off1, toggleW, Ui.Px(24));
+            onTitle.SetBounds(pad, Ui.Px(38) + off1, leftText, Ui.Px(19));
+            onSub.SetBounds(pad, Ui.Px(57) + off1, leftText, Ui.Px(17));
+            onToggle.SetBounds(right - toggleW, Ui.Px(42) + off1, toggleW, Ui.Px(24));
 
-            int segW = Math.Min(Ui.Px(260), ovCard.Width - pad * 2 - Ui.Px(96));
+            int segW = Math.Min(Ui.Px(286), ovCard.Width - pad * 2 - Ui.Px(74));
             if (segW < Ui.Px(170)) segW = Ui.Px(170);
-            styleTitle.SetBounds(pad, Ui.Px(96) + off2, Ui.Px(90), Ui.Px(28));
-            style.SetBounds(right - segW, Ui.Px(92) + off2, segW, Ui.Px(32));
+            int lblW = Ui.Px(68);
+            int segH = Ui.Px(28);
 
-            scale.SetBounds(pad, Ui.Px(132) + off3, ovCard.Width - pad * 2, Ui.Px(44));
+            styleTitle.SetBounds(pad, Ui.Px(82) + off2, lblW, Ui.Px(24));
+            style.SetBounds(right - segW, Ui.Px(79) + off2, segW, segH);
 
-            cornerTitle.SetBounds(pad, Ui.Px(184) + off4, Ui.Px(90), Ui.Px(28));
-            corner.SetBounds(right - segW, Ui.Px(180) + off4, segW, Ui.Px(32));
+            backdropTitle.SetBounds(pad, Ui.Px(116) + off3, lblW, Ui.Px(24));
+            backdrop.SetBounds(right - segW, Ui.Px(113) + off3, segW, segH);
 
-            lockTitle.SetBounds(pad, Ui.Px(220) + off5, leftText, Ui.Px(20));
-            lockSub.SetBounds(pad, Ui.Px(240) + off5, leftText, Ui.Px(18));
-            lockToggle.SetBounds(right - toggleW, Ui.Px(222) + off5, toggleW, Ui.Px(24));
+            themeTitle.SetBounds(pad, Ui.Px(150) + off4, lblW, Ui.Px(24));
+            theme.SetBounds(right - segW, Ui.Px(147) + off4, segW, segH);
+
+            scale.SetBounds(pad, Ui.Px(182) + off5, ovCard.Width - pad * 2, Ui.Px(40));
+
+            cornerTitle.SetBounds(pad, Ui.Px(228) + off6, lblW, Ui.Px(24));
+            corner.SetBounds(right - segW, Ui.Px(225) + off6, segW, segH);
+
+            lockTitle.SetBounds(pad, Ui.Px(262) + off7, leftText, Ui.Px(19));
+            lockSub.SetBounds(pad, Ui.Px(281) + off7, leftText, Ui.Px(17));
+            lockToggle.SetBounds(right - toggleW, Ui.Px(266) + off7, toggleW, Ui.Px(24));
 
             // 按钮(安装/启动)夹在文字和开关之间,出现时把文字让窄一点。
-            int rtBtnW = Ui.Px(88);
+            int rtBtnW = Ui.Px(86);
             int rtBtnX = right - toggleW - Ui.Px(10) - rtBtnW;
             int rtText = rtssBtnShown ? Math.Max(Ui.Px(80), rtBtnX - Ui.Px(10) - pad) : leftText;
-            rtssTitle.SetBounds(pad, Ui.Px(264) + off6, rtText, Ui.Px(20));
-            rtssSub.SetBounds(pad, Ui.Px(284) + off6, rtText, Ui.Px(18));
-            rtssToggle.SetBounds(right - toggleW, Ui.Px(266) + off6, toggleW, Ui.Px(24));
-            rtssBtn.SetBounds(rtBtnX, Ui.Px(261) + off6, rtBtnW, Ui.Px(26));
+            rtssTitle.SetBounds(pad, Ui.Px(304) + off8, rtText, Ui.Px(19));
+            rtssSub.SetBounds(pad, Ui.Px(323) + off8, rtText, Ui.Px(17));
+            rtssToggle.SetBounds(right - toggleW, Ui.Px(308) + off8, toggleW, Ui.Px(24));
+            rtssBtn.SetBounds(rtBtnX, Ui.Px(305) + off8, rtBtnW, Ui.Px(26));
 
             // RTSS 样式卡与自绘卡同一位置,两者按当前由谁画叠加层互斥显示。
             rtssCard.SetBounds(settingsX, 0, leftW, cardH);
@@ -1691,35 +1759,34 @@ namespace FrameForge.UI
             rtssOnSub.SetBounds(pad, Ui.Px(62), leftText, Ui.Px(18));
             rtssOnToggle.SetBounds(right - toggleW, Ui.Px(46), toggleW, Ui.Px(24));
             rtssCardSub.SetBounds(pad, Ui.Px(88), leftW - pad * 2, Ui.Px(18));
-            int rSegW = Math.Min(Ui.Px(300), leftW - pad * 2 - Ui.Px(90));
+            int rSegW = Math.Min(Ui.Px(300), leftW - pad * 2 - Ui.Px(80));
             if (rSegW < Ui.Px(160)) rSegW = Ui.Px(160);
-            rtssScale.SetBounds(pad, Ui.Px(112), leftW - pad * 2, Ui.Px(44));
-            rtssColorTitle.SetBounds(pad, Ui.Px(160), Ui.Px(80), Ui.Px(28));
-            rtssColor.SetBounds(leftW - pad - rSegW, Ui.Px(156), rSegW, Ui.Px(32));
-            rtssLayoutTitle.SetBounds(pad, Ui.Px(204), Ui.Px(80), Ui.Px(28));
-            rtssLayout.SetBounds(leftW - pad - rSegW, Ui.Px(200), rSegW, Ui.Px(32));
-            rtssNote.SetBounds(pad, Ui.Px(240), leftW - pad * 2, Math.Max(Ui.Px(28), cardH - Ui.Px(252)));
+            rtssScale.SetBounds(pad, Ui.Px(114), leftW - pad * 2, Ui.Px(44));
+            rtssColorTitle.SetBounds(pad, Ui.Px(164), Ui.Px(74), Ui.Px(28));
+            rtssColor.SetBounds(leftW - pad - rSegW, Ui.Px(160), rSegW, Ui.Px(30));
+            rtssLayoutTitle.SetBounds(pad, Ui.Px(206), Ui.Px(74), Ui.Px(28));
+            rtssLayout.SetBounds(leftW - pad - rSegW, Ui.Px(202), rSegW, Ui.Px(30));
+            rtssNote.SetBounds(pad, Ui.Px(246), leftW - pad * 2, Math.Max(Ui.Px(28), cardH - Ui.Px(258)));
 
             // 说明卡不再重复一个「说明」标题,状态行直接顶到卡片上沿。
             hintTitle.Visible = false;
-            int sy = Ui.Px(14);
-            int sh = Ui.Px(40);
+            int sy = Ui.Px(12);
+            int sh = Ui.Px(32);
             statusLbl.SetBounds(pad, sy, Width - pad * 2, sh);
             int hy = sy + sh + Ui.Px(4);
-            hotkey.SetBounds(pad, hy, Width - pad * 2, Ui.Px(22));
-            int ny = hy + Ui.Px(28);
+            hotkey.SetBounds(pad, hy, Width - pad * 2, Ui.Px(20));
+            int ny = hy + Ui.Px(24);
             int noteH = hintH - ny - Ui.Px(6);
-            // 页面还没显示时读 Visible 会沿父链得到 false,必须用局部变量判断,否则说明行永远排不上位置。
-            bool showNote = noteH >= Ui.Px(22);
+            bool showNote = noteH >= Ui.Px(18);
             itemNote.Visible = showNote;
             if (showNote) itemNote.SetBounds(pad, ny, Width - pad * 2, noteH);
 
-            itemTitle.SetBounds(pad, Ui.Px(12), Width - pad * 2, Ui.Px(20));
+            itemTitle.SetBounds(pad, Ui.Px(10), Width - pad * 2, Ui.Px(20));
             int n = chips.Length;
             int perRow = 5;
             int rows = (n + perRow - 1) / perRow;
             int cw = (Width - pad * 2 - gap * (perRow - 1)) / perRow;
-            int chipH = Ui.Px(30);
+            int chipH = Ui.Px(28);
             int blockH = rows * chipH + (rows - 1) * Ui.Px(6);
             int chipY = (itemH - blockH) / 2 + Ui.Px(10);
             for (int i = 0; i < n; i++)
@@ -1730,45 +1797,14 @@ namespace FrameForge.UI
         }
 
         /// <summary>
-        /// 叠加层效果预览:画一块假想游戏画面,再按当前样式/缩放/显示项
-        /// 把叠加层的排版复刻上去,不用进游戏也能看到实际效果。
+        /// 叠加层效果预览:直接复用 Overlay.PaintPreview 绘制核心，与游戏内实机观感完全一致。
         /// </summary>
         private sealed class OverlayPreview : Ctl
         {
             private readonly Settings st;
 
-            /// <summary>RTSS 接管时预览按它的样子画:只有描边文字,没有 FrameForge 的底板。</summary>
+            /// <summary>RTSS 接管时预览按 RTSS 多色分层排版绘制。</summary>
             public bool RtssMode;
-
-            // 假数据:数值长度覆盖 2~8 个字符(含带秒的时间),用来检验换行/挤位问题。
-            private static readonly string[] Samples =
-            {
-                "144", "1% 112", "6.9 ms", "38%", "76%", "64°C", "9.8G", "62%", "21:40:36", "32:08"
-            };
-
-            // 预览与实机共用同一套角色配色（OverlayPalette），不再各写一份色值。
-
-            // 等宽数字字体：与真实叠加层一致（Consolas），缓存避免每帧 new Font。
-            private Font numFont;
-            private float numFontPt;
-
-            private Font NumFont(float pt)
-            {
-                if (numFont != null && Math.Abs(numFontPt - pt) < 0.05f) return numFont;
-                if (numFont != null) { try { numFont.Dispose(); } catch { } numFont = null; }
-                try { numFont = new Font("Consolas", pt, FontStyle.Bold); }
-                catch
-                {
-                    try { numFont = new Font(FontFamily.GenericMonospace, pt, FontStyle.Bold); }
-                    catch { numFont = Theme.Bold(pt); }
-                }
-                numFontPt = pt;
-                return numFont;
-            }
-
-            private bool CornerFixed { get { return st.OverlayCorner != null && st.OverlayCorner != "auto"; } }
-            private bool CornerLeft { get { return st.OverlayCorner == "tl" || st.OverlayCorner == "bl"; } }
-            private bool CornerBottom { get { return st.OverlayCorner == "bl" || st.OverlayCorner == "br"; } }
 
             public OverlayPreview(Settings s)
             {
@@ -1783,7 +1819,6 @@ namespace FrameForge.UI
             protected override void Dispose(bool disposing)
             {
                 if (disposing && art != null) { art.Dispose(); art = null; }
-                if (disposing && numFont != null) { try { numFont.Dispose(); } catch { } numFont = null; }
                 base.Dispose(disposing);
             }
 
@@ -1794,7 +1829,8 @@ namespace FrameForge.UI
             }
 
             private void DrawArt(Graphics g)
-            {                Bitmap src = Theme.PlayArt;
+            {
+                Bitmap src = Theme.PlayArt;
                 if (src == null) return;
                 if (art == null || artSize.Width != Width || artSize.Height != Height)
                 {
@@ -1826,327 +1862,20 @@ namespace FrameForge.UI
                 using (GraphicsPath p = Ui.Round(r, rad))
                 {
                     g.SetClip(p);
-                    // 预览背景直接用内置的水墨游戏画面;按尺寸缓存,切页时不再反复缩放大图。
                     DrawArt(g);
 
-                    // 顶部压一层淡黑:游戏内叠字通常在偏暗的画面上,这里还原那种对比度。
+                    // 顶部轻压一层柔暗渐变，贴近实际游戏顶部天空/场景对比度。
                     using (var b = new LinearGradientBrush(new RectangleF(0, 0, Width, Height * 0.42f),
-                               Color.FromArgb(70, 0, 0, 0), Color.FromArgb(0, 0, 0, 0),
+                               Color.FromArgb(64, 0, 0, 0), Color.FromArgb(0, 0, 0, 0),
                                LinearGradientMode.Vertical))
                         g.FillRectangle(b, 0, 0, Width, Height * 0.42f);
+
+                    Overlay.PaintPreview(g, st, new Rectangle(0, 0, Width, Height), RtssMode);
                     g.ResetClip();
                 }
                 using (GraphicsPath p = Ui.Round(r, rad))
                 using (var pen = new Pen(Theme.Border, 1f))
                     g.DrawPath(pen, p);
-
-                if (RtssMode)
-                {
-                    DrawRtss(g);
-                    return;
-                }
-
-                Font lf = Theme.F(9.5f * Scaled(), FontStyle.Regular);
-                Font vf = NumFont(12.5f * Scaled());
-                Color lc = OverlayPalette.Label;
-                Color vc = Color.White;
-
-                List<PvRow> rows = PreviewRows();
-                if (rows.Count == 0)
-                {
-                    ShadowText(g, I18n.T("ov.preview.none"), Theme.F(9.5f, FontStyle.Regular), lc,
-                        Ui.Fp(16), Height / 2f - Ui.Fp(9));
-                    return;
-                }
-
-                if (st.OverlayStyle == "mini")
-                {
-                    // 简洁样式:只有帧率和温度,位置跟着"位置"选项走。
-                    // 与实机一致：帧率粉色、温度按阈值着色。
-                    string s = "144 FPS";
-                    if (st.ShowGpuTemp) s += " · 64°C";
-                    int cut = s.IndexOf(" · ", StringComparison.Ordinal);
-                    string head = cut > 0 ? s.Substring(0, cut) : s;
-                    string tail = cut > 0 ? s.Substring(cut + 3) : "";
-                    Font f = NumFont(14f * Scaled());
-                    Size hs = TextRenderer.MeasureText(g, head, f, Size.Empty, TextFormatFlags.NoPadding);
-                    Size ts = tail.Length > 0
-                        ? TextRenderer.MeasureText(g, tail, f, Size.Empty, TextFormatFlags.NoPadding) : Size.Empty;
-                    float gap = tail.Length > 0 ? Ui.Fp(10) : 0;
-                    float total = hs.Width + (tail.Length > 0 ? gap + ts.Width : 0);
-                    float mx = CornerFixed && !CornerLeft ? Width - total - Ui.Fp(12) : (Width - total) / 2f;
-                    float my = CornerFixed && CornerBottom ? Height - hs.Height - Ui.Fp(12) : Ui.Fp(12);
-                    if (mx < Ui.Fp(8)) mx = Ui.Fp(8);
-                    ShadowText(g, head, f, OverlayPalette.Fps, mx, my);
-                    if (tail.Length > 0)
-                        ShadowText(g, tail, f, OverlayPalette.Temp(64, st.OverlayTempWarn, st.OverlayTempHot), mx + hs.Width + gap, my);
-                    return;
-                }
-
-                float gap1 = Ui.Fp(4) * Scaled();
-                float gapV = Ui.Fp(12) * Scaled();
-                float gapC = Ui.Fp(10) * Scaled();
-                float gap2 = Ui.Fp(14) * Scaled();
-
-                if (st.OverlayStyle == "v")
-                {
-                    // 竖向:和真实叠加层一样按设备分组——设备名只写一次,
-                    // 这台设备的各项数值排在后面,同一列右对齐。
-                    float rowH = Ui.Fp(18) * Scaled();
-                    float labelW = 0;
-                    int cols = 1;
-                    for (int i = 0; i < rows.Count; i++)
-                    {
-                        Size ls = TextRenderer.MeasureText(g, rows[i].Label, lf,
-                            Size.Empty, TextFormatFlags.NoPadding);
-                        if (ls.Width > labelW) labelW = ls.Width;
-                        if (rows[i].Cells.Count > cols) cols = rows[i].Cells.Count;
-                    }
-                    float[] colW = new float[cols];
-                    int digitW = TextRenderer.MeasureText(g, "0", vf, Size.Empty, TextFormatFlags.NoPadding).Width;
-                    for (int i = 0; i < rows.Count; i++)
-                    {
-                        for (int c = 0; c < rows[i].Cells.Count; c++)
-                        {
-                            float cw = TextRenderer.MeasureText(g, rows[i].Cells[c], vf,
-                                Size.Empty, TextFormatFlags.NoPadding).Width;
-                            float fixedW = digitW * rows[i].Cells[c].Length;
-                            if (fixedW > cw) cw = fixedW;
-                            if (cw > colW[c]) colW[c] = cw;
-                        }
-                    }
-                    float blockW = labelW + gapV;
-                    for (int c = 0; c < cols; c++)
-                        blockW += colW[c] + (c + 1 < cols ? gapC : 0);
-                    float bx = CornerFixed && !CornerLeft ? Width - Ui.Fp(12) - blockW : Ui.Fp(12);
-                    if (bx < Ui.Fp(8)) bx = Ui.Fp(8);
-                    float total = rows.Count * rowH;
-                    float y0;
-                    if (!CornerFixed) y0 = (Height - total) / 2f;
-                    else if (CornerBottom) y0 = Height - Ui.Fp(12) - total;
-                    else y0 = Ui.Fp(12);
-                    float y = y0;
-                    for (int i = 0; i < rows.Count; i++)
-                    {
-                        PvRow pr = rows[i];
-                        ShadowText(g, pr.Label, lf, pr.Ambient ? OverlayPalette.Ambient : lc, bx, y + Ui.Fp(2));
-                        float cx = bx + labelW + gapV;
-                        for (int c = 0; c < pr.Cells.Count; c++)
-                        {
-                            float cw = TextRenderer.MeasureText(g, pr.Cells[c], vf,
-                                Size.Empty, TextFormatFlags.NoPadding).Width;
-                            ShadowText(g, pr.Cells[c], vf, pr.ColorAt(c), cx + colW[c] - cw, y);
-                            cx += colW[c] + gapC;
-                        }
-                        y += rowH;
-                    }
-                    return;
-                }
-
-                // 横向:每组"设备名 + 若干数值"占一块,放不下就整组换行。
-                int nr = rows.Count;
-                float[] lw = new float[nr];
-                float[] gw = new float[nr];
-                for (int i = 0; i < nr; i++)
-                {
-                    PvRow pr = rows[i];
-                    lw[i] = TextRenderer.MeasureText(g, pr.Label, lf,
-                        Size.Empty, TextFormatFlags.NoPadding).Width;
-                    float wsum = lw[i] + gap1;
-                    for (int c = 0; c < pr.Cells.Count; c++)
-                        wsum += TextRenderer.MeasureText(g, pr.Cells[c], vf,
-                            Size.Empty, TextFormatFlags.NoPadding).Width + gap1;
-                    gw[i] = wsum;
-                }
-                float avail = Width - Ui.Fp(12) * 2f;
-                float lineH = Ui.Fp(19) * Scaled();
-                // 先折行、算出每行宽度,才知道"贴底"时整块要从哪里开始画。
-                var lineStart = new List<int>();
-                var lineEnd = new List<int>();
-                var lineWidths = new List<float>();
-                int start = 0;
-                while (start < nr)
-                {
-                    int end = start;
-                    float lineW = 0;
-                    while (end < nr)
-                    {
-                        float cand = lineW + (end > start ? gap2 : 0f) + gw[end];
-                        if (end > start && cand > avail) break;
-                        lineW = cand;
-                        end++;
-                    }
-                    lineStart.Add(start);
-                    lineEnd.Add(end);
-                    lineWidths.Add(lineW);
-                    start = end;
-                }
-                float baseY = CornerFixed && CornerBottom
-                    ? Height - Ui.Fp(12) - lineWidths.Count * lineH
-                    : Ui.Fp(12);
-                for (int ln = 0; ln < lineWidths.Count; ln++)
-                {
-                    float hx;
-                    if (!CornerFixed) hx = (Width - lineWidths[ln]) / 2f;
-                    else if (CornerLeft) hx = Ui.Fp(12);
-                    else hx = Width - Ui.Fp(12) - lineWidths[ln];
-                    if (hx < Ui.Fp(8)) hx = Ui.Fp(8);
-                    float hy = baseY + ln * lineH;
-                    for (int k = lineStart[ln]; k < lineEnd[ln]; k++)
-                    {
-                        PvRow pr = rows[k];
-                        ShadowText(g, pr.Label, lf, pr.Ambient ? OverlayPalette.Ambient : lc, hx, hy + Ui.Fp(3));
-                        hx += lw[k] + gap1;
-                        for (int c = 0; c < pr.Cells.Count; c++)
-                        {
-                            float cw = TextRenderer.MeasureText(g, pr.Cells[c], vf,
-                                Size.Empty, TextFormatFlags.NoPadding).Width;
-                            ShadowText(g, pr.Cells[c], vf, pr.ColorAt(c), hx, hy);
-                            hx += cw + gap1;
-                        }
-                        hx += gap2;
-                    }
-                }
-            }
-
-            /// <summary>预览用的一行:设备名 + 这台设备的若干项数值,和真实叠加层一一对应。</summary>
-            private sealed class PvRow
-            {
-                public string Label = "";
-                public readonly List<string> Cells = new List<string>();
-                public readonly List<Color> Colors = new List<Color>();
-                public bool Ambient;
-
-                public void Add(string text, Color color)
-                {
-                    Cells.Add(text);
-                    Colors.Add(color);
-                }
-
-                public Color ColorAt(int i)
-                {
-                    return i >= 0 && i < Colors.Count ? Colors[i] : Color.White;
-                }
-            }
-
-            /// <summary>
-            /// RTSS 的 OSD 只画文字(描边由 RTSS 自己加),没有 FrameForge 的底板。
-            /// 这里按同一套字号/颜色/排版画一遍,挑颜色和字号时有个直观参照。
-            /// </summary>
-            private void DrawRtss(Graphics g)
-            {
-                List<PvRow> rows = PreviewRows();
-                if (rows.Count == 0)
-                {
-                    ShadowText(g, I18n.T("ov.preview.none"), Theme.F(9.5f, FontStyle.Regular),
-                        Color.FromArgb(225, 208, 216, 228), Ui.Fp(16), Height / 2f - Ui.Fp(9));
-                    return;
-                }
-
-                int scale = st.RtssScale;
-                if (scale < 50) scale = 50;
-                if (scale > 200) scale = 200;
-                // 预览卡比真实屏幕小得多,字号同比缩一点,200% 时不至于撑破卡片。
-                Font f = NumFont(Math.Max(8f, 12f * Scaled() * scale / 100f));
-                Color lc = OverlayPalette.Label;
-                if (!string.Equals(st.RtssColor, "white", StringComparison.OrdinalIgnoreCase))
-                    lc = ColorTranslator.FromHtml("#" + Rtss.ColorHex(st.RtssColor));
-
-                float x = Ui.Fp(14), y = Ui.Fp(14);
-                float lineH = f.Height + Ui.Fp(1);
-                for (int i = 0; i < rows.Count; i++)
-                {
-                    // RTSS 那边写的是英文标签(OSD 字体不一定有中文字形),预览也一样。
-                    string label = rows[i].Label;
-                    if (label == "内存") label = "RAM";
-                    else if (label == "时间") label = "TIME";
-                    else if (label == "时长") label = "UPTIME";
-                    float lx = x;
-                    ShadowText(g, label, f, rows[i].Ambient ? OverlayPalette.Ambient : lc, lx, y);
-                    lx += TextRenderer.MeasureText(g, label, f, Size.Empty, TextFormatFlags.NoPadding).Width;
-                    for (int k = 0; k < rows[i].Cells.Count; k++)
-                    {
-                        string cell = " " + rows[i].Cells[k];
-                        ShadowText(g, cell, f, rows[i].ColorAt(k), lx, y);
-                        lx += TextRenderer.MeasureText(g, cell, f, Size.Empty, TextFormatFlags.NoPadding).Width;
-                    }
-                    if (st.RtssStacked) y += lineH;
-                    else x = lx + Ui.Fp(14);
-                }
-            }
-
-            /// <summary>按设备分组生成预览行:CPU 只写一次,占用和温度并排放在后面。</summary>
-            private List<PvRow> PreviewRows()
-            {
-                var rows = new List<PvRow>();
-
-                if (ItemValue(st, 0) || ItemValue(st, 1) || ItemValue(st, 2))
-                {
-                    PvRow r = new PvRow();
-                    r.Label = "FPS";
-                    if (ItemValue(st, 0)) r.Add(Samples[0], OverlayPalette.Fps);
-                    if (ItemValue(st, 1)) r.Add(Samples[1], OverlayPalette.Low);
-                    if (ItemValue(st, 2)) r.Add(Samples[2], OverlayPalette.Frame);
-                    rows.Add(r);
-                }
-                if (ItemValue(st, 3))
-                {
-                    PvRow r = new PvRow();
-                    r.Label = "CPU";
-                    r.Add(Samples[3], Color.White);
-                    rows.Add(r);
-                }
-                if (ItemValue(st, 4) || ItemValue(st, 5))
-                {
-                    PvRow r = new PvRow();
-                    r.Label = "GPU";
-                    if (ItemValue(st, 4)) r.Add(Samples[4], Color.White);
-                    if (ItemValue(st, 5)) r.Add(Samples[5], OverlayPalette.Temp(64, st.OverlayTempWarn, st.OverlayTempHot));
-                    rows.Add(r);
-                }
-                if (ItemValue(st, 6) || ItemValue(st, 7))
-                {
-                    PvRow r = new PvRow();
-                    r.Label = I18n.IsEn ? "RAM" : "内存";
-                    if (ItemValue(st, 6)) r.Add(Samples[6], Color.White);
-                    if (ItemValue(st, 7)) r.Add(Samples[7], Color.White);
-                    rows.Add(r);
-                }
-                if (ItemValue(st, 8))
-                {
-                    PvRow r = new PvRow();
-                    r.Label = I18n.IsEn ? "TIME" : "时间";
-                    r.Ambient = true;
-                    r.Add(Samples[8], OverlayPalette.Ambient);
-                    rows.Add(r);
-                }
-                if (ItemValue(st, 9))
-                {
-                    PvRow r = new PvRow();
-                    r.Label = I18n.IsEn ? "UPTIME" : "时长";
-                    r.Ambient = true;
-                    r.Add(Samples[9], OverlayPalette.Ambient);
-                    rows.Add(r);
-                }
-                return rows;
-            }
-
-            /// <summary>预览里的缩放:实际 0.7~2.0 映射到 0.8~1.35,避免撑破卡片。</summary>
-            private float Scaled()
-            {
-                float k = (float)st.OverlayScale;
-                if (k < 0.8f) k = 0.8f;
-                if (k > 1.35f) k = 1.35f;
-                return k;
-            }
-
-            private static void ShadowText(Graphics g, string s, Font f, Color c, float x, float y)
-            {
-                int ix = (int)Math.Round(x), iy = (int)Math.Round(y);
-                TextRenderer.DrawText(g, s, f, new Point(ix + 1, iy + 1),
-                    Color.FromArgb(170, 0, 0, 0), TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
-                TextRenderer.DrawText(g, s, f, new Point(ix, iy), c,
-                    TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
             }
         }
     }

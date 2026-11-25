@@ -453,10 +453,10 @@ namespace FrameForge.Sys
             if (path.Length > 0) paths[key] = path;
 
             pair = FolderHint(path);
-            if (pair.Length > 0) { cache[key] = pair; return pair; }
+            if (pair.Length > 0) { if (!IsGeneric(key)) cache[key] = pair; return pair; }
 
             pair = FromFile(path, key);
-            if (pair.Length > 0) { cache[key] = pair; return pair; }
+            if (pair.Length > 0) { if (!IsGeneric(key)) cache[key] = pair; return pair; }
 
             // 真不认识:先看安装目录,再读窗口标题(鸣潮这类 Unreal 游戏的窗口标题
             // 就是游戏名),最后按用户要求退回进程名——总比显示"当前游戏"好。
