@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>FrameForge — Windows FPS 增效与帧率监测工具</title>
+  <title>FrameForge — 出鞘无痕，帧帧见锋 | Windows FPS 增效与帧率监测工具</title>
   <meta name="description" content="约 7 MB 单文件 Windows FPS 增效工具：一键事务级可回滚加速、PresentMon / RTSS 现代 HUD、硬件级画面滤镜与赛后战绩，默认零 DLL 注入。">
-  <meta property="og:title" content="FrameForge — 7 MB Portable Windows FPS Toolkit">
-  <meta property="og:description" content="One-click reversible boost, PresentMon/RTSS modern HUD, non-invasive hardware screen filters & post-match FPS reports. Single 7 MB portable exe, MIT open source.">
+  <meta property="og:title" content="FrameForge — Silent Blade, Razor Frames">
+  <meta property="og:description" content="7.1 MB portable Windows FPS toolkit: reversible SCTL v2 boost, PresentMon/RTSS modern HUD, hardware filters & post-match telemetry. Zero DLL injection by default.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://caijun-1.github.io/frameforge/">
   <meta property="og:image" content="https://caijun-1.github.io/frameforge/social-preview.png">
@@ -14,235 +14,646 @@
   <link rel="icon" type="image/png" href="icon-1.5.0.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Noto+Serif+SC:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Noto+Serif+SC:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/gsap.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/ScrollTrigger.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/lenis@1.1.20/dist/lenis.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js" defer></script>
   <style>
+    /* ==========================================================================
+       1. DUAL-THEME DESIGN TOKENS: "玄夜 · 孤剑" (DARK) & "素宣 · 墨刃" (LIGHT)
+       ========================================================================== */
+    :root,
+    html[data-theme="dark"] {
+      --bg: #060608;
+      --bg-alt: #0b0c10;
+      --surface: #101218;
+      --surface-raised: #171a22;
+      --surface-glass: rgba(10, 11, 15, 0.78);
+      --line: rgba(240, 236, 227, 0.09);
+      --line-strong: rgba(240, 236, 227, 0.2);
+      --text: #f0ece3;
+      --text-secondary: #a5a096;
+      --text-muted: #67635c;
+      --accent: #d9382e;
+      --accent-hover: #ee453b;
+      --accent-soft: rgba(217, 56, 46, 0.14);
+      --inverse-bg: #f0ece3;
+      --inverse-text: #08090c;
+      --topo-stroke: rgba(240, 236, 227, 0.055);
+      --topo-accent: rgba(217, 56, 46, 0.24);
+      --hero-vignette-x: linear-gradient(90deg, rgba(6, 6, 8, 0.96) 0%, rgba(6, 6, 8, 0.78) 38%, rgba(6, 6, 8, 0.12) 72%, rgba(6, 6, 8, 0.38) 100%);
+      --hero-vignette-y: linear-gradient(180deg, rgba(6, 6, 8, 0.52) 0%, transparent 22%, transparent 74%, #060608 100%);
+      --blade-vignette: linear-gradient(90deg, rgba(6, 6, 8, 0.94) 0%, rgba(6, 6, 8, 0.72) 48%, rgba(6, 6, 8, 0.25) 100%);
+      --code-bg: #07080b;
+      --code-text: #dad5cb;
+      --shadow-lg: 0 32px 80px rgba(0, 0, 0, 0.65);
+      --shadow-card: 0 20px 50px rgba(0, 0, 0, 0.45);
+      --cursor-ring: rgba(240, 236, 227, 0.55);
+      --cursor-dot: #f0ece3;
+    }
+
+    html[data-theme="light"] {
+      --bg: #f6f4ef;
+      --bg-alt: #eeebe3;
+      --surface: #fbfaf7;
+      --surface-raised: #f0ede5;
+      --surface-glass: rgba(246, 244, 239, 0.84);
+      --line: rgba(17, 17, 20, 0.09);
+      --line-strong: rgba(17, 17, 20, 0.22);
+      --text: #111114;
+      --text-secondary: #4e4b45;
+      --text-muted: #7f7b72;
+      --accent: #c82b22;
+      --accent-hover: #ad2119;
+      --accent-soft: rgba(200, 43, 34, 0.09);
+      --inverse-bg: #111114;
+      --inverse-text: #f6f4ef;
+      --topo-stroke: rgba(17, 17, 20, 0.055);
+      --topo-accent: rgba(200, 43, 34, 0.24);
+      --hero-vignette-x: linear-gradient(90deg, rgba(246, 244, 239, 0.95) 0%, rgba(246, 244, 239, 0.74) 40%, rgba(246, 244, 239, 0.04) 70%, rgba(246, 244, 239, 0.12) 100%);
+      --hero-vignette-y: linear-gradient(180deg, rgba(246, 244, 239, 0.5) 0%, transparent 18%, transparent 76%, #f6f4ef 100%);
+      --blade-vignette: linear-gradient(90deg, rgba(246, 244, 239, 0.94) 0%, rgba(246, 244, 239, 0.68) 46%, rgba(246, 244, 239, 0.14) 100%);
+      --code-bg: #141519;
+      --code-text: #e4dfd5;
+      --shadow-lg: 0 28px 70px rgba(17, 17, 20, 0.11);
+      --shadow-card: 0 18px 42px rgba(17, 17, 20, 0.08);
+      --cursor-ring: rgba(17, 17, 20, 0.45);
+      --cursor-dot: #111114;
+    }
+
     :root {
-      --bg: #050507;
-      --surface: #0b0c0f;
-      --surface-raised: #12141a;
-      --line: rgba(235, 230, 220, 0.08);
-      --line-strong: rgba(235, 230, 220, 0.18);
-      --text: #eeeae1;
-      --text-secondary: #a19d95;
-      --text-muted: #66635d;
-      --accent: #c8322c;
-      --accent-hover: #dc3c35;
       --serif: "Noto Serif SC", "Songti SC", "STSong", Georgia, serif;
       --display: "Cormorant Garamond", "Noto Serif SC", Georgia, serif;
-      --sans: "Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      --grotesk: "Space Grotesk", "Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
       --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
       --ease: cubic-bezier(0.22, 1, 0.36, 1);
+      --ease-sharp: cubic-bezier(0.77, 0, 0.175, 1);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html { scroll-behavior: smooth; background: var(--bg); }
+    html { background: var(--bg); color: var(--text); }
     body {
       background: var(--bg);
       color: var(--text);
-      font-family: var(--sans);
+      font-family: var(--grotesk);
       font-size: 15px;
-      line-height: 1.7;
+      line-height: 1.72;
       -webkit-font-smoothing: antialiased;
       overflow-x: hidden;
+      transition: background-color 0.45s var(--ease), color 0.45s var(--ease);
     }
-
     a { color: inherit; text-decoration: none; }
-    button { font-family: inherit; }
+    button { font-family: inherit; color: inherit; }
+    img { display: block; max-width: 100%; }
 
-    /* Signature detail: 1px scroll blade progress */
-    .scroll-progress {
-      position: fixed; top: 0; left: 0; height: 1px; width: 0;
-      background: var(--accent);
-      z-index: 120;
-      pointer-events: none;
+    /* ==========================================================================
+       2. PRELOADER CURTAIN, THEME SLASH WIPE & CUSTOM BLADE CURSOR
+       ========================================================================== */
+    .preloader {
+      position: fixed; inset: 0; z-index: 9999;
+      pointer-events: all;
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+    }
+    .preloader-half {
+      position: absolute; left: 0; right: 0; height: 50%;
+      background: #060608;
+      will-change: transform;
+    }
+    .preloader-half.top { top: 0; }
+    .preloader-half.bottom { bottom: 0; }
+    .preloader-slash {
+      position: absolute; left: 0; right: 0; top: 50%; height: 2px;
+      background: linear-gradient(90deg, transparent, #d9382e 20%, #f0ece3 50%, #d9382e 80%, transparent);
+      transform: scaleX(0);
+      transform-origin: left center;
+      z-index: 3;
+    }
+    .preloader-core {
+      position: relative; z-index: 4;
+      display: flex; flex-direction: column; align-items: center; gap: 18px;
+      color: #f0ece3;
+    }
+    .preloader-mark {
+      display: flex; align-items: center; gap: 12px;
+      font-family: var(--display); font-size: 26px; letter-spacing: 0.14em;
+    }
+    .preloader-count {
+      font-family: var(--mono); font-size: 13px; letter-spacing: 0.24em;
+      color: #a5a096; font-variant-numeric: tabular-nums;
     }
 
+    /* Theme blade-slash wipe */
+    .theme-slash {
+      position: fixed; inset: 0; z-index: 9500;
+      pointer-events: none;
+      background: var(--accent);
+      clip-path: polygon(0 0, 0 0, 0 100%, 0 100%);
+      opacity: 0;
+    }
+
+    /* 1px top blade progress */
+    .scroll-blade {
+      position: fixed; top: 0; left: 0; height: 2px; width: 0;
+      background: var(--accent);
+      z-index: 900; pointer-events: none;
+    }
+
+    /* Ambient SVG sword-aura contour background (LandoNorris-style living vector lines) */
+    .topo-bg {
+      position: fixed; inset: 0; z-index: 0;
+      pointer-events: none; overflow: hidden;
+    }
+    .topo-bg svg {
+      width: 100%; height: 100%;
+      opacity: 0.9;
+    }
+    .topo-path {
+      fill: none;
+      stroke: var(--topo-stroke);
+      stroke-width: 1.1;
+      vector-effect: non-scaling-stroke;
+      transition: stroke 0.45s var(--ease);
+    }
+    .topo-path.accent {
+      stroke: var(--topo-accent);
+      stroke-width: 1.3;
+    }
+
+    /* Custom Blade Cursor (desktop fine pointers only) */
+    .cursor-dot, .cursor-ring {
+      position: fixed; top: 0; left: 0; z-index: 9800;
+      pointer-events: none; opacity: 0;
+      transform: translate(-50%, -50%);
+      transition: opacity 0.25s ease, width 0.25s var(--ease), height 0.25s var(--ease), background-color 0.25s var(--ease), border-color 0.25s var(--ease);
+    }
+    .cursor-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--cursor-dot);
+    }
+    .cursor-ring {
+      width: 34px; height: 34px; border-radius: 50%;
+      border: 1px solid var(--cursor-ring);
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--mono); font-size: 9px; font-weight: 600; letter-spacing: 0.12em;
+      color: var(--inverse-text);
+    }
+    .cursor-ring.active {
+      width: 68px; height: 68px;
+      background: var(--inverse-bg);
+      border-color: var(--inverse-bg);
+    }
+    @media (hover: none), (pointer: coarse) {
+      .cursor-dot, .cursor-ring { display: none !important; }
+    }
+
+    /* ==========================================================================
+       3. NAVIGATION & FLOATING DUAL-THEME CONTROL
+       ========================================================================== */
     .wrap {
-      max-width: 1200px;
+      max-width: 1320px;
       margin: 0 auto;
-      padding: 0 32px;
+      padding: 0 clamp(20px, 4vw, 56px);
       position: relative;
       z-index: 3;
     }
 
-    /* Quiet Navigation */
     header {
-      position: fixed; top: 0; left: 0; right: 0; z-index: 60;
-      transition: background-color 0.3s var(--ease), border-color 0.3s var(--ease);
+      position: fixed; top: 0; left: 0; right: 0; z-index: 500;
       border-bottom: 1px solid transparent;
+      transition: background-color 0.35s var(--ease), border-color 0.35s var(--ease), backdrop-filter 0.35s var(--ease);
     }
     header.scrolled {
-      background: rgba(5, 5, 7, 0.84);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
+      background: var(--surface-glass);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
       border-bottom-color: var(--line);
     }
     .nav {
-      height: 72px;
-      display: flex; align-items: center; justify-content: space-between;
+      height: 76px;
+      display: flex; align-items: center; justify-content: space-between; gap: 20px;
     }
     .brand {
       display: flex; align-items: center; gap: 12px;
-      font-family: var(--display);
-      font-size: 22px; font-weight: 500; letter-spacing: 0.03em;
+      font-family: var(--display); font-size: 24px; font-weight: 600; letter-spacing: 0.04em;
     }
-    .brand img { width: 28px; height: 28px; border-radius: 6px; }
-    .nav-right {
-      display: flex; align-items: center; gap: 28px;
-      font-size: 14px; color: var(--text-secondary);
+    .brand-seal {
+      width: 30px; height: 30px; border-radius: 6px;
+      border: 1px solid var(--line-strong);
+      display: grid; place-items: center;
+      background: var(--surface);
+      transition: border-color 0.25s var(--ease), transform 0.35s var(--ease);
     }
-    .nav-right a { transition: color 0.2s var(--ease); }
-    .nav-right a:hover { color: var(--text); }
+    .brand:hover .brand-seal { border-color: var(--accent); transform: rotate(45deg); }
+    .brand-seal svg { width: 16px; height: 16px; transition: transform 0.35s var(--ease); }
+    .brand:hover .brand-seal svg { transform: rotate(-45deg); }
+
+    .nav-links {
+      display: flex; align-items: center; gap: 30px;
+      font-size: 13.5px; color: var(--text-secondary);
+    }
+    .nav-links a {
+      position: relative; padding: 4px 0;
+      transition: color 0.2s var(--ease);
+    }
+    .nav-links a::after {
+      content: ""; position: absolute; left: 0; right: 0; bottom: -2px; height: 1px;
+      background: var(--accent); transform: scaleX(0); transform-origin: right;
+      transition: transform 0.3s var(--ease);
+    }
+    .nav-links a:hover { color: var(--text); }
+    .nav-links a:hover::after { transform: scaleX(1); transform-origin: left; }
+
+    .nav-actions {
+      display: flex; align-items: center; gap: 10px;
+    }
+    .theme-pill {
+      display: inline-flex; align-items: center; gap: 8px;
+      height: 36px; padding: 0 13px; border-radius: 999px;
+      background: var(--surface); border: 1px solid var(--line-strong);
+      font-size: 12.5px; font-weight: 500; cursor: pointer;
+      transition: border-color 0.25s var(--ease), background-color 0.25s var(--ease), transform 0.2s var(--ease);
+    }
+    .theme-pill:hover { border-color: var(--accent); }
+    .theme-pill:active { transform: scale(0.96); }
+    .theme-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--text);
+      box-shadow: inset -3px 0 0 var(--bg);
+      transition: transform 0.4s var(--ease), background-color 0.3s var(--ease);
+    }
+    html[data-theme="light"] .theme-dot {
+      background: var(--accent);
+      box-shadow: none;
+      transform: scale(0.92);
+    }
+
     .lang-btn {
-      font-size: 13px; color: var(--text-secondary);
+      height: 36px; padding: 0 12px; border-radius: 999px;
       background: transparent; border: 1px solid var(--line-strong);
-      border-radius: 6px; padding: 6px 12px; cursor: pointer;
+      font-size: 12.5px; color: var(--text-secondary); cursor: pointer;
       transition: color 0.2s var(--ease), border-color 0.2s var(--ease);
     }
     .lang-btn:hover { color: var(--text); border-color: var(--text-secondary); }
-    .nav-cta {
-      font-size: 13px; font-weight: 500;
-      color: #0b0c0f !important; background: var(--text);
-      padding: 8px 16px; border-radius: 6px;
-      transition: background-color 0.2s var(--ease), transform 0.15s var(--ease);
-    }
-    .nav-cta:hover { background: #ffffff; }
-    .nav-cta:active { transform: scale(0.98); }
 
-    /* ACT I: Full-bleed Cinematic Scene Hero */
+    .nav-cta {
+      height: 36px; padding: 0 16px; border-radius: 999px;
+      background: var(--inverse-bg); color: var(--inverse-text);
+      font-size: 12.5px; font-weight: 600;
+      display: inline-flex; align-items: center; gap: 6px;
+      transition: background-color 0.25s var(--ease), transform 0.2s var(--ease);
+    }
+    .nav-cta:hover { background: var(--accent); color: #fff; }
+    .nav-cta:active { transform: scale(0.97); }
+
+    /* ==========================================================================
+       4. ACT I — DUAL-REALM SWORDSMAN HERO (FULL BLEED EDITORIAL)
+       ========================================================================== */
     .hero {
       position: relative;
       min-height: 100vh;
-      display: flex;
-      align-items: center;
+      display: flex; align-items: center;
+      padding: 124px 0 88px;
       overflow: hidden;
-      padding: 112px 0 88px;
+      z-index: 2;
     }
-    .hero-media {
-      position: absolute; inset: 0; z-index: 0;
-      overflow: hidden;
+    .hero-backdrop {
+      position: absolute; inset: 0; z-index: 0; overflow: hidden;
     }
-    .hero-media img {
+    .hero-art {
+      position: absolute; inset: 0;
       width: 100%; height: 100%;
-      object-fit: cover; object-position: 68% center;
-      transform: scale(1.06);
-      will-change: transform;
+      object-fit: cover; object-position: 70% center;
+      transform: scale(1.08);
+      will-change: transform, opacity;
+      transition: opacity 0.65s var(--ease);
     }
+    .hero-art.dark-art { opacity: 1; }
+    .hero-art.light-art { opacity: 0; }
+    html[data-theme="light"] .hero-art.dark-art { opacity: 0; }
+    html[data-theme="light"] .hero-art.light-art { opacity: 1; }
+
     .hero-vignette {
       position: absolute; inset: 0; z-index: 1;
-      background:
-        linear-gradient(90deg, rgba(5, 5, 7, 0.92) 0%, rgba(5, 5, 7, 0.72) 38%, rgba(5, 5, 7, 0.14) 72%, rgba(5, 5, 7, 0.32) 100%),
-        linear-gradient(180deg, rgba(5, 5, 7, 0.48) 0%, transparent 22%, transparent 72%, #050507 100%);
+      background: var(--hero-vignette-x), var(--hero-vignette-y);
+      transition: background 0.45s var(--ease);
     }
     #atmosphere {
       position: absolute; inset: 0; z-index: 2;
       pointer-events: none;
-      opacity: 0.75;
     }
-    .hero-copy {
-      max-width: 560px;
+
+    .hero-grid {
+      position: relative; z-index: 4;
+      display: grid;
+      grid-template-columns: minmax(0, 660px) 1fr;
+      align-items: end;
+      gap: 40px;
     }
-    .hero-copy h1 {
-      font-family: var(--serif);
-      font-size: clamp(40px, 5.4vw, 68px);
-      font-weight: 500;
-      line-height: 1.16;
-      letter-spacing: -0.01em;
-      color: var(--text);
+    .hero-meta-line {
+      display: inline-flex; align-items: center; gap: 14px;
+      font-family: var(--mono); font-size: 12px; letter-spacing: 0.16em;
+      color: var(--text-secondary);
       margin-bottom: 24px;
     }
+    .hero-meta-line .rule {
+      width: 36px; height: 1px; background: var(--accent);
+    }
+    .hero-title {
+      font-family: var(--serif);
+      font-size: clamp(46px, 6.8vw, 94px);
+      font-weight: 600;
+      line-height: 1.08;
+      letter-spacing: -0.02em;
+      margin-bottom: 28px;
+    }
+    .hero-title .accent-char { color: var(--accent); }
     .char-mask {
-      display: inline-block;
-      overflow: hidden;
-      vertical-align: bottom;
-      padding-bottom: 4px;
+      display: inline-block; overflow: hidden; vertical-align: bottom;
+      padding-bottom: 6px;
     }
-    .char-inner {
-      display: inline-block;
-      will-change: transform, opacity;
-    }
-    .hud-spotlight {
-      position: absolute; inset: 0; z-index: 2; pointer-events: none;
-      opacity: 0; transition: opacity 0.35s var(--ease);
-      background: radial-gradient(360px circle at var(--mx, 50%) var(--my, 50%), rgba(238, 234, 225, 0.08), transparent 62%);
-    }
-    .hud-canvas:hover .hud-spotlight { opacity: 1; }
-    .magnetic { will-change: transform; }
-    .hero-copy p {
-      font-size: 16px;
-      line-height: 1.8;
+    .char-inner { display: inline-block; will-change: transform, opacity; }
+
+    .hero-lead {
+      font-size: 16.5px; line-height: 1.85;
       color: var(--text-secondary);
-      margin-bottom: 36px;
-      max-width: 480px;
+      max-width: 520px;
+      margin-bottom: 38px;
     }
-    .hero-actions {
-      display: flex; flex-wrap: wrap; align-items: center; gap: 16px;
+    .hero-cta-row {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
     }
-    .btn-primary {
-      display: inline-flex; align-items: center; justify-content: center;
-      height: 48px; padding: 0 28px; border-radius: 8px;
-      background: var(--accent); color: #f8f5f0;
-      font-size: 15px; font-weight: 500;
-      transition: background-color 0.2s var(--ease), transform 0.15s var(--ease);
+    .btn-forge {
+      display: inline-flex; align-items: center; gap: 10px;
+      height: 52px; padding: 0 28px; border-radius: 999px;
+      background: var(--accent); color: #fff;
+      font-size: 14.5px; font-weight: 600; letter-spacing: 0.02em;
+      transition: background-color 0.25s var(--ease), transform 0.2s var(--ease);
     }
-    .btn-primary:hover { background: var(--accent-hover); }
-    .btn-primary:active { transform: scale(0.98); }
-
-    .btn-secondary {
-      display: inline-flex; align-items: center; justify-content: center;
-      height: 48px; padding: 0 24px; border-radius: 8px;
-      background: rgba(238, 234, 225, 0.06);
+    .btn-forge:hover { background: var(--accent-hover); }
+    .btn-ghost {
+      display: inline-flex; align-items: center; gap: 10px;
+      height: 52px; padding: 0 24px; border-radius: 999px;
+      background: var(--surface-glass);
       border: 1px solid var(--line-strong);
-      color: var(--text); font-size: 15px; font-weight: 400;
-      transition: background-color 0.2s var(--ease), border-color 0.2s var(--ease);
+      backdrop-filter: blur(12px);
+      font-size: 14.5px; font-weight: 500;
+      transition: border-color 0.25s var(--ease), background-color 0.25s var(--ease);
     }
-    .btn-secondary:hover { background: rgba(238, 234, 225, 0.12); border-color: rgba(238, 234, 225, 0.32); }
+    .btn-ghost:hover { border-color: var(--text); }
 
-    .hero-facts {
-      margin-top: 56px;
-      padding-top: 24px;
+    .hero-stats {
+      margin-top: 64px;
+      padding-top: 26px;
       border-top: 1px solid var(--line);
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 24px;
+      max-width: 560px;
     }
-    .fact-val {
-      font-family: var(--mono);
-      font-variant-numeric: tabular-nums;
-      font-size: 20px; font-weight: 500;
+    .stat-num {
+      font-family: var(--mono); font-variant-numeric: tabular-nums;
+      font-size: clamp(22px, 2.4vw, 30px); font-weight: 600;
+      line-height: 1.15; margin-bottom: 6px;
+    }
+    .stat-cap { font-size: 12.5px; color: var(--text-muted); }
+
+    .hero-scroll-hint {
+      position: absolute; right: clamp(20px, 4vw, 56px); bottom: 36px; z-index: 5;
+      display: flex; flex-direction: column; align-items: center; gap: 12px;
+      font-family: var(--mono); font-size: 11px; letter-spacing: 0.22em;
+      color: var(--text-muted); writing-mode: vertical-rl;
+    }
+    .scroll-line {
+      width: 1px; height: 54px; background: var(--line-strong);
+      position: relative; overflow: hidden;
+    }
+    .scroll-line::after {
+      content: ""; position: absolute; top: -50%; left: 0; width: 100%; height: 50%;
+      background: var(--accent);
+      animation: bladeDrop 2.1s var(--ease) infinite;
+    }
+    @keyframes bladeDrop {
+      0% { transform: translateY(0); }
+      100% { transform: translateY(300%); }
+    }
+
+    /* ==========================================================================
+       5. KINETIC MARQUEE — SWORD CREED VELOCITY BAND
+       ========================================================================== */
+    .marquee-band {
+      position: relative; z-index: 3;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: var(--bg-alt);
+      padding: 20px 0;
+      overflow: hidden;
+    }
+    .marquee-track {
+      display: flex; align-items: center; gap: 44px;
+      width: max-content;
+      will-change: transform;
+    }
+    .marquee-item {
+      display: inline-flex; align-items: center; gap: 44px;
+      font-family: var(--display);
+      font-size: clamp(24px, 3vw, 38px);
+      font-weight: 500;
+      letter-spacing: 0.06em;
       color: var(--text);
+      white-space: nowrap;
+    }
+    .marquee-item .sep {
+      width: 24px; height: 1px; background: var(--accent); display: inline-block;
+    }
+    .marquee-item .dim { color: var(--text-muted); font-style: italic; }
+
+    /* ==========================================================================
+       6. ACT II — INTERACTIVE THREE.JS 3D FORGED BLADE STAGE
+       ========================================================================== */
+    .blade3d-section {
+      position: relative; z-index: 3;
+      padding: clamp(88px, 11vw, 150px) 0;
+      overflow: hidden;
+    }
+    .blade3d-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+      gap: clamp(32px, 5vw, 72px);
+      align-items: center;
+    }
+    .sec-kicker {
+      display: inline-flex; align-items: center; gap: 12px;
+      font-family: var(--mono); font-size: 12px; letter-spacing: 0.16em;
+      color: var(--accent); margin-bottom: 18px;
+    }
+    .sec-kicker::before { content: ""; width: 22px; height: 1px; background: var(--accent); }
+    .sec-h2 {
+      font-family: var(--serif);
+      font-size: clamp(30px, 4vw, 52px);
+      font-weight: 600; line-height: 1.16; letter-spacing: -0.015em;
+      margin-bottom: 20px;
+    }
+    .sec-desc {
+      font-size: 15.5px; line-height: 1.85;
+      color: var(--text-secondary);
+      margin-bottom: 32px;
+    }
+    .blade3d-specs {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px;
+      margin-bottom: 28px;
+    }
+    .spec-tile {
+      padding: 18px 20px;
+      border-radius: 12px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      transition: border-color 0.25s var(--ease), transform 0.25s var(--ease);
+    }
+    .spec-tile:hover { border-color: var(--line-strong); transform: translateY(-2px); }
+    .spec-tile strong {
+      display: block; font-family: var(--mono); font-size: 18px; font-weight: 600;
       margin-bottom: 4px;
     }
-    .fact-label {
-      font-size: 13px; color: var(--text-muted);
+    .spec-tile span { font-size: 12.5px; color: var(--text-muted); }
+
+    .blade3d-stage {
+      position: relative;
+      height: clamp(380px, 46vw, 540px);
+      border-radius: 20px;
+      background:
+        radial-gradient(circle at 50% 48%, var(--accent-soft) 0%, transparent 58%),
+        var(--surface);
+      border: 1px solid var(--line-strong);
+      overflow: hidden;
+      box-shadow: var(--shadow-lg);
+      cursor: grab;
+    }
+    .blade3d-stage:active { cursor: grabbing; }
+    #bladeCanvas {
+      width: 100%; height: 100%; display: block;
+    }
+    .blade3d-hud-corner {
+      position: absolute; left: 22px; right: 22px; bottom: 18px;
+      display: flex; justify-content: space-between; align-items: center;
+      pointer-events: none;
+      font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em;
+      color: var(--text-muted);
+    }
+    .blade3d-hud-top {
+      position: absolute; left: 22px; top: 18px;
+      font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em;
+      color: var(--text-muted); pointer-events: none;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .live-dot {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
     }
 
-    /* ACT II: Live Interactive HUD Showcase */
+    /* ==========================================================================
+       7. ACT III — PINNED HORIZONTAL SCROLL "剑谱长卷" (LANDONORRIS STYLE)
+       ========================================================================== */
+    .scroll-chronicle {
+      position: relative; z-index: 3;
+      border-top: 1px solid var(--line);
+      background: var(--bg-alt);
+      overflow: hidden;
+    }
+    .chronicle-pin {
+      min-height: 100vh;
+      display: flex; flex-direction: column; justify-content: center;
+      padding: 88px 0 64px;
+    }
+    .chronicle-head {
+      display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 20px;
+      margin-bottom: 36px;
+    }
+    .chronicle-progress-wrap {
+      display: flex; align-items: center; gap: 14px;
+      font-family: var(--mono); font-size: 12px; color: var(--text-muted);
+    }
+    .chronicle-bar {
+      width: 140px; height: 2px; background: var(--line-strong); position: relative; overflow: hidden;
+    }
+    .chronicle-bar-fill {
+      position: absolute; inset: 0; width: 25%; background: var(--accent);
+      transform-origin: left;
+    }
+
+    .chronicle-viewport {
+      overflow: visible;
+    }
+    .chronicle-track {
+      display: flex;
+      gap: 28px;
+      will-change: transform;
+    }
+    .chapter-card {
+      flex: 0 0 min(78vw, 940px);
+      border-radius: 20px;
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: 1.08fr 0.92fr;
+      min-height: 480px;
+      box-shadow: var(--shadow-card);
+      transition: border-color 0.35s var(--ease);
+    }
+    .chapter-card:hover { border-color: var(--accent); }
+    .chapter-media {
+      position: relative; overflow: hidden;
+      background: #0a0b0e;
+      min-height: 300px;
+    }
+    .chapter-media img {
+      width: 100%; height: 100%; object-fit: cover;
+      transition: transform 0.7s var(--ease);
+    }
+    .chapter-card:hover .chapter-media img { transform: scale(1.04); }
+    .chapter-media .dual-img {
+      position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+      transition: opacity 0.55s var(--ease), transform 0.7s var(--ease);
+    }
+    .chapter-media .dual-img.light-only { opacity: 0; }
+    html[data-theme="light"] .chapter-media .dual-img.light-only { opacity: 1; }
+    html[data-theme="light"] .chapter-media .dual-img.dark-only { opacity: 0; }
+
+    .chapter-body {
+      padding: clamp(28px, 3.6vw, 48px);
+      display: flex; flex-direction: column; justify-content: space-between; gap: 24px;
+    }
+    .chapter-idx {
+      font-family: var(--display); font-size: 16px; letter-spacing: 0.14em;
+      color: var(--accent);
+    }
+    .chapter-body h3 {
+      font-family: var(--serif); font-size: clamp(24px, 2.6vw, 34px);
+      font-weight: 600; line-height: 1.24; margin: 12px 0 16px;
+    }
+    .chapter-body p {
+      font-size: 14.5px; color: var(--text-secondary); line-height: 1.85;
+    }
+    .chapter-tags {
+      display: flex; flex-wrap: wrap; gap: 8px;
+      padding-top: 18px; border-top: 1px solid var(--line);
+    }
+    .chapter-tags span {
+      font-family: var(--mono); font-size: 11.5px;
+      padding: 5px 11px; border-radius: 999px;
+      background: var(--bg-alt); border: 1px solid var(--line);
+      color: var(--text-secondary);
+    }
+
+    /* ==========================================================================
+       8. ACT IV — LIVE INTERACTIVE HUD PLAYGROUND (5 THEMES x 3 BD x 3 LAYOUT)
+       ========================================================================== */
     .stage-section {
-      padding: 120px 0;
+      position: relative; z-index: 3;
+      padding: clamp(88px, 11vw, 140px) 0;
       border-top: 1px solid var(--line);
     }
-    .section-header {
-      max-width: 600px;
-      margin-bottom: 48px;
-    }
-    .section-header h2 {
-      font-family: var(--serif);
-      font-size: clamp(28px, 3.6vw, 42px);
-      font-weight: 500;
-      line-height: 1.24;
-      color: var(--text);
-      margin-bottom: 16px;
-    }
-    .section-header p {
-      font-size: 15px;
-      color: var(--text-secondary);
-      line-height: 1.8;
-    }
-
     .hud-showcase {
       display: grid;
       grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.75fr);
@@ -251,44 +662,57 @@
     }
     .hud-canvas {
       position: relative;
-      min-height: 440px;
-      border-radius: 14px;
+      min-height: 450px;
+      border-radius: 18px;
       border: 1px solid var(--line-strong);
       overflow: hidden;
-      background: #090a0d;
-      display: flex;
-      align-items: flex-start;
-      justify-content: flex-start;
+      background: #08090c;
+      display: flex; align-items: flex-start; justify-content: flex-start;
       padding: 28px;
+      box-shadow: var(--shadow-lg);
     }
     .hud-canvas-bg {
-      position: absolute; inset: 0;
-      width: 100%; height: 100%;
-      object-fit: cover; object-position: center;
-      filter: brightness(0.76) contrast(1.06);
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      object-fit: cover; object-position: 65% center;
+      filter: brightness(0.74) contrast(1.06);
       transform: scale(1.02);
+      transition: opacity 0.5s var(--ease);
     }
+    .hud-canvas-bg.light-scene { opacity: 0; filter: brightness(0.95) contrast(1.02); }
+    html[data-theme="light"] .hud-canvas-bg.dark-scene { opacity: 0; }
+    html[data-theme="light"] .hud-canvas-bg.light-scene { opacity: 1; }
+
     .hud-canvas-shade {
       position: absolute; inset: 0;
-      background: linear-gradient(180deg, rgba(5, 5, 7, 0.32) 0%, rgba(5, 5, 7, 0.08) 45%, rgba(5, 5, 7, 0.52) 100%);
+      background: linear-gradient(180deg, rgba(6, 6, 8, 0.28) 0%, transparent 45%, rgba(6, 6, 8, 0.45) 100%);
     }
+    html[data-theme="light"] .hud-canvas-shade {
+      background: linear-gradient(180deg, rgba(17, 17, 20, 0.14) 0%, transparent 45%, rgba(17, 17, 20, 0.16) 100%);
+    }
+    .hud-spotlight {
+      position: absolute; inset: 0; z-index: 2; pointer-events: none;
+      opacity: 0; transition: opacity 0.35s var(--ease);
+      background: radial-gradient(360px circle at var(--mx, 50%) var(--my, 50%), rgba(255, 255, 255, 0.09), transparent 62%);
+    }
+    .hud-canvas:hover .hud-spotlight { opacity: 1; }
 
-    /* Real-scale FrameForge v1.6.5 HUD */
+    /* Authentic FrameForge v1.6.5 HUD */
     .ff-hud {
       position: relative; z-index: 4;
       font-family: var(--mono);
       font-variant-numeric: tabular-nums;
       transition: background-color 0.2s var(--ease), border-color 0.2s var(--ease), padding 0.2s var(--ease);
       user-select: none;
+      color: #f2f4f8;
     }
     .ff-hud.bd-hud {
-      background: linear-gradient(180deg, rgba(16, 18, 24, 0.86), rgba(10, 11, 16, 0.90));
-      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: linear-gradient(180deg, rgba(16, 18, 24, 0.88), rgba(10, 11, 16, 0.92));
+      border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: 10px;
-      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.09);
+      box-shadow: 0 20px 44px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.1);
     }
     .ff-hud.bd-subtle {
-      background: rgba(8, 9, 12, 0.52);
+      background: rgba(8, 9, 12, 0.58);
       border: 1px solid transparent;
       border-radius: 6px;
     }
@@ -297,358 +721,556 @@
       border: 1px solid transparent;
       text-shadow: 0 1px 2px #000, 0 -1px 2px #000, 1px 0 2px #000, -1px 0 2px #000;
     }
-
-    .ff-hud.layout-stack { width: 256px; padding: 14px 18px 14px 22px; }
-    .ff-hud.layout-row { display: flex; align-items: center; gap: 16px; padding: 10px 18px 10px 20px; }
-    .ff-hud.layout-mini { display: flex; align-items: center; gap: 14px; padding: 10px 16px 10px 20px; }
+    .ff-hud.layout-stack { padding: 14px 16px 14px 20px; min-width: 248px; }
+    .ff-hud.layout-row {
+      padding: 10px 16px 10px 18px;
+      display: flex; align-items: center; gap: 18px;
+    }
+    .ff-hud.layout-mini { padding: 8px 14px 8px 16px; }
 
     .ff-accent-pill {
-      position: absolute; left: 8px; top: 10px; bottom: 10px; width: 3px; border-radius: 2px;
-      transition: background-color 0.2s var(--ease), opacity 0.2s var(--ease);
+      position: absolute; left: 6px; top: 10px; bottom: 10px; width: 3px;
+      border-radius: 99px; background: #E05246;
+      transition: background-color 0.2s var(--ease);
     }
-    .ff-hud:not(.bd-hud) .ff-accent-pill { opacity: 0; }
-
+    .ff-hud.bd-none .ff-accent-pill { display: none; }
     .ff-hero-row {
-      display: flex; align-items: baseline; gap: 10px;
+      display: flex; align-items: baseline; gap: 8px;
+      padding-bottom: 10px; margin-bottom: 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     }
-    .ff-hud.layout-stack .ff-hero-row {
-      padding-bottom: 8px; margin-bottom: 8px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.10);
-    }
-    .ff-fps { font-size: 26px; font-weight: 600; line-height: 1; }
-    .ff-unit { font-size: 11px; margin-left: -6px; opacity: 0.78; }
-    .ff-sub { font-size: 12px; }
-
-    .ff-metrics { display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
-    .ff-hud.layout-row .ff-metrics {
-      flex-direction: row; align-items: center; gap: 14px;
-      padding-left: 14px; border-left: 1px solid rgba(255, 255, 255, 0.12);
-    }
-    .ff-hud.layout-mini .ff-metrics {
-      flex-direction: row; align-items: center; gap: 12px;
-      padding-left: 12px; border-left: 1px solid rgba(255, 255, 255, 0.12);
-    }
-    .ff-hud.layout-mini .m-cpu,
-    .ff-hud.layout-mini .m-ram,
+    .ff-hud.layout-row .ff-hero-row,
+    .ff-hud.layout-mini .ff-hero-row { padding-bottom: 0; margin-bottom: 0; border-bottom: none; }
+    .ff-fps { font-size: 28px; font-weight: 700; line-height: 1; }
+    .ff-unit { font-size: 11px; font-weight: 600; opacity: 0.85; }
+    .ff-sub { font-size: 12px; opacity: 0.9; margin-left: 4px; }
+    .ff-metrics { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+    .ff-hud.layout-row .ff-metrics { flex-direction: row; gap: 14px; }
+    .ff-hud.layout-mini .ff-metrics,
     .ff-hud.layout-mini .ff-ambient { display: none; }
-    .ff-hud.layout-row .ff-ambient { display: none; }
-
-    .ff-row { display: flex; justify-content: space-between; gap: 16px; }
-    .ff-k { color: #b6c0ce; width: 38px; display: inline-block; }
-    .ff-v { color: #f3f5f8; font-weight: 500; }
+    .ff-row { display: flex; justify-content: space-between; gap: 14px; }
+    .ff-k { color: rgba(255, 255, 255, 0.56); margin-right: 6px; }
+    .ff-v { color: #f3f5f8; font-weight: 600; }
     .ff-ambient {
-      margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.06);
-      font-size: 11px; color: #8c96a6;
-      display: flex; justify-content: space-between;
+      margin-top: 10px; padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.07);
+      display: flex; justify-content: space-between; font-size: 11px; color: rgba(255, 255, 255, 0.52);
     }
+    .ff-hud.layout-row .ff-ambient { margin-top: 0; padding-top: 0; border-top: none; gap: 8px; }
 
     .hud-controls-panel {
       background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 14px;
+      border: 1px solid var(--line-strong);
+      border-radius: 18px;
       padding: 28px;
-      display: flex; flex-direction: column; justify-content: space-between; gap: 28px;
+      display: flex; flex-direction: column; justify-content: space-between; gap: 24px;
     }
     .ctrl-group h3 {
-      font-size: 13px; font-weight: 500; color: var(--text-secondary);
-      margin-bottom: 12px;
+      font-size: 12px; font-family: var(--mono); letter-spacing: 0.14em;
+      color: var(--text-muted); margin-bottom: 12px; font-weight: 500;
     }
-    .ctrl-options {
-      display: flex; flex-wrap: wrap; gap: 8px;
-    }
+    .ctrl-options { display: flex; flex-wrap: wrap; gap: 8px; }
     .ctrl-btn {
-      height: 36px; padding: 0 14px; border-radius: 8px;
-      border: 1px solid var(--line); background: transparent;
-      color: var(--text-secondary); font-size: 13px; cursor: pointer;
-      display: inline-flex; align-items: center; gap: 8px;
-      transition: background-color 0.18s var(--ease), border-color 0.18s var(--ease), color 0.18s var(--ease);
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 8px 13px; border-radius: 999px;
+      background: var(--bg-alt); border: 1px solid var(--line);
+      font-size: 13px; color: var(--text-secondary); cursor: pointer;
+      transition: all 0.2s var(--ease);
     }
-    .ctrl-btn:hover { color: var(--text); border-color: var(--line-strong); }
+    .ctrl-btn:hover { border-color: var(--line-strong); color: var(--text); }
     .ctrl-btn.active {
-      background: var(--surface-raised);
-      border-color: var(--line-strong);
-      color: var(--text);
+      background: var(--inverse-bg); color: var(--inverse-text);
+      border-color: var(--inverse-bg); font-weight: 500;
     }
-    .swatch {
-      width: 8px; height: 8px; border-radius: 50%; display: inline-block;
-    }
+    .swatch { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
     .hud-meta-note {
-      padding-top: 20px; border-top: 1px solid var(--line);
-      font-size: 13px; color: var(--text-muted); line-height: 1.7;
+      font-size: 13px; line-height: 1.75; color: var(--text-muted);
+      padding-top: 18px; border-top: 1px solid var(--line);
     }
 
-    /* ACT III: Full-bleed 3D Forged Core Architecture */
-    .core-section {
-      position: relative;
-      min-height: 82vh;
-      display: flex; align-items: center;
-      overflow: hidden;
-      border-top: 1px solid var(--line);
-      padding: 120px 0;
-    }
-    .core-media {
-      position: absolute; inset: 0; z-index: 0;
-    }
-    .core-media img {
-      width: 100%; height: 100%;
-      object-fit: cover; object-position: 72% center;
-      transform: scale(1.08);
-      will-change: transform;
-    }
-    .core-vignette {
-      position: absolute; inset: 0; z-index: 1;
-      background:
-        linear-gradient(90deg, #050507 0%, rgba(5, 5, 7, 0.90) 42%, rgba(5, 5, 7, 0.25) 76%, rgba(5, 5, 7, 0.52) 100%),
-        linear-gradient(180deg, #050507 0%, transparent 18%, transparent 82%, #050507 100%);
-    }
-    .core-content {
-      max-width: 540px;
-    }
-    .core-content h2 {
-      font-family: var(--serif);
-      font-size: clamp(28px, 3.6vw, 44px);
-      font-weight: 500; line-height: 1.22;
-      margin-bottom: 20px;
-    }
-    .core-content > p {
-      font-size: 15px; color: var(--text-secondary); margin-bottom: 36px; line-height: 1.8;
-    }
-    .core-list {
-      list-style: none;
-      border-top: 1px solid var(--line);
-    }
-    .core-list li {
-      padding: 18px 0;
-      border-bottom: 1px solid var(--line);
-      display: grid;
-      grid-template-columns: 140px minmax(0, 1fr);
-      gap: 20px;
-      align-items: baseline;
-    }
-    .core-list strong {
-      font-size: 14px; font-weight: 500; color: var(--text);
-    }
-    .core-list span {
-      font-size: 14px; color: var(--text-secondary); line-height: 1.7;
-    }
-
-    /* ACT IV: Interactive Night / Day Wuxia UI Split Slider */
+    /* ==========================================================================
+       9. ACT V — INTERACTIVE NIGHT / DAY BLADE SPLIT COMPARISON
+       ========================================================================== */
     .split-section {
-      padding: 120px 0;
+      position: relative; z-index: 3;
+      padding: clamp(88px, 11vw, 140px) 0;
       border-top: 1px solid var(--line);
+      background: var(--bg-alt);
     }
     .split-frame {
       position: relative;
-      width: 100%;
-      aspect-ratio: 16 / 10;
-      border-radius: 14px;
+      border-radius: 20px;
       overflow: hidden;
       border: 1px solid var(--line-strong);
-      background: #0a0b0e;
+      box-shadow: var(--shadow-lg);
+      aspect-ratio: 16 / 10;
+      max-width: 1080px;
+      margin: 0 auto;
       cursor: ew-resize;
       user-select: none;
       touch-action: none;
+      background: #0a0b0e;
     }
-    .split-frame img {
-      position: absolute; inset: 0;
-      width: 100%; height: 100%;
-      object-fit: cover;
-      pointer-events: none;
+    .split-frame > img,
+    .split-top > img {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      object-fit: cover; pointer-events: none;
     }
     .split-top {
       position: absolute; inset: 0;
       clip-path: inset(0 50% 0 0);
-      will-change: clip-path;
     }
     .split-divider {
-      position: absolute; top: 0; bottom: 0; left: 50%;
-      width: 1px; background: rgba(238, 234, 225, 0.72);
-      z-index: 6; pointer-events: none;
+      position: absolute; top: 0; bottom: 0; left: 50%; width: 2px;
+      background: var(--accent);
+      transform: translateX(-50%);
+      pointer-events: none;
+      box-shadow: 0 0 18px rgba(217, 56, 46, 0.55);
     }
     .split-knob {
       position: absolute; top: 50%; left: 50%;
+      width: 48px; height: 48px; border-radius: 50%;
+      background: var(--inverse-bg); color: var(--inverse-text);
+      border: 2px solid var(--accent);
       transform: translate(-50%, -50%);
-      width: 40px; height: 40px; border-radius: 50%;
-      background: rgba(11, 12, 15, 0.90);
-      border: 1px solid rgba(238, 234, 225, 0.48);
-      display: flex; align-items: center; justify-content: center;
-      color: var(--text); font-family: var(--mono); font-size: 12px;
-      z-index: 7; pointer-events: none;
+      display: grid; place-items: center;
+      font-family: var(--mono); font-size: 12px; font-weight: 700;
+      pointer-events: none;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
     }
     .split-tag {
-      position: absolute; bottom: 20px; z-index: 5;
-      background: rgba(5, 5, 7, 0.76);
-      backdrop-filter: blur(8px);
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 6px 12px;
-      font-size: 12px; color: var(--text-secondary);
+      position: absolute; bottom: 20px; z-index: 4;
+      padding: 7px 14px; border-radius: 999px;
+      font-size: 12.5px; font-weight: 500;
+      backdrop-filter: blur(12px);
       pointer-events: none;
     }
-    .split-tag.left { left: 20px; }
-    .split-tag.right { right: 20px; }
+    .split-tag.left { left: 20px; background: rgba(10, 11, 15, 0.8); color: #f0ece3; border: 1px solid rgba(255,255,255,0.14); }
+    .split-tag.right { right: 20px; background: rgba(246, 244, 239, 0.9); color: #111114; border: 1px solid rgba(17,17,20,0.14); }
 
-    /* ACT V: Comparison & Source Verification */
+    /* ==========================================================================
+       10. ACT VI — COMPARISON TABLE & OPEN-SOURCE VERIFICATION FORGE
+       ========================================================================== */
     .compare-section {
-      padding: 112px 0;
+      position: relative; z-index: 3;
+      padding: clamp(88px, 11vw, 140px) 0;
       border-top: 1px solid var(--line);
     }
     .compare-grid {
       display: grid;
-      grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.9fr);
-      gap: 40px;
+      grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.9fr);
+      gap: 28px;
       align-items: start;
     }
     .table-wrap {
-      border: 1px solid var(--line);
-      border-radius: 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 16px;
       background: var(--surface);
       overflow-x: auto;
     }
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
     th, td {
-      padding: 16px 20px; text-align: left;
+      padding: 18px 22px; text-align: left;
       border-bottom: 1px solid var(--line);
     }
-    th { font-weight: 500; color: var(--text-secondary); background: rgba(255, 255, 255, 0.015); }
+    th { font-weight: 600; color: var(--text-secondary); background: var(--bg-alt); font-size: 13px; }
     tr:last-child td { border-bottom: none; }
-    td.col-k { color: var(--text-muted); width: 132px; }
-    td.col-ff { color: var(--text); }
+    td.col-k { color: var(--text-muted); width: 130px; font-weight: 500; }
+    td.col-ff { color: var(--text); font-weight: 500; }
     td.col-old { color: var(--text-muted); }
 
     .verify-card {
       background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 28px;
+      border: 1px solid var(--line-strong);
+      border-radius: 16px;
+      padding: 30px;
     }
     .verify-card h3 {
-      font-family: var(--serif); font-size: 20px; font-weight: 500;
-      margin-bottom: 12px;
+      font-family: var(--serif); font-size: 22px; font-weight: 600;
+      margin-bottom: 10px;
     }
-    .verify-card p {
-      font-size: 14px; color: var(--text-secondary); margin-bottom: 20px;
-    }
+    .verify-card p { font-size: 14px; color: var(--text-secondary); margin-bottom: 20px; }
     .cmd-block {
-      background: #060709;
+      background: var(--code-bg);
       border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 16px;
-      font-family: var(--mono); font-size: 12px; line-height: 1.85;
-      color: #d6d2c8; overflow-x: auto;
+      border-radius: 10px;
+      padding: 16px 18px;
+      font-family: var(--mono); font-size: 12px; line-height: 1.9;
+      color: var(--code-text); overflow-x: auto;
       margin-bottom: 16px;
     }
-    .cmd-block .dim { color: var(--text-muted); }
+    .cmd-block .dim { color: #78746c; }
     .copy-btn {
-      width: 100%; height: 40px; border-radius: 8px;
-      background: var(--surface-raised); border: 1px solid var(--line-strong);
-      color: var(--text); font-size: 13px; cursor: pointer;
-      transition: background-color 0.2s var(--ease), border-color 0.2s var(--ease);
+      width: 100%; height: 44px; border-radius: 999px;
+      background: var(--inverse-bg); color: var(--inverse-text);
+      border: none; font-size: 13.5px; font-weight: 600; cursor: pointer;
+      transition: background-color 0.25s var(--ease), color 0.25s var(--ease);
     }
-    .copy-btn:hover { background: #1a1d26; border-color: rgba(238, 234, 225, 0.3); }
+    .copy-btn:hover { background: var(--accent); color: #fff; }
 
-    /* Footer */
+    /* ==========================================================================
+       11. EDITORIAL MONUMENTAL FOOTER (LANDONORRIS INSPIRED SIGNATURE)
+       ========================================================================== */
     footer {
+      position: relative; z-index: 3;
       border-top: 1px solid var(--line);
-      padding: 40px 0 56px;
+      background: var(--bg-alt);
+      padding: 72px 0 44px;
+      overflow: hidden;
     }
-    .foot-inner {
+    .foot-cta-row {
+      display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 32px;
+      padding-bottom: 52px;
+      border-bottom: 1px solid var(--line);
+    }
+    .foot-cta-title {
+      font-family: var(--serif);
+      font-size: clamp(28px, 4vw, 52px);
+      font-weight: 600; line-height: 1.15;
+    }
+    .foot-signature {
+      width: 180px; height: 54px;
+    }
+    .foot-signature path {
+      fill: none; stroke: var(--accent); stroke-width: 2.2;
+      stroke-linecap: round; stroke-linejoin: round;
+    }
+    .foot-wordmark {
+      font-family: var(--display);
+      font-size: clamp(54px, 13.5vw, 210px);
+      font-weight: 600;
+      line-height: 0.92;
+      letter-spacing: -0.02em;
+      text-align: center;
+      padding: 36px 0 28px;
+      color: var(--text);
+      opacity: 0.92;
+      user-select: none;
+    }
+    .foot-bottom {
       display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px;
+      padding-top: 24px; border-top: 1px solid var(--line);
       font-size: 13px; color: var(--text-muted);
     }
     .foot-links { display: flex; flex-wrap: wrap; gap: 24px; }
     .foot-links a { transition: color 0.2s var(--ease); }
     .foot-links a:hover { color: var(--text); }
 
-    @media (max-width: 960px) {
-      .hud-showcase, .compare-grid { grid-template-columns: 1fr; }
-      .hud-canvas { min-height: 340px; }
-      .hero-media img { object-position: 78% center; }
-      .core-media img { opacity: 0.35; }
+    /* ==========================================================================
+       12. RESPONSIVE & REDUCED MOTION
+       ========================================================================== */
+    @media (max-width: 980px) {
+      .hero-grid, .blade3d-grid, .hud-showcase, .compare-grid { grid-template-columns: 1fr; }
+      .nav-links { display: none; }
+      .chapter-card { flex: 0 0 100%; grid-template-columns: 1fr; min-height: auto; }
+      .chronicle-track { flex-direction: column; }
+      .chronicle-pin { min-height: auto; padding: 72px 0; }
+      .chronicle-progress-wrap { display: none; }
+      .hero-scroll-hint { display: none; }
+      .hero-art { object-position: 78% center; }
     }
     @media (max-width: 640px) {
-      .wrap { padding: 0 20px; }
-      .nav-right a.hide-sm { display: none; }
-      .hero-facts { grid-template-columns: 1fr; gap: 16px; }
-      .core-list li { grid-template-columns: 1fr; gap: 4px; }
+      .hero-stats { grid-template-columns: 1fr; gap: 16px; }
+      .blade3d-specs { grid-template-columns: 1fr; }
+      .theme-pill .theme-label { display: none; }
     }
     @media (prefers-reduced-motion: reduce) {
-      html { scroll-behavior: auto; }
-      #atmosphere { display: none; }
+      .preloader, #atmosphere, .cursor-dot, .cursor-ring { display: none !important; }
     }
   </style>
 </head>
 <body>
-  <div class="scroll-progress" id="scrollProgress"></div>
+  <!-- Preloader Sword Curtain -->
+  <div class="preloader" id="preloader" aria-hidden="true">
+    <div class="preloader-half top"></div>
+    <div class="preloader-half bottom"></div>
+    <div class="preloader-slash" id="preloaderSlash"></div>
+    <div class="preloader-core" id="preloaderCore">
+      <div class="preloader-mark">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+          <path d="M19 3L9 13M19 3l-2 7-4 4-3-3 4-4 5-4zM6 12l6 6M4 20l4-4"/>
+        </svg>
+        <span>FRAMEFORGE</span>
+      </div>
+      <div class="preloader-count" id="preloaderCount">00%</div>
+    </div>
+  </div>
 
+  <!-- Theme Slash Wipe -->
+  <div class="theme-slash" id="themeSlash" aria-hidden="true"></div>
+
+  <!-- 1px Top Blade Progress -->
+  <div class="scroll-blade" id="scrollBlade"></div>
+
+  <!-- Custom Blade Cursor -->
+  <div class="cursor-dot" id="cursorDot"></div>
+  <div class="cursor-ring" id="cursorRing"><span id="cursorText"></span></div>
+
+  <!-- Living SVG Sword-Aura Topography Background -->
+  <div class="topo-bg" aria-hidden="true">
+    <svg viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice">
+      <path class="topo-path topo-draw" d="M-120,160 C240,60 480,320 840,210 C1140,120 1320,240 1560,120" />
+      <path class="topo-path topo-draw" d="M-100,420 C280,290 540,560 920,410 C1200,300 1360,460 1580,350" />
+      <path class="topo-path accent topo-draw" d="M-80,680 C310,590 620,760 1010,590 C1240,490 1380,620 1560,520" />
+      <path class="topo-path topo-draw" d="M160,-60 C290,260 180,540 340,960" />
+      <path class="topo-path topo-draw" d="M1180,-60 C1050,240 1240,580 1080,960" />
+    </svg>
+  </div>
+
+  <!-- Header Navigation -->
   <header id="siteHeader">
     <div class="wrap nav">
-      <a class="brand" href="#">
-        <img src="icon-1.5.0.png" alt="FrameForge">
+      <a class="brand" href="#hero" data-cursor="TOP">
+        <span class="brand-seal" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M19 3L8 14M19 3l-2 7-4 4-3-3 4-4 5-4zM5.5 11.5l7 7M4 20l4-4"/>
+          </svg>
+        </span>
         <span>FrameForge</span>
       </a>
-      <div class="nav-right">
-        <a class="hide-sm" href="#hud" data-i18n="nav_hud">叠加层</a>
-        <a class="hide-sm" href="#core" data-i18n="nav_core">内核架构</a>
-        <a class="hide-sm" href="#themes" data-i18n="nav_themes">双主题</a>
-        <a class="hide-sm" href="https://cjcode.xyz" target="_blank" rel="noopener">cjcode.xyz</a>
+
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#forge3d" data-i18n="nav_3d">锻刃内核</a>
+        <a href="#chronicle" data-i18n="nav_chronicle">剑谱长卷</a>
+        <a href="#hud" data-i18n="nav_hud">现代 HUD</a>
+        <a href="#themes" data-i18n="nav_themes">双境对比</a>
+        <a href="#verify" data-i18n="nav_verify">源码校验</a>
+        <a href="https://cjcode.xyz" target="_blank" rel="noopener">cjcode.xyz</a>
+      </nav>
+
+      <div class="nav-actions">
+        <button class="theme-pill magnetic" id="themeToggle" type="button" title="Toggle Dark / Light Theme (Shortcut: T)" data-cursor="SWITCH">
+          <span class="theme-dot"></span>
+          <span class="theme-label" id="themeLabel">素宣白昼</span>
+        </button>
         <button class="lang-btn" id="langToggle" type="button">EN</button>
-        <a class="nav-cta" href="https://github.com/caijun-1/frameforge/releases/latest" data-i18n="nav_dl">下载 v1.6.5</a>
+        <a class="nav-cta magnetic" href="https://github.com/caijun-1/frameforge/releases/latest" data-cursor="FORGE" data-i18n="nav_dl">下载 v1.6.5</a>
       </div>
     </div>
   </header>
 
   <main>
-    <!-- ACT I: Cinematic Scene Hero -->
+    <!-- ========================================================================
+         ACT I — DUAL-REALM SWORDSMAN HERO
+         ======================================================================== -->
     <section class="hero" id="hero">
-      <div class="hero-media">
-        <img id="heroImg" src="assets/hero-blade.jpg" alt="FrameForge dark wuxia scene">
+      <div class="hero-backdrop">
+        <img class="hero-art dark-art" id="heroArtDark" src="assets/swordsman-dark-hero.jpg" alt="Midnight rain swordsman">
+        <img class="hero-art light-art" id="heroArtLight" src="assets/swordsman-light-hero.jpg" alt="White rice-paper ink swordsman">
       </div>
       <div class="hero-vignette"></div>
       <canvas id="atmosphere"></canvas>
 
       <div class="wrap">
-        <div class="hero-copy">
-          <h1 class="gs-hero" data-i18n="hero_title">出鞘无痕，帧帧见锋</h1>
-          <p class="gs-hero" data-i18n="hero_desc">
-            单文件约 7 MB 的 Windows FPS 增效工具。通过 Intel PresentMon ETW 采集帧率与 1% Low，默认零 DLL 注入；所有系统优化由签名事务日志全程托管，退出或崩溃后自动还原。
-          </p>
-          <div class="hero-actions gs-hero">
-            <a class="btn-primary magnetic" href="https://github.com/caijun-1/frameforge/releases/latest" data-i18n="cta_dl">下载 FrameForge v1.6.5</a>
-            <a class="btn-secondary magnetic" href="https://github.com/caijun-1/frameforge" target="_blank" rel="noopener" data-i18n="cta_src">查看 GitHub 源码</a>
+        <div class="hero-grid">
+          <div class="hero-copy">
+            <div class="hero-meta-line gs-hero">
+              <span class="rule"></span>
+              <span>WINDOWS NATIVE · V1.6.5 · MIT</span>
+            </div>
+            <h1 class="hero-title" id="heroTitle" data-i18n="hero_title">出鞘无痕，帧帧见锋</h1>
+            <p class="hero-lead gs-hero" data-i18n="hero_desc">
+              单文件约 7.1 MB 的原生 Windows 帧率增效与监测工具。通过 Intel PresentMon ETW 采集实时帧率与 1% Low，默认零 DLL 注入；所有系统调度由签名事务日志全程托管，收剑即复原。
+            </p>
+            <div class="hero-cta-row gs-hero">
+              <a class="btn-forge magnetic" href="https://github.com/caijun-1/frameforge/releases/latest" data-cursor="FORGE">
+                <span data-i18n="cta_dl">下载 FrameForge v1.6.5</span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M7 17L17 7M17 7H8M17 7v9"/>
+                </svg>
+              </a>
+              <a class="btn-ghost magnetic" href="https://github.com/caijun-1/frameforge" target="_blank" rel="noopener" data-cursor="CODE" data-i18n="cta_src">查看 GitHub 源码</a>
+            </div>
+
+            <div class="hero-stats gs-hero">
+              <div>
+                <div class="stat-num" data-count="7.1" data-suffix=" MB" data-decimals="1">7.1 MB</div>
+                <div class="stat-cap" data-i18n="f1">单文件绿色便携</div>
+              </div>
+              <div>
+                <div class="stat-num" data-count="0" data-suffix=" DLL" data-decimals="0">0 DLL</div>
+                <div class="stat-cap" data-i18n="f2">默认不注入游戏进程</div>
+              </div>
+              <div>
+                <div class="stat-num" data-count="100" data-suffix="%" data-decimals="0">100%</div>
+                <div class="stat-cap" data-i18n="f3">SCTL v2 事务级回滚</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hero-scroll-hint" aria-hidden="true">
+        <span>SCROLL</span>
+        <div class="scroll-line"></div>
+      </div>
+    </section>
+
+    <!-- Kinetic Sword Creed Marquee -->
+    <div class="marquee-band" aria-hidden="true">
+      <div class="marquee-track" id="marqueeTrack">
+        <div class="marquee-item"><span>SILENT BLADE</span><span class="sep"></span><span class="dim">ZERO DLL INJECTION</span><span class="sep"></span><span>7.1 MB PORTABLE</span><span class="sep"></span><span class="dim">SCTL V2 ROLLBACK</span><span class="sep"></span><span>PRESENTMON ETW</span><span class="sep"></span><span class="dim">MIT OPEN SOURCE</span><span class="sep"></span></div>
+        <div class="marquee-item"><span>SILENT BLADE</span><span class="sep"></span><span class="dim">ZERO DLL INJECTION</span><span class="sep"></span><span>7.1 MB PORTABLE</span><span class="sep"></span><span class="dim">SCTL V2 ROLLBACK</span><span class="sep"></span><span>PRESENTMON ETW</span><span class="sep"></span><span class="dim">MIT OPEN SOURCE</span><span class="sep"></span></div>
+      </div>
+    </div>
+
+    <!-- ========================================================================
+         ACT II — INTERACTIVE THREE.JS 3D FORGED BLADE STAGE
+         ======================================================================== -->
+    <section class="blade3d-section" id="forge3d">
+      <div class="wrap">
+        <div class="blade3d-grid">
+          <div class="gs-reveal">
+            <div class="sec-kicker" data-i18n="kicker_3d">FORGED ARCHITECTURE</div>
+            <h2 class="sec-h2" data-i18n="h2_3d">如名剑出炉，每一微秒皆有出处</h2>
+            <p class="sec-desc" data-i18n="p_3d">
+              弃用臃肿的 Electron 与后台常驻服务。FrameForge 以纯原生 Win32 与 C# 构建，将电源计划、1 ms 计时器、核心拓扑软引导与硬件滤镜收束于单一可控内核——拖动右侧 3D 剑锋，或按下键盘 T 键在「玄夜」与「素宣」之间实时淬炼光影。
+            </p>
+            <div class="blade3d-specs">
+              <div class="spec-tile">
+                <strong>&lt; 1 ms</strong>
+                <span data-i18n="sp1">高精度计时器事务托管</span>
+              </div>
+              <div class="spec-tile">
+                <strong>23 Presets</strong>
+                <span data-i18n="sp2">零注入硬件滤镜与 ICC</span>
+              </div>
+              <div class="spec-tile">
+                <strong>300 Matches</strong>
+                <span data-i18n="sp3">本地帧率曲线与 CSV 归档</span>
+              </div>
+              <div class="spec-tile">
+                <strong>HMAC-SHA256</strong>
+                <span data-i18n="sp4">签名原值落盘 + 看门狗还原</span>
+              </div>
+            </div>
           </div>
 
-          <div class="hero-facts gs-hero">
-            <div>
-              <div class="fact-val" data-count="7.1" data-suffix=" MB" data-decimals="1">7.1 MB</div>
-              <div class="fact-label" data-i18n="f1">单文件绿色便携</div>
+          <div class="blade3d-stage gs-reveal" id="bladeStage" data-cursor="DRAG">
+            <div class="blade3d-hud-top">
+              <span class="live-dot"></span>
+              <span id="bladeModeTag">WEBGL PBR · OBSIDIAN STEEL</span>
             </div>
-            <div>
-              <div class="fact-val" data-count="0" data-suffix=" DLL" data-decimals="0">0 DLL</div>
-              <div class="fact-label" data-i18n="f2">默认不注入游戏进程</div>
-            </div>
-            <div>
-              <div class="fact-val" data-count="100" data-suffix="%" data-decimals="0">100%</div>
-              <div class="fact-label" data-i18n="f3">SCTL v2 事务级回滚</div>
+            <canvas id="bladeCanvas"></canvas>
+            <div class="blade3d-hud-corner">
+              <span data-i18n="blade_drag">DRAG / MOVE TO INSPECT BLADE</span>
+              <span id="bladeAngle">000.0°</span>
             </div>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- ACT II: Live Interactive HUD Showcase -->
+    <!-- ========================================================================
+         ACT III — PINNED HORIZONTAL SCROLL "剑谱长卷"
+         ======================================================================== -->
+    <section class="scroll-chronicle" id="chronicle">
+      <div class="chronicle-pin" id="chroniclePin">
+        <div class="wrap">
+          <div class="chronicle-head">
+            <div>
+              <div class="sec-kicker" data-i18n="kicker_chr">THE FOUR STANCES</div>
+              <h2 class="sec-h2" style="margin-bottom:0" data-i18n="h2_chr">四式剑谱，直击帧率症结</h2>
+            </div>
+            <div class="chronicle-progress-wrap">
+              <span id="chrStep">01 / 04</span>
+              <div class="chronicle-bar"><div class="chronicle-bar-fill" id="chrBar"></div></div>
+            </div>
+          </div>
+
+          <div class="chronicle-viewport">
+            <div class="chronicle-track" id="chronicleTrack">
+              <!-- Chapter 01 -->
+              <article class="chapter-card" data-cursor="VIEW">
+                <div class="chapter-media">
+                  <img class="dual-img dark-only" src="assets/blade-macro-dark.jpg" alt="Forged Damascus steel macro">
+                  <img class="dual-img light-only" src="assets/blade-macro-light.jpg" alt="Minimalist silver sword blade on alabaster">
+                </div>
+                <div class="chapter-body">
+                  <div>
+                    <div class="chapter-idx">STANCE I · 事务回滚</div>
+                    <h3 data-i18n="ch1_h">SCTL v2 事务日志与看门狗</h3>
+                    <p data-i18n="ch1_p">所有电源计划、1 ms 系统计时器、进程优先级与内存整理改动，在执行前均以 HMAC 签名记录原始快照。即便遭遇系统断电或强杀进程，独立看门狗进程也会自动将系统还原至分毫不差。</p>
+                  </div>
+                  <div class="chapter-tags">
+                    <span>HMAC Signed</span><span>Out-of-Process Watchdog</span><span>Zero Residue</span>
+                  </div>
+                </div>
+              </article>
+
+              <!-- Chapter 02 -->
+              <article class="chapter-card" data-cursor="VIEW">
+                <div class="chapter-media">
+                  <img src="screenshots/v1.5.0/games.png" alt="FrameForge game topology steering">
+                </div>
+                <div class="chapter-body">
+                  <div>
+                    <div class="chapter-idx">STANCE II · 核心软引导</div>
+                    <h3 data-i18n="ch2_h">P 核优先与单 CCD 拓扑调度</h3>
+                    <p data-i18n="ch2_p">针对大小核与多 CCD 处理器架构，提供自动、P 核优先与单 CCD 策略。每 2 分钟动态采样最空闲物理核心，轻柔引导游戏主线程，不暴力锁死亲和性掩码，兼顾帧生成稳定与后台响应。</p>
+                  </div>
+                  <div class="chapter-tags">
+                    <span>P-Core Priority</span><span>Single CCD</span><span>Auto Game Detection</span>
+                  </div>
+                </div>
+              </article>
+
+              <!-- Chapter 03 -->
+              <article class="chapter-card" data-cursor="VIEW">
+                <div class="chapter-media">
+                  <img src="screenshots/v1.5.0/filter.png" alt="FrameForge hardware screen filters">
+                </div>
+                <div class="chapter-body">
+                  <div>
+                    <div class="chapter-idx">STANCE III · 硬件调色</div>
+                    <h3 data-i18n="ch3_h">23 套零注入画面滤镜与 ICC</h3>
+                    <p data-i18n="ch3_p">绕开易触发反作弊的 Shader 注入路径，直接通过系统放大镜色彩矩阵、Gamma LUT 与 NVIDIA NVAPI 数字振动完成实时调色，同时原生支持 DDC/CI 硬件背光控制与专业 .icc 校色文件加载。</p>
+                  </div>
+                  <div class="chapter-tags">
+                    <span>23 Presets</span><span>NVIDIA NVAPI</span><span>DDC/CI &amp; ICC</span>
+                  </div>
+                </div>
+              </article>
+
+              <!-- Chapter 04 -->
+              <article class="chapter-card" data-cursor="VIEW">
+                <div class="chapter-media">
+                  <img src="screenshots/v1.5.0/report.png" alt="FrameForge post-match report">
+                </div>
+                <div class="chapter-body">
+                  <div>
+                    <div class="chapter-idx">STANCE IV · 战绩归档</div>
+                    <h3 data-i18n="ch4_h">赛后战绩与 300 局帧率曲线</h3>
+                    <p data-i18n="ch4_p">退出游戏瞬间自动生成完整战报，涵盖平均帧率、1% Low、核心温度与整卡功耗。本地永久留存最近 300 局对局帧率走势，支持一键导出标准 CSV 用于硬件调优与横向复盘。</p>
+                  </div>
+                  <div class="chapter-tags">
+                    <span>1% Low Telemetry</span><span>300-Match History</span><span>CSV Export</span>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================================================================
+         ACT IV — LIVE INTERACTIVE HUD PLAYGROUND
+         ======================================================================== -->
     <section class="stage-section" id="hud">
       <div class="wrap">
-        <div class="section-header gs-reveal">
-          <h2 data-i18n="hud_h">游戏内现代 HUD，自绘与 RTSS 同步</h2>
-          <p data-i18n="hud_p">
+        <div class="gs-reveal" style="max-width:640px; margin-bottom:44px;">
+          <div class="sec-kicker" data-i18n="kicker_hud">LIVE TELEMETRY OVERLAY</div>
+          <h2 class="sec-h2" data-i18n="hud_h">游戏内现代 HUD，自绘与 RTSS 同步</h2>
+          <p class="sec-desc" style="margin-bottom:0" data-i18n="hud_p">
             v1.6.5 重构了整套叠加层视觉。等宽数字保证帧率波动不抖列，五套配色与三档底板在自绘分层窗口、RTSS 与设置预览之间完全一致。
           </p>
         </div>
 
         <div class="hud-showcase gs-reveal">
-          <div class="hud-canvas" id="hudCanvas">
-            <img class="hud-canvas-bg" src="assets/hero-blade.jpg" alt="In-game preview backdrop">
+          <div class="hud-canvas" id="hudCanvas" data-cursor="HUD">
+            <img class="hud-canvas-bg dark-scene" src="assets/swordsman-dark-hero.jpg" alt="Dark swordsman backdrop">
+            <img class="hud-canvas-bg light-scene" src="assets/swordsman-light-hero.jpg" alt="Light swordsman backdrop">
             <div class="hud-canvas-shade"></div>
             <div class="hud-spotlight"></div>
 
@@ -661,21 +1283,21 @@
                 <span class="ff-sub" id="valFt">6.9ms</span>
               </div>
               <div class="ff-metrics">
-                <div class="ff-row m-cpu">
+                <div class="ff-row">
                   <span><span class="ff-k">CPU</span><span class="ff-v" id="valCpu">38%</span></span>
                 </div>
-                <div class="ff-row m-gpu">
+                <div class="ff-row">
                   <span><span class="ff-k">GPU</span><span class="ff-v" id="valGpu">76%</span></span>
                   <span class="ff-v" id="valTemp">64°C</span>
                 </div>
-                <div class="ff-row m-ram">
+                <div class="ff-row">
                   <span><span class="ff-k">RAM</span><span class="ff-v">9.8G</span></span>
                   <span class="ff-v">62%</span>
                 </div>
               </div>
               <div class="ff-ambient">
                 <span>TIME</span>
-                <span id="valTime">21:40:36</span>
+                <span id="valTime">23:15:08</span>
               </div>
             </div>
           </div>
@@ -720,71 +1342,42 @@
       </div>
     </section>
 
-    <!-- ACT III: Forged Core Architecture (3D Key Visual + Parallax) -->
-    <section class="core-section" id="core">
-      <div class="core-media">
-        <img id="coreImg" src="assets/forge-core.jpg" alt="FrameForge transactional boost engine">
-      </div>
-      <div class="core-vignette"></div>
-
-      <div class="wrap">
-        <div class="core-content gs-reveal">
-          <h2 data-i18n="core_h">每一项系统改动，皆可对账还原</h2>
-          <p data-i18n="core_p">
-            传统游戏加速工具往往留下难以追查的注册表与电源残留。FrameForge 将底层调度收束为可验证的事务内核，不装驱动，不留后患。
-          </p>
-          <ul class="core-list">
-            <li>
-              <strong data-i18n="c1_k">SCTL v2 事务日志</strong>
-              <span data-i18n="c1_v">所有电源计划、1 ms 计时器、进程优先级与核心调度改动先落盘 HMAC 签名原值，配合独立看门狗进程在崩溃或强杀后自动恢复。</span>
-            </li>
-            <li>
-              <strong data-i18n="c2_k">核心拓扑软引导</strong>
-              <span data-i18n="c2_v">支持自动、P 核优先与单 CCD 策略，每 2 分钟采样最闲核心软引导游戏主线程，不强锁亲和性掩码。</span>
-            </li>
-            <li>
-              <strong data-i18n="c3_k">硬件滤镜与 ICC</strong>
-              <span data-i18n="c3_v">23 套预设通过放大镜矩阵、Gamma LUT 与 NVIDIA NVAPI 数字振动实现零注入调色，支持 DDC/CI 硬件背光与 .icc 校色文件。</span>
-            </li>
-            <li>
-              <strong data-i18n="c4_k">赛后战绩归档</strong>
-              <span data-i18n="c4_v">退出游戏自动生成平均帧率、1% Low、温度与功耗报告，本地保留最近 300 局帧率曲线并支持导出 CSV。</span>
-            </li>
-          </ul>
-        </div>
-      </div>
-    </section>
-
-    <!-- ACT IV: Interactive Night / Day Theme Comparison -->
+    <!-- ========================================================================
+         ACT V — INTERACTIVE NIGHT / DAY SOFTWARE UI SPLIT
+         ======================================================================== -->
     <section class="split-section" id="themes">
       <div class="wrap">
-        <div class="section-header gs-reveal">
-          <h2 data-i18n="theme_h">影刃夜间与宣纸白昼</h2>
-          <p data-i18n="theme_p">
-            纯原生 GDI+ 绘制整卡毛玻璃与水墨底纹，无第三方重型 UI 框架。左右拖动分界线对比两套内置主题界面。
+        <div class="gs-reveal" style="max-width:640px; margin-bottom:44px;">
+          <div class="sec-kicker" data-i18n="kicker_themes">DUAL NATIVE REALMS</div>
+          <h2 class="sec-h2" data-i18n="theme_h">玄夜孤刃与素宣白昼</h2>
+          <p class="sec-desc" style="margin-bottom:0" data-i18n="theme_p">
+            不仅官网具备黑白双境，FrameForge 软件本体同样以纯原生 GDI+ 绘制整卡毛玻璃与水墨底纹，无第三方重型 UI 框架。左右拖动剑锋分界线对比两套实机界面。
           </p>
         </div>
 
-        <div class="split-frame gs-reveal" id="splitFrame">
+        <div class="split-frame gs-reveal" id="splitFrame" data-cursor="SLICE">
           <img src="screenshots/v1.5.0/boost.png" alt="Paper Ink Day Theme">
           <div class="split-top" id="splitTop">
             <img src="screenshots/v1.5.0/boost-dark.png" alt="Shadow Blade Night Theme">
           </div>
           <div class="split-divider" id="splitDivider"></div>
           <div class="split-knob" id="splitKnob">&lt;&gt;</div>
-          <div class="split-tag left" data-i18n="tag_night">影刃 · 夜间</div>
-          <div class="split-tag right" data-i18n="tag_day">宣纸 · 白昼</div>
+          <div class="split-tag left" data-i18n="tag_night">玄夜 · 暗黑主题</div>
+          <div class="split-tag right" data-i18n="tag_day">素宣 · 白色主题</div>
         </div>
       </div>
     </section>
 
-    <!-- ACT V: Comparison & Source Verification -->
+    <!-- ========================================================================
+         ACT VI — COMPARISON & OPEN-SOURCE VERIFICATION
+         ======================================================================== -->
     <section class="compare-section" id="verify">
       <div class="wrap">
-        <div class="section-header gs-reveal">
-          <h2 data-i18n="cmp_h">克制体积，公开校验</h2>
-          <p data-i18n="cmp_p">
-            所有代码以 MIT 协议开源，无需安装 Visual Studio，使用 Windows 自带 .NET Framework 4.8 编译器即可本机编译。
+        <div class="gs-reveal" style="max-width:640px; margin-bottom:44px;">
+          <div class="sec-kicker" data-i18n="kicker_cmp">OPEN SOURCE AUDIT</div>
+          <h2 class="sec-h2" data-i18n="cmp_h">克制体积，公开校验</h2>
+          <p class="sec-desc" style="margin-bottom:0" data-i18n="cmp_p">
+            全部源代码以 MIT 协议开源，无需安装 Visual Studio，直接调用 Windows 系统自带 .NET Framework 4.8 编译器即可本机从零构建。
           </p>
         </div>
 
@@ -801,7 +1394,7 @@
               <tbody>
                 <tr>
                   <td class="col-k" data-i18n="r1_k">体积与部署</td>
-                  <td class="col-ff" data-i18n="r1_a">单文件约 7 MB，免安装无服务残留</td>
+                  <td class="col-ff" data-i18n="r1_a">单文件约 7.1 MB，免安装无服务残留</td>
                   <td class="col-old" data-i18n="r1_b">数十至数百 MB，常附带多项后台服务</td>
                 </tr>
                 <tr>
@@ -834,47 +1427,137 @@
               <div style="margin-top:10px" class="dim"># v1.6.5 FrameForge.exe SHA-256</div>
               <div id="shaText">43da958dfb965f4659b3f027fd6d9f8495ec5fb02b8407d95edb1cb68daaf99a</div>
             </div>
-            <button class="copy-btn" id="copySha" type="button" data-i18n="copy_sha">复制 SHA-256 校验值</button>
+            <button class="copy-btn magnetic" id="copySha" type="button" data-cursor="COPY" data-i18n="copy_sha">复制 SHA-256 校验值</button>
           </div>
         </div>
       </div>
     </section>
   </main>
 
+  <!-- Monumental Editorial Footer -->
   <footer>
-    <div class="wrap foot-inner">
-      <div>FrameForge · MIT License · <a href="https://cjcode.xyz" target="_blank" rel="noopener">caijun</a></div>
-      <div class="foot-links">
-        <a href="https://github.com/caijun-1/frameforge" target="_blank" rel="noopener">GitHub</a>
-        <a href="https://github.com/caijun-1/frameforge/releases/latest" target="_blank" rel="noopener">Releases</a>
-        <a href="https://github.com/caijun-1/frameforge/discussions" target="_blank" rel="noopener">Discussions</a>
-        <a href="https://cjcode.xyz" target="_blank" rel="noopener">cjcode.xyz</a>
-        <a href="https://github.com/caijun-1/frameforge/blob/main/SECURITY.md" target="_blank" rel="noopener">Security</a>
+    <div class="wrap">
+      <div class="foot-cta-row">
+        <div>
+          <div class="sec-kicker" data-i18n="kicker_foot">READY TO DRAW</div>
+          <div class="foot-cta-title" data-i18n="foot_cta">拔剑出鞘，即刻见锋</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:24px; flex-wrap:wrap;">
+          <svg class="foot-signature" id="footSig" viewBox="0 0 220 64" aria-hidden="true">
+            <path d="M12,48 C34,14 54,10 66,34 C76,54 94,16 118,24 C138,30 144,44 166,26 C182,12 196,18 208,14" />
+            <path d="M24,52 L198,42" stroke-width="1.4" opacity="0.65" />
+          </svg>
+          <a class="btn-forge magnetic" href="https://github.com/caijun-1/frameforge/releases/latest" data-cursor="FORGE" data-i18n="cta_dl">下载 FrameForge v1.6.5</a>
+        </div>
+      </div>
+
+      <div class="foot-wordmark" aria-hidden="true">FRAMEFORGE</div>
+
+      <div class="foot-bottom">
+        <div>FrameForge v1.6.5 · MIT License · Crafted by <a href="https://cjcode.xyz" target="_blank" rel="noopener" style="text-decoration:underline; text-underline-offset:4px;">caijun</a></div>
+        <div class="foot-links">
+          <a href="https://github.com/caijun-1/frameforge" target="_blank" rel="noopener">GitHub</a>
+          <a href="https://github.com/caijun-1/frameforge/releases/latest" target="_blank" rel="noopener">Releases</a>
+          <a href="https://github.com/caijun-1/frameforge/discussions" target="_blank" rel="noopener">Discussions</a>
+          <a href="https://cjcode.xyz" target="_blank" rel="noopener">cjcode.xyz</a>
+          <a href="https://github.com/caijun-1/frameforge/blob/main/SECURITY.md" target="_blank" rel="noopener">Security</a>
+        </div>
       </div>
     </div>
   </footer>
 
   <script>
-    // Header & scroll blade
+    /* ==========================================================================
+       1. DUAL-THEME STATE & BLADE-SLASH TRANSITION (DARK "玄夜" / LIGHT "素宣")
+       ========================================================================== */
+    const htmlEl = document.documentElement;
+    const themeToggle = document.getElementById("themeToggle");
+    const themeLabel = document.getElementById("themeLabel");
+    const themeSlash = document.getElementById("themeSlash");
+    const bladeModeTag = document.getElementById("bladeModeTag");
+
+    let currentTheme = localStorage.getItem("ff-theme") || "dark";
+    let lang = (navigator.language || "zh").toLowerCase().startsWith("zh") ? "zh" : "en";
+    let threeThemeHook = null;
+
+    function syncThemeUI() {
+      htmlEl.setAttribute("data-theme", currentTheme);
+      localStorage.setItem("ff-theme", currentTheme);
+      if (themeLabel) {
+        themeLabel.textContent = currentTheme === "dark"
+          ? (lang === "zh" ? "素宣白昼" : "Paper Light")
+          : (lang === "zh" ? "玄夜孤剑" : "Obsidian Dark");
+      }
+      if (bladeModeTag) {
+        bladeModeTag.textContent = currentTheme === "dark"
+          ? "WEBGL PBR · OBSIDIAN STEEL"
+          : "WEBGL PBR · SILVER FROST STEEL";
+      }
+      if (typeof threeThemeHook === "function") threeThemeHook(currentTheme);
+    }
+
+    function toggleThemeWithSlash() {
+      const next = currentTheme === "dark" ? "light" : "dark";
+      if (typeof gsap !== "undefined" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        const tl = gsap.timeline();
+        tl.set(themeSlash, {
+          opacity: 1,
+          background: next === "light" ? "#f6f4ef" : "#060608",
+          clipPath: "polygon(0 0, 0 0, -14% 100%, -14% 100%)"
+        })
+        .to(themeSlash, {
+          clipPath: "polygon(0 0, 114% 0, 100% 100%, 0 100%)",
+          duration: 0.34,
+          ease: "power3.in"
+        })
+        .add(() => {
+          currentTheme = next;
+          syncThemeUI();
+        })
+        .to(themeSlash, {
+          clipPath: "polygon(114% 0, 114% 0, 100% 100%, 100% 100%)",
+          duration: 0.38,
+          ease: "power3.out"
+        })
+        .set(themeSlash, { opacity: 0 });
+      } else {
+        currentTheme = next;
+        syncThemeUI();
+      }
+    }
+
+    syncThemeUI();
+    themeToggle.addEventListener("click", toggleThemeWithSlash);
+    window.addEventListener("keydown", e => {
+      if ((e.key === "t" || e.key === "T") && !e.ctrlKey && !e.metaKey && !e.altKey && document.activeElement.tagName !== "INPUT") {
+        toggleThemeWithSlash();
+      }
+    });
+
+    /* ==========================================================================
+       2. SCROLL HEADER & 1PX BLADE PROGRESS
+       ========================================================================== */
     const header = document.getElementById("siteHeader");
-    const progress = document.getElementById("scrollProgress");
+    const scrollBlade = document.getElementById("scrollBlade");
     function onScroll() {
       const y = window.scrollY;
       header.classList.toggle("scrolled", y > 24);
       const max = document.documentElement.scrollHeight - window.innerHeight;
-      progress.style.width = max > 0 ? Math.min(100, (y / max) * 100) + "%" : "0%";
+      scrollBlade.style.width = max > 0 ? Math.min(100, (y / max) * 100) + "%" : "0%";
     }
     window.addEventListener("scroll", onScroll, { passive: true });
     onScroll();
 
-    // Subtle rain & crimson ember atmosphere on hero canvas
+    /* ==========================================================================
+       3. DUAL-THEME ATMOSPHERE CANVAS (DARK: RAIN & EMBERS / LIGHT: INK & MIST)
+       ========================================================================== */
     (function initAtmosphere() {
       if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
       const canvas = document.getElementById("atmosphere");
       const ctx = canvas.getContext("2d");
       let w = 0, h = 0;
-      const embers = [];
-      const rains = [];
+      const particles = [];
+      const streaks = [];
 
       function resize() {
         w = canvas.width = canvas.offsetWidth;
@@ -883,51 +1566,59 @@
       resize();
       window.addEventListener("resize", resize);
 
-      for (let i = 0; i < 24; i++) {
-        embers.push({
+      for (let i = 0; i < 28; i++) {
+        particles.push({
           x: Math.random() * 1440,
           y: Math.random() * 900,
-          r: 0.7 + Math.random() * 1.4,
-          vx: -0.15 - Math.random() * 0.25,
-          vy: -0.18 - Math.random() * 0.32,
-          a: 0.15 + Math.random() * 0.45
+          r: 0.8 + Math.random() * 1.6,
+          vx: -0.18 - Math.random() * 0.28,
+          vy: -0.22 - Math.random() * 0.35,
+          a: 0.16 + Math.random() * 0.42
         });
       }
-      for (let i = 0; i < 42; i++) {
-        rains.push({
+      for (let i = 0; i < 46; i++) {
+        streaks.push({
           x: Math.random() * 1440,
           y: Math.random() * 900,
-          len: 16 + Math.random() * 24,
-          speed: 7 + Math.random() * 5,
-          a: 0.04 + Math.random() * 0.07
+          len: 18 + Math.random() * 28,
+          speed: 7.5 + Math.random() * 5,
+          a: 0.04 + Math.random() * 0.08
         });
       }
 
       function tick() {
         ctx.clearRect(0, 0, w, h);
-        // Fine diagonal rain on right half
+        const isLight = currentTheme === "light";
+
         ctx.lineWidth = 1;
-        for (const r of rains) {
-          ctx.strokeStyle = "rgba(220, 224, 232," + r.a + ")";
+        for (const r of streaks) {
+          ctx.strokeStyle = isLight
+            ? "rgba(17, 17, 20," + (r.a * 0.6) + ")"
+            : "rgba(225, 230, 238," + r.a + ")";
           ctx.beginPath();
           ctx.moveTo(r.x, r.y);
-          ctx.lineTo(r.x - 2, r.y + r.len);
+          ctx.lineTo(r.x - (isLight ? 10 : 2.5), r.y + (isLight ? r.len * 0.45 : r.len));
           ctx.stroke();
-          r.y += r.speed;
-          r.x -= 0.4;
-          if (r.y > h) { r.y = -r.len; r.x = w * 0.35 + Math.random() * (w * 0.7); }
+          r.y += isLight ? r.speed * 0.32 : r.speed;
+          r.x -= isLight ? 1.1 : 0.45;
+          if (r.y > h || r.x < -20) {
+            r.y = -r.len;
+            r.x = w * 0.32 + Math.random() * (w * 0.72);
+          }
         }
-        // Restrained drifting crimson ash embers
-        for (const e of embers) {
-          ctx.fillStyle = "rgba(214, 66, 56," + e.a + ")";
+
+        for (const p of particles) {
+          ctx.fillStyle = isLight
+            ? "rgba(200, 43, 34," + (p.a * 0.55) + ")"
+            : "rgba(217, 56, 46," + p.a + ")";
           ctx.beginPath();
-          ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
+          ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
           ctx.fill();
-          e.x += e.vx;
-          e.y += e.vy;
-          if (e.y < -10 || e.x < -10) {
-            e.x = w * 0.48 + Math.random() * (w * 0.55);
-            e.y = h + 10;
+          p.x += p.vx;
+          p.y += p.vy;
+          if (p.y < -12 || p.x < -12) {
+            p.x = w * 0.42 + Math.random() * (w * 0.6);
+            p.y = h + 12;
           }
         }
         requestAnimationFrame(tick);
@@ -935,15 +1626,17 @@
       requestAnimationFrame(tick);
     })();
 
-    // Live interactive HUD simulation
-    const themes = {
+    /* ==========================================================================
+       4. LIVE INTERACTIVE HUD SIMULATOR (5 THEMES x 3 BD x 3 LAYOUTS)
+       ========================================================================== */
+    const hudThemes = {
       cinnabar: { accent: "#E05246", fps: "#F25749", low: "#F5B8B0", ft: "#D9A066" },
       green:    { accent: "#4ADE80", fps: "#4ADE80", low: "#BBF7D0", ft: "#67E8F9" },
       pink:     { accent: "#F472B6", fps: "#FF5CE1", low: "#FBCFE8", ft: "#67E8F9" },
       cyan:     { accent: "#38BDF8", fps: "#38BDF8", low: "#BAE6FD", ft: "#A7F3D0" },
       mono:     { accent: "#D4D8E0", fps: "#F5F7FA", low: "#CBD2DC", ft: "#9CA6B5" }
     };
-    let hudState = { theme: "cinnabar", bd: "hud", layout: "stack" };
+    const hudState = { theme: "cinnabar", bd: "hud", layout: "stack" };
     const liveHud = document.getElementById("liveHud");
     const hudAccent = document.getElementById("hudAccent");
     const valFps = document.getElementById("valFps");
@@ -952,7 +1645,7 @@
     const valFt = document.getElementById("valFt");
 
     function renderHud() {
-      const t = themes[hudState.theme];
+      const t = hudThemes[hudState.theme];
       liveHud.className = "ff-hud bd-" + hudState.bd + " layout-" + hudState.layout;
       hudAccent.style.backgroundColor = t.accent;
       valFps.style.color = t.fps;
@@ -987,19 +1680,18 @@
     });
     renderHud();
 
-    // Realistic telemetry tick (tabular-nums)
     setInterval(() => {
-      const fps = 141 + Math.floor(Math.random() * 5);
+      const fps = 141 + Math.floor(Math.random() * 6);
       const low = 110 + Math.floor(Math.random() * 5);
-      const ft = (1000 / fps).toFixed(1) + "ms";
       valFps.textContent = fps;
       valLow.textContent = "1% " + low;
-      valFt.textContent = ft;
-      const now = new Date();
-      document.getElementById("valTime").textContent = now.toTimeString().slice(0, 8);
+      valFt.textContent = (1000 / fps).toFixed(1) + "ms";
+      document.getElementById("valTime").textContent = new Date().toTimeString().slice(0, 8);
     }, 1000);
 
-    // Interactive Night / Day split slider
+    /* ==========================================================================
+       5. INTERACTIVE NIGHT / DAY SPLIT COMPARISON
+       ========================================================================== */
     (function initSplit() {
       const frame = document.getElementById("splitFrame");
       const top = document.getElementById("splitTop");
@@ -1009,7 +1701,7 @@
 
       function setPos(clientX) {
         const rect = frame.getBoundingClientRect();
-        const pct = Math.max(6, Math.min(94, ((clientX - rect.left) / rect.width) * 100));
+        const pct = Math.max(5, Math.min(95, ((clientX - rect.left) / rect.width) * 100));
         top.style.clipPath = "inset(0 " + (100 - pct) + "% 0 0)";
         div.style.left = pct + "%";
         knob.style.left = pct + "%";
@@ -1024,24 +1716,269 @@
       frame.addEventListener("pointercancel", () => { dragging = false; });
     })();
 
-    // Copy SHA-256
+    /* ==========================================================================
+       6. COPY SHA-256
+       ========================================================================== */
     document.getElementById("copySha").addEventListener("click", function () {
       const sha = document.getElementById("shaText").textContent.trim();
       navigator.clipboard.writeText(sha).then(() => {
         const orig = this.textContent;
-        this.textContent = lang === "zh" ? "已复制校验值" : "Copied SHA-256";
+        this.textContent = lang === "zh" ? "已复制 SHA-256 校验值" : "Copied SHA-256 Checksum";
         setTimeout(() => { this.textContent = orig; }, 1600);
       });
     });
 
-    // MotionSites-inspired GSAP 3 + ScrollTrigger + Lenis smooth orchestration
+    /* ==========================================================================
+       7. THREE.JS INTERACTIVE 3D FORGED SWORD (PROCEDURAL PBR + DUAL THEME)
+       ========================================================================== */
+    function initThreeBlade() {
+      if (typeof THREE === "undefined") return;
+      const stage = document.getElementById("bladeStage");
+      const canvas = document.getElementById("bladeCanvas");
+      const angleEl = document.getElementById("bladeAngle");
+      if (!stage || !canvas) return;
+
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.25;
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(34, stage.clientWidth / stage.clientHeight, 0.1, 100);
+      camera.position.set(0, 0.2, 6.2);
+
+      // Lighting rig
+      const ambLight = new THREE.AmbientLight(0xffffff, 0.55);
+      scene.add(ambLight);
+
+      const keyLight = new THREE.DirectionalLight(0xfff5e8, 2.2);
+      keyLight.position.set(4, 5, 5);
+      scene.add(keyLight);
+
+      const rimLight = new THREE.DirectionalLight(0xd9382e, 1.8);
+      rimLight.position.set(-5, -2, -3);
+      scene.add(rimLight);
+
+      const coolFill = new THREE.PointLight(0x88a8ff, 1.4, 14);
+      coolFill.position.set(-3, 3, 4);
+      scene.add(coolFill);
+
+      // Procedural Sword Group (Eastern Jian / Tang-Dao inspired)
+      const swordGroup = new THREE.Group();
+      scene.add(swordGroup);
+
+      // 1. Diamond cross-section tapered blade
+      const bladeShape = new THREE.Shape();
+      bladeShape.moveTo(0, 0.085);
+      bladeShape.lineTo(0.14, 0);
+      bladeShape.lineTo(0, -0.085);
+      bladeShape.lineTo(-0.14, 0);
+      bladeShape.closePath();
+
+      const bladeGeo = new THREE.ExtrudeGeometry(bladeShape, {
+        depth: 3.55,
+        bevelEnabled: false,
+        steps: 24
+      });
+      // Taper tip cleanly
+      const pos = bladeGeo.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        const z = pos.getZ(i);
+        const t = z / 3.55;
+        let taper = 1 - t * 0.28;
+        if (t > 0.84) {
+          const tipT = (t - 0.84) / 0.16;
+          taper *= (1 - tipT * 0.96);
+        }
+        pos.setX(i, pos.getX(i) * taper);
+        pos.setY(i, pos.getY(i) * taper);
+      }
+      bladeGeo.computeVertexNormals();
+      bladeGeo.rotateY(Math.PI / 2);
+      bladeGeo.translate(-0.75, 0, 0);
+
+      const bladeMat = new THREE.MeshStandardMaterial({
+        color: 0xbac2cf,
+        metalness: 0.94,
+        roughness: 0.18
+      });
+      const bladeMesh = new THREE.Mesh(bladeGeo, bladeMat);
+      swordGroup.add(bladeMesh);
+
+      // 2. Crimson/Steel Fuller Ridge line along blade center
+      const ridgeGeo = new THREE.BoxGeometry(2.55, 0.022, 0.036);
+      const ridgeMat = new THREE.MeshStandardMaterial({
+        color: 0xd9382e,
+        metalness: 0.7,
+        roughness: 0.3,
+        emissive: 0x3a0907
+      });
+      const ridgeMesh = new THREE.Mesh(ridgeGeo, ridgeMat);
+      ridgeMesh.position.set(0.55, 0, 0);
+      swordGroup.add(ridgeMesh);
+
+      // 3. Guard (Tsuba / Jian-Ge)
+      const guardGeo = new THREE.BoxGeometry(0.14, 0.72, 0.24);
+      const guardMat = new THREE.MeshStandardMaterial({
+        color: 0x1e2028,
+        metalness: 0.88,
+        roughness: 0.26
+      });
+      const guardMesh = new THREE.Mesh(guardGeo, guardMat);
+      guardMesh.position.set(-0.82, 0, 0);
+      swordGroup.add(guardMesh);
+
+      // Guard crimson inlay collar (Habaki)
+      const habakiGeo = new THREE.BoxGeometry(0.22, 0.24, 0.15);
+      const habakiMat = new THREE.MeshStandardMaterial({
+        color: 0x992620,
+        metalness: 0.78,
+        roughness: 0.28
+      });
+      const habakiMesh = new THREE.Mesh(habakiGeo, habakiMat);
+      habakiMesh.position.set(-0.65, 0, 0);
+      swordGroup.add(habakiMesh);
+
+      // 4. Wrapped Hilt (Tsuka)
+      const hiltGeo = new THREE.CylinderGeometry(0.068, 0.078, 1.18, 12);
+      hiltGeo.rotateZ(Math.PI / 2);
+      const hiltMat = new THREE.MeshStandardMaterial({
+        color: 0x14151a,
+        metalness: 0.25,
+        roughness: 0.82
+      });
+      const hiltMesh = new THREE.Mesh(hiltGeo, hiltMat);
+      hiltMesh.position.set(-1.46, 0, 0);
+      swordGroup.add(hiltMesh);
+
+      // Hilt wrap rings
+      for (let k = 0; k < 8; k++) {
+        const ringGeo = new THREE.TorusGeometry(0.076, 0.012, 8, 18);
+        ringGeo.rotateY(Math.PI / 2);
+        const ring = new THREE.Mesh(ringGeo, guardMat);
+        ring.position.set(-1.02 - k * 0.125, 0, 0);
+        swordGroup.add(ring);
+      }
+
+      // 5. Pommel
+      const pommelGeo = new THREE.OctahedronGeometry(0.11, 0);
+      const pommel = new THREE.Mesh(pommelGeo, guardMat);
+      pommel.position.set(-2.08, 0, 0);
+      swordGroup.add(pommel);
+
+      // Orbiting fine dust particles around the blade
+      const pCount = 90;
+      const pPos = new Float32Array(pCount * 3);
+      for (let i = 0; i < pCount; i++) {
+        pPos[i * 3] = (Math.random() - 0.5) * 6.4;
+        pPos[i * 3 + 1] = (Math.random() - 0.5) * 2.8;
+        pPos[i * 3 + 2] = (Math.random() - 0.5) * 2.6;
+      }
+      const pGeo = new THREE.BufferGeometry();
+      pGeo.setAttribute("position", new THREE.BufferAttribute(pPos, 3));
+      const pMat = new THREE.PointsMaterial({ color: 0xd9382e, size: 0.032, transparent: true, opacity: 0.65 });
+      const dust = new THREE.Points(pGeo, pMat);
+      scene.add(dust);
+
+      swordGroup.rotation.set(0.28, -0.45, 0.34);
+
+      // Dual-theme material hook
+      threeThemeHook = function (mode) {
+        if (mode === "light") {
+          bladeMat.color.setHex(0xe8ecf2);
+          bladeMat.roughness = 0.14;
+          guardMat.color.setHex(0x2a2d35);
+          ambLight.intensity = 1.05;
+          keyLight.intensity = 2.6;
+          rimLight.color.setHex(0xc82b22);
+          rimLight.intensity = 1.25;
+          pMat.color.setHex(0x111114);
+          pMat.opacity = 0.32;
+        } else {
+          bladeMat.color.setHex(0x9ea8b8);
+          bladeMat.roughness = 0.2;
+          guardMat.color.setHex(0x1a1c24);
+          ambLight.intensity = 0.52;
+          keyLight.intensity = 2.15;
+          rimLight.color.setHex(0xd9382e);
+          rimLight.intensity = 2.0;
+          pMat.color.setHex(0xd9382e);
+          pMat.opacity = 0.65;
+        }
+      };
+      threeThemeHook(currentTheme);
+
+      // Resize
+      function resize3D() {
+        const w = stage.clientWidth;
+        const h = stage.clientHeight;
+        renderer.setSize(w, h, false);
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+      }
+      resize3D();
+      window.addEventListener("resize", resize3D);
+
+      // Interactive drag + pointer hover
+      let targetRotY = -0.45, targetRotX = 0.28;
+      let isDrag = false, prevX = 0, prevY = 0;
+      stage.addEventListener("pointerdown", e => { isDrag = true; prevX = e.clientX; prevY = e.clientY; });
+      window.addEventListener("pointerup", () => { isDrag = false; });
+      stage.addEventListener("pointermove", e => {
+        if (isDrag) {
+          targetRotY += (e.clientX - prevX) * 0.01;
+          targetRotX += (e.clientY - prevY) * 0.008;
+          prevX = e.clientX; prevY = e.clientY;
+        } else {
+          const r = stage.getBoundingClientRect();
+          const nx = (e.clientX - r.left) / r.width - 0.5;
+          const ny = (e.clientY - r.top) / r.height - 0.5;
+          targetRotY = -0.45 + nx * 0.85;
+          targetRotX = 0.28 + ny * 0.45;
+        }
+      });
+
+      const clock = new THREE.Clock();
+      function animate3D() {
+        requestAnimationFrame(animate3D);
+        const t = clock.getElapsedTime();
+        swordGroup.position.y = Math.sin(t * 1.4) * 0.08;
+        swordGroup.rotation.y += (targetRotY + Math.sin(t * 0.45) * 0.14 - swordGroup.rotation.y) * 0.07;
+        swordGroup.rotation.x += (targetRotX - swordGroup.rotation.x) * 0.07;
+        dust.rotation.y = t * 0.08;
+        if (angleEl) {
+          const deg = (((swordGroup.rotation.y * 180 / Math.PI) % 360) + 360) % 360;
+          angleEl.textContent = deg.toFixed(1).padStart(5, "0") + "°";
+        }
+        renderer.render(scene, camera);
+      }
+      animate3D();
+    }
+
+    /* ==========================================================================
+       8. MASTER MOTION ORCHESTRATION (PRELOADER, LENIS, GSAP, PINNED SCROLL, CURSOR)
+       ========================================================================== */
+    function dismissPreloaderFallback() {
+      const pre = document.getElementById("preloader");
+      if (pre) pre.style.display = "none";
+    }
+    const preloaderGuard = setTimeout(dismissPreloaderFallback, 2200);
+
     window.addEventListener("DOMContentLoaded", () => {
-      if (typeof gsap === "undefined" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      initThreeBlade();
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (typeof gsap === "undefined" || reduceMotion) {
+        clearTimeout(preloaderGuard);
+        dismissPreloaderFallback();
+        return;
+      }
+
       gsap.registerPlugin(ScrollTrigger);
 
-      // 1. Lenis smooth inertial scrolling synced with ScrollTrigger
+      // 1. Lenis inertial smooth scroll synced with ScrollTrigger
+      let lenis = null;
       if (typeof Lenis !== "undefined") {
-        const lenis = new Lenis({
+        lenis = new Lenis({
           duration: 1.15,
           easing: t => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
           smoothWheel: true
@@ -1051,58 +1988,128 @@
         gsap.ticker.lagSmoothing(0);
       }
 
-      // 2. Masked split-character blade reveal on hero headline
-      const h1 = document.querySelector(".hero-copy h1");
+      // 2. Split Hero Headline into masked chars
+      const heroTitle = document.getElementById("heroTitle");
       function splitHeadline() {
-        const text = h1.textContent;
-        h1.innerHTML = Array.from(text).map(ch =>
+        const text = heroTitle.textContent;
+        heroTitle.innerHTML = Array.from(text).map(ch =>
           ch === " " ? " " : '<span class="char-mask"><span class="char-inner">' + ch + "</span></span>"
         ).join("");
       }
       splitHeadline();
 
-      const tl = gsap.timeline({ defaults: { ease: "power3.out" } });
-      tl.to("#heroImg", { scale: 1.0, duration: 1.8, ease: "power2.out" }, 0)
-        .from(".hero-copy h1 .char-inner", { yPercent: 112, opacity: 0, duration: 0.72, stagger: 0.032 }, 0.12)
-        .from(".hero-copy p, .hero-actions, .hero-facts", { y: 20, opacity: 0, duration: 0.72, stagger: 0.1 }, 0.34);
+      // 3. Preloader Sword Curtain -> Hero Entrance
+      const pre = document.getElementById("preloader");
+      const countEl = document.getElementById("preloaderCount");
+      const prog = { v: 0 };
+      const introTl = gsap.timeline({
+        onComplete: () => {
+          clearTimeout(preloaderGuard);
+          if (pre) pre.style.display = "none";
+        }
+      });
 
-      // 3. Telemetry count-up on initial reveal
-      document.querySelectorAll(".fact-val[data-count]").forEach(el => {
+      introTl
+        .to(prog, {
+          v: 100, duration: 0.62, ease: "power2.inOut",
+          onUpdate: () => { countEl.textContent = String(Math.round(prog.v)).padStart(2, "0") + "%"; }
+        }, 0)
+        .to("#preloaderSlash", { scaleX: 1, duration: 0.56, ease: "power3.inOut" }, 0.04)
+        .to("#preloaderCore", { opacity: 0, y: -12, duration: 0.22, ease: "power2.in" }, 0.62)
+        .to(".preloader-half.top", { yPercent: -102, duration: 0.68, ease: "power4.inOut" }, 0.68)
+        .to(".preloader-half.bottom", { yPercent: 102, duration: 0.68, ease: "power4.inOut" }, 0.68)
+        .to("#preloaderSlash", { opacity: 0, duration: 0.25 }, 0.72)
+        .to(".hero-art", { scale: 1.0, duration: 1.5, ease: "power2.out" }, 0.74)
+        .from("#heroTitle .char-inner", { yPercent: 115, opacity: 0, duration: 0.75, stagger: 0.032, ease: "power3.out" }, 0.78)
+        .from(".gs-hero", { y: 22, opacity: 0, duration: 0.7, stagger: 0.09, ease: "power3.out" }, 0.96);
+
+      // 4. Hero Stats Count-up
+      document.querySelectorAll(".stat-num[data-count]").forEach(el => {
         const target = parseFloat(el.dataset.count);
-        const decimals = parseInt(el.dataset.decimals || "0", 10);
-        const suffix = el.dataset.suffix || "";
-        const obj = { val: 0 };
+        const dec = parseInt(el.dataset.decimals || "0", 10);
+        const suf = el.dataset.suffix || "";
+        const obj = { v: 0 };
         gsap.to(obj, {
-          val: target,
-          duration: 1.25,
-          delay: 0.45,
-          ease: "power2.out",
-          onUpdate: () => { el.textContent = obj.val.toFixed(decimals) + suffix; }
+          v: target, duration: 1.25, delay: 1.0, ease: "power2.out",
+          onUpdate: () => { el.textContent = obj.v.toFixed(dec) + suf; }
         });
       });
 
-      // 4. Magnetic CTA buttons (subtle 6px pull)
-      document.querySelectorAll(".magnetic").forEach(btn => {
-        const qx = gsap.quickTo(btn, "x", { duration: 0.35, ease: "power3.out" });
-        const qy = gsap.quickTo(btn, "y", { duration: 0.35, ease: "power3.out" });
-        btn.addEventListener("pointermove", e => {
-          const r = btn.getBoundingClientRect();
-          qx(((e.clientX - r.left) / r.width - 0.5) * 12);
-          qy(((e.clientY - r.top) / r.height - 0.5) * 10);
+      // 5. Living SVG Topography Line-Draw tied to total page scroll
+      document.querySelectorAll(".topo-draw").forEach((path, i) => {
+        const len = path.getTotalLength();
+        gsap.set(path, { strokeDasharray: len, strokeDashoffset: len * 0.42 });
+        gsap.to(path, {
+          strokeDashoffset: 0,
+          ease: "none",
+          scrollTrigger: {
+            trigger: document.body,
+            start: "top top",
+            end: "bottom bottom",
+            scrub: 0.8 + i * 0.15
+          }
         });
-        btn.addEventListener("pointerleave", () => { qx(0); qy(0); });
       });
 
-      // 5. Pointer depth parallax on hero scene & HUD specular spotlight
+      // 6. Infinite Kinetic Marquee
+      const marqueeTrack = document.getElementById("marqueeTrack");
+      if (marqueeTrack) {
+        gsap.to(marqueeTrack, {
+          xPercent: -50,
+          repeat: -1,
+          duration: 24,
+          ease: "none"
+        });
+      }
+
+      // 7. Pinned Horizontal Scroll "剑谱长卷" (Desktop > 980px)
+      const mm = gsap.matchMedia();
+      mm.add("(min-width: 981px)", () => {
+        const track = document.getElementById("chronicleTrack");
+        const pinEl = document.getElementById("chroniclePin");
+        const stepEl = document.getElementById("chrStep");
+        const barEl = document.getElementById("chrBar");
+        if (!track || !pinEl) return;
+
+        function getScrollDist() {
+          return Math.max(0, track.scrollWidth - track.parentElement.clientWidth);
+        }
+
+        gsap.to(track, {
+          x: () => -getScrollDist(),
+          ease: "none",
+          scrollTrigger: {
+            trigger: pinEl,
+            start: "top top",
+            end: () => "+=" + (getScrollDist() + 260),
+            pin: true,
+            scrub: 0.75,
+            invalidateOnRefresh: true,
+            onUpdate: self => {
+              const idx = Math.min(4, Math.floor(self.progress * 3.99) + 1);
+              if (stepEl) stepEl.textContent = "0" + idx + " / 04";
+              if (barEl) barEl.style.width = (25 + self.progress * 75) + "%";
+            }
+          }
+        });
+      });
+
+      // 8. Hero Parallax & HUD Spotlight
       const heroSec = document.getElementById("hero");
-      const heroX = gsap.quickTo("#heroImg", "x", { duration: 0.9, ease: "power2.out" });
-      const heroY = gsap.quickTo("#heroImg", "y", { duration: 0.9, ease: "power2.out" });
+      const heroArts = document.querySelectorAll(".hero-art");
       heroSec.addEventListener("pointermove", e => {
         const r = heroSec.getBoundingClientRect();
-        heroX(((e.clientX - r.left) / r.width - 0.5) * -16);
-        heroY(((e.clientY - r.top) / r.height - 0.5) * -10);
+        const dx = ((e.clientX - r.left) / r.width - 0.5) * -18;
+        const dy = ((e.clientY - r.top) / r.height - 0.5) * -12;
+        gsap.to(heroArts, { x: dx, y: dy, duration: 0.9, ease: "power2.out", overwrite: "auto" });
       });
-      heroSec.addEventListener("pointerleave", () => { heroX(0); heroY(0); });
+      heroSec.addEventListener("pointerleave", () => {
+        gsap.to(heroArts, { x: 0, y: 0, duration: 0.9, ease: "power2.out", overwrite: "auto" });
+      });
+      gsap.to(".hero-art", {
+        yPercent: 10, ease: "none",
+        scrollTrigger: { trigger: "#hero", start: "top top", end: "bottom top", scrub: true }
+      });
 
       const hudCanvas = document.getElementById("hudCanvas");
       if (hudCanvas) {
@@ -1113,111 +2120,142 @@
         });
       }
 
-      // 6. Scroll-linked depth parallax & staggered architecture list
-      gsap.to("#heroImg", {
-        yPercent: 12,
-        ease: "none",
-        scrollTrigger: { trigger: "#hero", start: "top top", end: "bottom top", scrub: true }
-      });
-
-      gsap.to("#coreImg", {
-        yPercent: -10,
-        scale: 1.0,
-        ease: "none",
-        scrollTrigger: { trigger: "#core", start: "top bottom", end: "bottom top", scrub: true }
-      });
-
-      gsap.from(".core-list li", {
-        y: 18,
-        opacity: 0,
-        duration: 0.65,
-        stagger: 0.1,
-        ease: "power2.out",
-        scrollTrigger: { trigger: ".core-list", start: "top 82%", once: true }
-      });
-
+      // 9. Section Reveals & Footer Signature Draw
       gsap.utils.toArray(".gs-reveal").forEach(el => {
         gsap.from(el, {
-          y: 22,
-          opacity: 0,
-          duration: 0.72,
-          ease: "power2.out",
-          scrollTrigger: { trigger: el, start: "top 84%", once: true }
+          y: 28, opacity: 0, duration: 0.78, ease: "power3.out",
+          scrollTrigger: { trigger: el, start: "top 86%", once: true }
         });
       });
+
+      document.querySelectorAll("#footSig path").forEach(p => {
+        const len = p.getTotalLength();
+        gsap.set(p, { strokeDasharray: len, strokeDashoffset: len });
+        gsap.to(p, {
+          strokeDashoffset: 0, duration: 1.3, ease: "power2.inOut",
+          scrollTrigger: { trigger: "#footSig", start: "top 92%", once: true }
+        });
+      });
+
+      // 10. Magnetic Pull & Custom Blade Cursor
+      document.querySelectorAll(".magnetic").forEach(btn => {
+        const qx = gsap.quickTo(btn, "x", { duration: 0.35, ease: "power3.out" });
+        const qy = gsap.quickTo(btn, "y", { duration: 0.35, ease: "power3.out" });
+        btn.addEventListener("pointermove", e => {
+          const r = btn.getBoundingClientRect();
+          qx(((e.clientX - r.left) / r.width - 0.5) * 14);
+          qy(((e.clientY - r.top) / r.height - 0.5) * 10);
+        });
+        btn.addEventListener("pointerleave", () => { qx(0); qy(0); });
+      });
+
+      if (window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
+        const dot = document.getElementById("cursorDot");
+        const ring = document.getElementById("cursorRing");
+        const cText = document.getElementById("cursorText");
+        const dx = gsap.quickTo(dot, "x", { duration: 0.1, ease: "power3.out" });
+        const dy = gsap.quickTo(dot, "y", { duration: 0.1, ease: "power3.out" });
+        const rx = gsap.quickTo(ring, "x", { duration: 0.28, ease: "power3.out" });
+        const ry = gsap.quickTo(ring, "y", { duration: 0.28, ease: "power3.out" });
+
+        window.addEventListener("pointermove", e => {
+          dot.style.opacity = "1";
+          ring.style.opacity = "1";
+          dx(e.clientX); dy(e.clientY);
+          rx(e.clientX); ry(e.clientY);
+        });
+        document.querySelectorAll("[data-cursor]").forEach(el => {
+          el.addEventListener("pointerenter", () => {
+            cText.textContent = el.getAttribute("data-cursor");
+            ring.classList.add("active");
+          });
+          el.addEventListener("pointerleave", () => {
+            cText.textContent = "";
+            ring.classList.remove("active");
+          });
+        });
+      }
     });
 
-    // Bilingual switcher
+    /* ==========================================================================
+       9. BILINGUAL SWITCHER (ZH / EN)
+       ========================================================================== */
     const dict = {
       zh: {
-        nav_hud: "叠加层", nav_core: "内核架构", nav_themes: "双主题", nav_dl: "下载 v1.6.5",
+        nav_3d: "锻刃内核", nav_chronicle: "剑谱长卷", nav_hud: "现代 HUD", nav_themes: "双境对比", nav_verify: "源码校验", nav_dl: "下载 v1.6.5",
         hero_title: "出鞘无痕，帧帧见锋",
-        hero_desc: "单文件约 7 MB 的 Windows FPS 增效工具。通过 Intel PresentMon ETW 采集帧率与 1% Low，默认零 DLL 注入；所有系统优化由签名事务日志全程托管，退出或崩溃后自动还原。",
+        hero_desc: "单文件约 7.1 MB 的原生 Windows 帧率增效与监测工具。通过 Intel PresentMon ETW 采集实时帧率与 1% Low，默认零 DLL 注入；所有系统调度由签名事务日志全程托管，收剑即复原。",
         cta_dl: "下载 FrameForge v1.6.5", cta_src: "查看 GitHub 源码",
         f1: "单文件绿色便携", f2: "默认不注入游戏进程", f3: "SCTL v2 事务级回滚",
-        hud_h: "游戏内现代 HUD，自绘与 RTSS 同步",
+        kicker_3d: "FORGED ARCHITECTURE", h2_3d: "如名剑出炉，每一微秒皆有出处",
+        p_3d: "弃用臃肿的 Electron 与后台常驻服务。FrameForge 以纯原生 Win32 与 C# 构建，将电源计划、1 ms 计时器、核心拓扑软引导与硬件滤镜收束于单一可控内核——拖动右侧 3D 剑锋，或按下键盘 T 键在「玄夜」与「素宣」之间实时淬炼光影。",
+        sp1: "高精度计时器事务托管", sp2: "零注入硬件滤镜与 ICC", sp3: "本地帧率曲线与 CSV 归档", sp4: "签名原值落盘 + 看门狗还原",
+        blade_drag: "DRAG / MOVE TO INSPECT BLADE",
+        kicker_chr: "THE FOUR STANCES", h2_chr: "四式剑谱，直击帧率症结",
+        ch1_h: "SCTL v2 事务日志与看门狗", ch1_p: "所有电源计划、1 ms 系统计时器、进程优先级与内存整理改动，在执行前均以 HMAC 签名记录原始快照。即便遭遇系统断电或强杀进程，独立看门狗进程也会自动将系统还原至分毫不差。",
+        ch2_h: "P 核优先与单 CCD 拓扑调度", ch2_p: "针对大小核与多 CCD 处理器架构，提供自动、P 核优先与单 CCD 策略。每 2 分钟动态采样最空闲物理核心，轻柔引导游戏主线程，不暴力锁死亲和性掩码，兼顾帧生成稳定与后台响应。",
+        ch3_h: "23 套零注入画面滤镜与 ICC", ch3_p: "绕开易触发反作弊的 Shader 注入路径，直接通过系统放大镜色彩矩阵、Gamma LUT 与 NVIDIA NVAPI 数字振动完成实时调色，同时原生支持 DDC/CI 硬件背光控制与专业 .icc 校色文件加载。",
+        ch4_h: "赛后战绩与 300 局帧率曲线", ch4_p: "退出游戏瞬间自动生成完整战报，涵盖平均帧率、1% Low、核心温度与整卡功耗。本地永久留存最近 300 局对局帧率走势，支持一键导出标准 CSV 用于硬件调优与横向复盘。",
+        kicker_hud: "LIVE TELEMETRY OVERLAY", hud_h: "游戏内现代 HUD，自绘与 RTSS 同步",
         hud_p: "v1.6.5 重构了整套叠加层视觉。等宽数字保证帧率波动不抖列，五套配色与三档底板在自绘分层窗口、RTSS 与设置预览之间完全一致。",
         ctrl_theme: "配色主题", ctrl_bd: "底板模式", ctrl_layout: "排版结构",
         th_cinnabar: "朱砂", th_green: "翠绿", th_pink: "粉紫", th_cyan: "青蓝", th_mono: "极简",
         bd_hud: "现代 HUD", bd_subtle: "轻透", bd_none: "无底板",
         ly_stack: "竖向", ly_row: "横向", ly_mini: "简洁",
         hud_note: "无边框窗口模式下由自带分层窗口直接绘制，不触碰游戏渲染管线；独占全屏下可一键交由 RTSS 同步呈现同等配色与主视觉字号。",
-        core_h: "每一项系统改动，皆可对账还原",
-        core_p: "传统游戏加速工具往往留下难以追查的注册表与电源残留。FrameForge 将底层调度收束为可验证的事务内核，不装驱动，不留后患。",
-        c1_k: "SCTL v2 事务日志", c1_v: "所有电源计划、1 ms 计时器、进程优先级与核心调度改动先落盘 HMAC 签名原值，配合独立看门狗进程在崩溃或强杀后自动恢复。",
-        c2_k: "核心拓扑软引导", c2_v: "支持自动、P 核优先与单 CCD 策略，每 2 分钟采样最闲核心软引导游戏主线程，不强锁亲和性掩码。",
-        c3_k: "硬件滤镜与 ICC", c3_v: "23 套预设通过放大镜矩阵、Gamma LUT 与 NVIDIA NVAPI 数字振动实现零注入调色，支持 DDC/CI 硬件背光与 .icc 校色文件。",
-        c4_k: "赛后战绩归档", c4_v: "退出游戏自动生成平均帧率、1% Low、温度与功耗报告，本地保留最近 300 局帧率曲线并支持导出 CSV。",
-        theme_h: "影刃夜间与宣纸白昼",
-        theme_p: "纯原生 GDI+ 绘制整卡毛玻璃与水墨底纹，无第三方重型 UI 框架。左右拖动分界线对比两套内置主题界面。",
-        tag_night: "影刃 · 夜间", tag_day: "宣纸 · 白昼",
-        cmp_h: "克制体积，公开校验",
-        cmp_p: "所有代码以 MIT 协议开源，无需安装 Visual Studio，使用 Windows 自带 .NET Framework 4.8 编译器即可本机编译。",
+        kicker_themes: "DUAL NATIVE REALMS", theme_h: "玄夜孤刃与素宣白昼",
+        theme_p: "不仅官网具备黑白双境，FrameForge 软件本体同样以纯原生 GDI+ 绘制整卡毛玻璃与水墨底纹，无第三方重型 UI 框架。左右拖动剑锋分界线对比两套实机界面。",
+        tag_night: "玄夜 · 暗黑主题", tag_day: "素宣 · 白色主题",
+        kicker_cmp: "OPEN SOURCE AUDIT", cmp_h: "克制体积，公开校验",
+        cmp_p: "全部源代码以 MIT 协议开源，无需安装 Visual Studio，直接调用 Windows 系统自带 .NET Framework 4.8 编译器即可本机从零构建。",
         th_d: "维度", th_o: "传统优化与监控套件",
-        r1_k: "体积与部署", r1_a: "单文件约 7 MB，免安装无服务残留", r1_b: "数十至数百 MB，常附带多项后台服务",
+        r1_k: "体积与部署", r1_a: "单文件约 7.1 MB，免安装无服务残留", r1_b: "数十至数百 MB，常附带多项后台服务",
         r2_k: "反作弊兼容", r2_a: "默认零 DLL 注入，反作弊组件永久排除", r2_b: "普遍注入渲染钩子，易与部分反作弊冲突",
         r3_k: "系统回滚", r3_a: "签名事务日志加看门狗，崩溃自动还原", r3_b: "缺少事务记录，异常退出常遗留改动",
         r4_k: "隐私与源码", r4_a: "MIT 全量开源，零遥测零广告", r4_b: "闭源、弹窗推广或强制登录",
         ver_h: "源码构建与 SHA-256", ver_p: "在 Windows 10 或 Windows 11 上直接编译，或核对 v1.6.5 发布件哈希。",
-        copy_sha: "复制 SHA-256 校验值"
+        copy_sha: "复制 SHA-256 校验值",
+        kicker_foot: "READY TO DRAW", foot_cta: "拔剑出鞘，即刻见锋"
       },
       en: {
-        nav_hud: "Overlay", nav_core: "Core", nav_themes: "Themes", nav_dl: "Download v1.6.5",
+        nav_3d: "3D Core", nav_chronicle: "Stances", nav_hud: "Overlay", nav_themes: "Themes", nav_verify: "Verify", nav_dl: "Download v1.6.5",
         hero_title: "Silent blade, razor frames",
-        hero_desc: "A 7 MB single-file Windows FPS toolkit. Captures FPS and 1% Low via Intel PresentMon ETW with zero DLL injection by default, and guards every system tweak with an HMAC-signed rollback journal.",
+        hero_desc: "A 7.1 MB native Windows FPS toolkit. Captures real-time FPS and 1% Low via Intel PresentMon ETW with zero DLL injection by default, and guards every system tweak inside a signed rollback journal.",
         cta_dl: "Download FrameForge v1.6.5", cta_src: "View GitHub source",
         f1: "Single-file portable", f2: "Zero DLL injection", f3: "SCTL v2 atomic rollback",
-        hud_h: "Modern in-game HUD, synced with RTSS",
-        hud_p: "v1.6.5 rebuilds the entire overlay visual system. Tabular figures keep columns steady, and five colour themes stay consistent across the layered window, RTSS output, and settings preview.",
+        kicker_3d: "FORGED ARCHITECTURE", h2_3d: "Forged for precision, down to the millisecond",
+        p_3d: "Built in pure native Win32 and C# with zero Electron bloat or lingering background services. Drag the interactive 3D blade on the right, or press T to temper the entire site between Obsidian Dark and Paper Light.",
+        sp1: "1 ms timer transaction guard", sp2: "Zero-injection filters & ICC", sp3: "Local telemetry & CSV export", sp4: "HMAC journal + watchdog",
+        blade_drag: "DRAG / MOVE TO INSPECT BLADE",
+        kicker_chr: "THE FOUR STANCES", h2_chr: "Four stances engineered for pure frame pacing",
+        ch1_h: "SCTL v2 Journal & Watchdog", ch1_p: "Power plans, 1 ms timers, process priorities, and memory sweeps are recorded with HMAC-signed snapshots before execution. An out-of-process watchdog restores exact state even after crashes or hard kills.",
+        ch2_h: "P-Core & Single-CCD Topology Steering", ch2_p: "Built for hybrid and multi-CCD CPUs with Auto, P-Core First, and Single-CCD policies. Samples the idlest physical core every two minutes to gently steer the game thread without hard-locking affinity.",
+        ch3_h: "23 Zero-Injection Hardware Filters & ICC", ch3_p: "Bypasses shader hooks completely via Magnification color matrices, Gamma LUT, and NVIDIA NVAPI Digital Vibrance, alongside native DDC/CI hardware backlight control and .icc profile loading.",
+        ch4_h: "Post-Match Reports & 300-Match Archive", ch4_p: "Generates average FPS, 1% Low, thermal, and power reports the moment you exit a match. Stores the last 300 match curves locally with one-click CSV export.",
+        kicker_hud: "LIVE TELEMETRY OVERLAY", hud_h: "Modern in-game HUD, synced with RTSS",
+        hud_p: "v1.6.5 rebuilds the entire overlay system. Tabular figures keep columns rock-steady, and five themes stay consistent across the layered window, RTSS output, and settings preview.",
         ctrl_theme: "Colour theme", ctrl_bd: "Backdrop", ctrl_layout: "Layout",
         th_cinnabar: "Cinnabar", th_green: "Emerald", th_pink: "Neon", th_cyan: "Cyber", th_mono: "Mono",
         bd_hud: "Modern HUD", bd_subtle: "Subtle", bd_none: "None",
         ly_stack: "Stack", ly_row: "Row", ly_mini: "Mini",
         hud_note: "Draws through a native layered window in borderless fullscreen without touching the game pipeline, or hands off to RTSS in exclusive fullscreen with matching themes and sizing.",
-        core_h: "Every system tweak, logged and reversible",
-        core_p: "Conventional game boosters leave untracked registry and power changes behind. FrameForge runs inside a verifiable transactional engine with no drivers installed.",
-        c1_k: "SCTL v2 journal", c1_v: "Power plans, 1 ms timers, priorities, and affinities are written to an HMAC-signed log first, backed by an out-of-process watchdog that restores state after crashes.",
-        c2_k: "Core topology steering", c2_v: "Auto, P-core first, and single-CCD policies gently steer the game's main thread toward the idlest core every two minutes without hard-locking affinity.",
-        c3_k: "Hardware filters & ICC", c3_v: "23 presets via Magnification, Gamma LUT, and NVIDIA NVAPI Digital Vibrance with zero injection, plus DDC/CI hardware backlight and .icc profile support.",
-        c4_k: "Post-match telemetry", c4_v: "Generates FPS, 1% Low, thermal, and power summaries on exit, keeping the last 300 match graphs locally with CSV export.",
-        theme_h: "Shadow Blade night and Paper Ink day",
-        theme_p: "Rendered directly with native GDI+ frosted surfaces and ink textures, without heavy UI frameworks. Drag the divider to compare both built-in themes.",
-        tag_night: "Shadow Blade · Night", tag_day: "Paper Ink · Day",
-        cmp_h: "Small footprint, verifiable build",
-        cmp_p: "Released under the MIT license. Compiles directly from source with Windows' built-in .NET Framework 4.8 compiler, no Visual Studio required.",
+        kicker_themes: "DUAL NATIVE REALMS", theme_h: "Obsidian night and paper ink day",
+        theme_p: "Both this website and FrameForge itself feature native dark and light aesthetics—rendered in pure GDI+ frosted surfaces and ink textures with zero heavy UI frameworks. Drag the blade divider to compare.",
+        tag_night: "Obsidian · Dark", tag_day: "Paper Ink · Light",
+        kicker_cmp: "OPEN SOURCE AUDIT", cmp_h: "Small footprint, verifiable build",
+        cmp_p: "Fully open source under MIT. Compiles directly from source on Windows using the built-in .NET Framework 4.8 compiler with no Visual Studio required.",
         th_d: "Dimension", th_o: "Conventional suites",
-        r1_k: "Footprint", r1_a: "Single 7 MB portable exe, no lingering services", r1_b: "Tens to hundreds of MB with background services",
+        r1_k: "Footprint", r1_a: "Single 7.1 MB portable exe, no lingering services", r1_b: "Tens to hundreds of MB with background services",
         r2_k: "Anti-cheat safety", r2_a: "Zero DLL injection by default, strict exclusions", r2_b: "Render hooks often conflict with kernel anti-cheat",
         r3_k: "Rollback", r3_a: "Signed journal and watchdog auto-restore on crash", r3_b: "Untracked tweaks remain after abnormal exits",
         r4_k: "Privacy & source", r4_a: "MIT open source, zero telemetry, zero ads", r4_b: "Closed source, popups, or mandatory accounts",
         ver_h: "Build & SHA-256", ver_p: "Compile on Windows 10 or 11 directly, or verify the v1.6.5 release binary.",
-        copy_sha: "Copy SHA-256 checksum"
+        copy_sha: "Copy SHA-256 checksum",
+        kicker_foot: "READY TO DRAW", foot_cta: "Unsheathe razor-sharp frames"
       }
     };
 
-    let lang = (navigator.language || "zh").toLowerCase().startsWith("zh") ? "zh" : "en";
     const langBtn = document.getElementById("langToggle");
-
     function applyLang(l) {
       lang = l;
       document.documentElement.lang = l === "zh" ? "zh-CN" : "en";
@@ -1226,6 +2264,8 @@
         const k = el.getAttribute("data-i18n");
         if (dict[l][k]) el.textContent = dict[l][k];
       });
+      syncThemeUI();
+      if (typeof ScrollTrigger !== "undefined") ScrollTrigger.refresh();
     }
     langBtn.addEventListener("click", () => applyLang(lang === "zh" ? "en" : "zh"));
     applyLang(lang);
