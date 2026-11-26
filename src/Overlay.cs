@@ -185,6 +185,9 @@ namespace FrameForge
         // 画布同理:尺寸不变就复用同一张 Bitmap,不必每帧新建/释放一块 32bpp 位图。
         private Bitmap canvas;
         private int canvasW, canvasH;
+        // 1x1 测量探针:惰性创建并复用,避免每次内容变化都分配/释放 Bitmap(1, 1)。
+        private Bitmap probeBmp;
+        private Graphics probeGfx;
         // 渲染异常按分钟记一次日志:真出问题时不至于每 200ms 写一次盘。
         private DateTime lastErrLog = DateTime.MinValue;
 
@@ -529,13 +532,13 @@ namespace FrameForge
                 }
                 lastKey = key;
 
-                HudLayout layout;
-                using (Bitmap probe = new Bitmap(1, 1))
-                using (Graphics pg = Graphics.FromImage(probe))
+                if (probeBmp == null)
                 {
-                    pg.TextRenderingHint = TextRenderingHint.AntiAlias;
-                    layout = MeasureHud(pg, st, rows, skin, k, fps, low, last.GpuTemp);
+                    probeBmp = new Bitmap(1, 1);
+                    probeGfx = Graphics.FromImage(probeBmp);
+                    probeGfx.TextRenderingHint = TextRenderingHint.AntiAlias;
                 }
+                HudLayout layout = MeasureHud(probeGfx, st, rows, skin, k, fps, low, last.GpuTemp);
 
                 int w = layout.W;
                 int h = layout.H;
@@ -1619,11 +1622,18 @@ namespace FrameForge
             bmpW = 0; bmpH = 0;
         }
 
+        private void ReleaseProbe()
+        {
+            if (probeGfx != null) { try { probeGfx.Dispose(); } catch { } probeGfx = null; }
+            if (probeBmp != null) { try { probeBmp.Dispose(); } catch { } probeBmp = null; }
+        }
+
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             timer.Stop();
             ReleaseDib();
             ReleaseCanvas();
+            ReleaseProbe();
             base.OnFormClosing(e);
         }
 
@@ -1634,6 +1644,7 @@ namespace FrameForge
                 try { timer.Stop(); timer.Dispose(); } catch { }
                 ReleaseDib();
                 ReleaseCanvas();
+                ReleaseProbe();
                 premul = new byte[0];
             }
             base.Dispose(disposing);

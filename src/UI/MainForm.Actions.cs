@@ -92,12 +92,13 @@ namespace FrameForge.UI
 
             // 先按日志还原:日志里记的是原始值,而且会顺带清掉日志;
             // 再走一次健康页的系统项还原,最后把还挂起着的后台进程恢复回来。
+            var rep = new ReconcileReport();
             int n = 0;
-            try { n = BoostJournal.RestoreAll(); }
+            try { n = BoostJournal.RestoreAll(rep); }
             catch (Exception ex) { Log.Write("restore all: " + ex.Message); }
+            bool needAdmin = false;
             try
             {
-                bool needAdmin;
                 n += Tune.RestoreAll(out needAdmin);
                 if (needAdmin) Log.Write("restore all: some registry items need admin");
             }
@@ -105,7 +106,10 @@ namespace FrameForge.UI
             RestoreBoost(false);
 
             if (setPage != null) setPage.SyncState();
-            Toast(n > 0 ? I18n.T("toast.restoreall", n) : I18n.T("toast.restored"));
+            if (!rep.Clean || needAdmin || BoostJournal.Pending)
+                Toast(I18n.T("toast.restore.warn"));
+            else
+                Toast(n > 0 ? I18n.T("toast.restoreall", n) : I18n.T("toast.restored"));
         }
 
         public void SaveSettingsSoon()
@@ -157,7 +161,6 @@ namespace FrameForge.UI
             if (IsDisposed) return;
             I18n.Lang = St.Language == "en" ? "en" : "zh";
             Theme.Set(St.Dark);
-            Theme.ResetFonts();
             BackColor = Theme.Bg;
             ApplyWindowFrame();
 
@@ -166,6 +169,7 @@ namespace FrameForge.UI
             // 切语言/主题时因此不会整窗空白闪一下,也省掉一次 6 页全建的开销。
             if (pages == null)
             {
+                Theme.ResetFonts();
                 BuildPages();
                 if (idx != 0) ShowPage(idx);
             }
@@ -173,9 +177,11 @@ namespace FrameForge.UI
             {
                 MarkPagesDirtyExcept(idx);
                 RebuildPage(idx);
+                Theme.ResetFonts();
                 ShowPage(idx);
             }
             LayoutAll();
+            RebuildTrayMenu();
 
             nav.Items = NavItems();
             nav.BackColor = Theme.Bg;
@@ -803,20 +809,37 @@ namespace FrameForge.UI
         {
             // 程序要求管理员权限,注册表 Run 项在登录时提不起权会被系统直接跳过,
             // 所以自启改用计划任务(登录触发 + 最高权限);建不起来再退回 Run 项。
-            try
+            string exePath = Application.ExecutablePath;
+            ThreadPool.QueueUserWorkItem(delegate
             {
-                if (on)
+                try
                 {
-                    bool made = RunSchtasks("/Create /F /TN \"FrameForge\" /TR \"\\\""
-                        + Application.ExecutablePath + "\\\" --minimized\" /SC ONLOGON /RL HIGHEST");
-                    if (!made) WriteRunKey(true);
-                    return;
+                    if (on)
+                    {
+                        bool made = RunSchtasks("/Create /F /TN \"FrameForge\" /TR \"\\\""
+                            + exePath + "\\\" --minimized\" /SC ONLOGON /RL HIGHEST");
+                        if (!made) WriteRunKey(true);
+                        return;
+                    }
+                    RunSchtasks("/Delete /F /TN \"FrameForge\"");
+                    WriteRunKey(false);
                 }
-                RunSchtasks("/Delete /F /TN \"FrameForge\"");
-                WriteRunKey(false);
-                return;
-            }
-            catch (Exception ex) { Log.Write("autostart task: " + ex.Message); }
+                catch (Exception ex)
+                {
+                    Log.Write("autostart task: " + ex.Message);
+                    if (IsHandleCreated && !IsDisposed)
+                    {
+                        try
+                        {
+                            BeginInvoke((MethodInvoker)delegate
+                            {
+                                if (!IsDisposed) Toast(ex.Message);
+                            });
+                        }
+                        catch { }
+                    }
+                }
+            });
         }
 
         private static void WriteRunKey(bool on)

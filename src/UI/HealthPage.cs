@@ -87,7 +87,7 @@ namespace FrameForge.UI
             coreHead.Size = 10.2f;
             coreHead.Style = FontStyle.Bold;
             coreHead.Ellipsis = true;
-            coreHead.Text = ConsoleText("核心拓扑", "Core topology");
+            coreHead.Text = I18n.T("health.core.title");
             topologyCard.Controls.Add(coreHead);
 
             coreSub = new TextLabel();
@@ -105,7 +105,7 @@ namespace FrameForge.UI
             listHead.Size = 10.2f;
             listHead.Style = FontStyle.Bold;
             listHead.Ellipsis = true;
-            listHead.Text = ConsoleText("诊断结果", "Diagnostic results");
+            listHead.Text = I18n.T("health.diag.title");
             listCard.Controls.Add(listHead);
 
             listCount = new TextLabel();
@@ -207,11 +207,6 @@ namespace FrameForge.UI
             c.Radius = 6;
             c.ShowBorder = true;
             return c;
-        }
-
-        private static string ConsoleText(string zh, string en)
-        {
-            return I18n.IsEn ? en : zh;
         }
 
         /// <summary>每次切到这一页都重新读一遍,改完系统设置回来能看到变化。</summary>

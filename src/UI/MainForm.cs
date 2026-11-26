@@ -337,17 +337,10 @@ namespace FrameForge.UI
 
         private void BuildTray()
         {
-            // 菜单只留两个动作,其余功能都在主界面里,托盘保持安静。
-            var menu = new TrayMenu();
-            menu.Add(I18n.T("tray.open"), delegate { RestoreFromTray(); });
-
-            ToolStripMenuItem exitItem = menu.Add(I18n.T("tray.exit"), delegate { Close(); });
-            exitItem.Tag = Theme.Danger;
-
             tray = new NotifyIcon();
             tray.Icon = appIcon;
             tray.Text = "FrameForge";
-            tray.ContextMenuStrip = menu;
+            RebuildTrayMenu();
             tray.DoubleClick += delegate { RestoreFromTray(); };
             // 托盘图标现在很常见是"点一下打开",双击只是习惯之一,两种都支持。
             tray.MouseClick += delegate(object sender, MouseEventArgs e)
@@ -355,6 +348,20 @@ namespace FrameForge.UI
                 if (e.Button == MouseButtons.Left) RestoreFromTray();
             };
             tray.Visible = true;
+        }
+
+        private void RebuildTrayMenu()
+        {
+            if (tray == null) return;
+            ContextMenuStrip old = tray.ContextMenuStrip;
+            // 菜单只留两个动作,其余功能都在主界面里,托盘保持安静。
+            var menu = new TrayMenu();
+            menu.Add(I18n.T("tray.open"), delegate { RestoreFromTray(); });
+
+            ToolStripMenuItem exitItem = menu.Add(I18n.T("tray.exit"), delegate { Close(); });
+            exitItem.Tag = Theme.Danger;
+            tray.ContextMenuStrip = menu;
+            if (old != null) old.Dispose();
         }
 
         private void BuildTimers()
@@ -434,6 +441,7 @@ namespace FrameForge.UI
             try { if (St.RealBoost && RealBoost != null) RealBoost.Start(); }
             catch (Exception ex) { Log.Write("global boost start: " + ex.Message); }
             if (startMinimized) { HideToTray(false); return; }
+            if (BoostJournal.Pending) Toast(I18n.T("toast.journal.pending"));
             if (!St.AskedElevation && !MemEngine.IsAdmin) AskElevationOnce();
         }
 
@@ -541,8 +549,6 @@ namespace FrameForge.UI
             Perf.Feed(Boost != null && Boost.Active, Fps.Fps, Fps.Low1);
             UpdateTrayTip(s);
 
-            // boost-core §A4.2：一跳只取一次状态快照，加速页与后续页面统一读 StateHub。
-            StateHub.RefreshFromEngines(this);
             CheckBoostAlive();
             MaybeAutoBoost(s);
             // PCBoost 第二层:加速期间每 2 分钟重新把游戏主线程软引导到最空闲的核心。
@@ -558,6 +564,8 @@ namespace FrameForge.UI
             if (Visible && WindowState != FormWindowState.Minimized &&
                 (now - lastPageRefresh).TotalSeconds >= gap)
             {
+                // boost-core §A4.2：一跳只取一次状态快照，加速页与后续页面统一读 StateHub。
+                StateHub.RefreshFromEngines(this);
                 lastPageRefresh = now;
                 RefreshActive();
             }
@@ -687,6 +695,7 @@ namespace FrameForge.UI
             int cw = (int)Math.Round(ClientSize.Width * s / Ui.S);
             int ch = (int)Math.Round(ClientSize.Height * s / Ui.S);
             Ui.S = s;
+            MinimumSize = new Size(Ui.Px(840), Ui.Px(640));
             ClientSize = new Size(Math.Max(Ui.Px(840), cw), Math.Max(Ui.Px(640), ch));
             Defer(RebuildUiCore);
         }
@@ -715,6 +724,7 @@ namespace FrameForge.UI
                 // FF-038：切分辨率/刷新率或开关 HDR 后，HDR 缓存与 gamma DC 都会失效，
                 // 不重算会出现「滤镜还在，但颜色没变」。
                 try { Sys.Display.RefreshAdvancedColor(); } catch { }
+                try { Sys.Filter.ReacquireGammaDcs(); } catch { }
                 try { Sys.Filter.RefreshGamma(); } catch { }
                 ApplyFilter(false);
             }
@@ -803,6 +813,7 @@ namespace FrameForge.UI
             Activate();
             BringToFront();
             // 隐藏期间跳过了页面刷新,这里补一次,免得恢复后先看到几秒前的旧数据。
+            StateHub.RefreshFromEngines(this);
             RefreshActive();
         }
 
@@ -843,7 +854,18 @@ namespace FrameForge.UI
                     Log.Write("exit restore done, pending journal=" + (BoostJournal.Pending ? 1 : 0));
                 }
                 catch (Exception ex) { Log.Write("exit restore: " + ex.Message); }
-                try { if (tray != null) { tray.Visible = false; tray.Dispose(); tray = null; } }
+                try
+                {
+                    if (tray != null)
+                    {
+                        tray.Visible = false;
+                        ContextMenuStrip menu = tray.ContextMenuStrip;
+                        tray.ContextMenuStrip = null;
+                        if (menu != null) menu.Dispose();
+                        tray.Dispose();
+                        tray = null;
+                    }
+                }
                 catch (Exception ex) { Log.Write("exit tray: " + ex.Message); }
             }
             base.OnFormClosing(e);
@@ -951,14 +973,10 @@ namespace FrameForge.UI
             IdealCpu = -1;
             // 现有公开属性：主线程软引导选中的 CPU，>=0 才说明真的引导过。
             if (host.Boost != null && host.Boost.SteerCpu >= 0) IdealCpu = host.Boost.SteerCpu;
-            object scheduler = Read(host, "CoreScheduler");
-            if (scheduler == null) scheduler = Read(host.Boost, "coreScheduler");
-            if (scheduler != null)
+            if (host.Boost != null && host.Boost.CoreScheduler != null)
             {
-                object core = Read(scheduler, "SnapshotState");
-                if (core == null) core = scheduler;
-                object ideal = Read(core, "IdealCpu");
-                if (ideal is int && (int)ideal >= 0) IdealCpu = (int)ideal;
+                CoreSchedulerState core = host.Boost.CoreScheduler.SnapshotState();
+                if (core != null && core.IdealCpu >= 0) IdealCpu = core.IdealCpu;
             }
         }
 

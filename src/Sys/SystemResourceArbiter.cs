@@ -82,6 +82,7 @@ namespace FrameForge.Sys
             public ISystemResourceOwner OneShotOwner;
             public ISystemResourceOwner RealtimeOwner;
             public bool Busy;
+            public long BusyToken;
         }
 
         private readonly Slot power = new Slot();
@@ -113,6 +114,7 @@ namespace FrameForge.Sys
             if (slot == null) { res.Reason = "badresource"; return res; }
 
             bool becomeHolder = false;
+            long myBusyToken = 0;
             uint sharedRef = 0;
 
             lock (gate)
@@ -133,6 +135,8 @@ namespace FrameForge.Sys
                 {
                     // 预约成功：先占住，避免两个线程同时做 apply。
                     slot.Busy = true;
+                    slot.BusyToken++;
+                    myBusyToken = slot.BusyToken;
                     becomeHolder = true;
                 }
                 else
@@ -171,17 +175,20 @@ namespace FrameForge.Sys
                 // P2-1：无论 apply 路径如何退出，都必须释放 Busy 并唤醒等待者。
                 lock (gate)
                 {
-                    slot.Busy = false;
-                    if (applied)
+                    if (slot.BusyToken == myBusyToken)
                     {
-                        slot.Holder = kind;
-                        slot.Old = got;
-                        slot.Ref = 1;
-                        SetRef(kind, 1, slot);
-                        if (kind == OwnerKind.ONE_SHOT) slot.OneShotOwner = owner;
-                        else slot.RealtimeOwner = owner;
+                        slot.Busy = false;
+                        if (applied)
+                        {
+                            slot.Holder = kind;
+                            slot.Old = got;
+                            slot.Ref = 1;
+                            SetRef(kind, 1, slot);
+                            if (kind == OwnerKind.ONE_SHOT) slot.OneShotOwner = owner;
+                            else slot.RealtimeOwner = owner;
+                        }
+                        System.Threading.Monitor.PulseAll(gate);
                     }
-                    System.Threading.Monitor.PulseAll(gate);
                 }
             }
 
@@ -206,6 +213,7 @@ namespace FrameForge.Sys
             if (slot == null) return;
 
             bool doRestore = false;
+            long myBusyToken = 0;
             bool transferred = false;
             string oldValue = "";
             ISystemResourceOwner nextOwner = null;
@@ -239,6 +247,8 @@ namespace FrameForge.Sys
                         doRestore = true;
                         oldValue = slot.Old;
                         slot.Busy = true;
+                        slot.BusyToken++;
+                        myBusyToken = slot.BusyToken;
                     }
                     slot.Holder = OwnerKind.NONE;
                     slot.Old = "";
@@ -253,8 +263,11 @@ namespace FrameForge.Sys
                 {
                     lock (gate)
                     {
-                        slot.Busy = false;
-                        System.Threading.Monitor.PulseAll(gate);
+                        if (slot.BusyToken == myBusyToken)
+                        {
+                            slot.Busy = false;
+                            System.Threading.Monitor.PulseAll(gate);
+                        }
                     }
                 }
             }
@@ -278,6 +291,7 @@ namespace FrameForge.Sys
                 {
                     Log.Write("arbiter busy timeout " + r + ": force clear");
                     slot.Busy = false;
+                    slot.BusyToken++;
                     return;
                 }
                 System.Threading.Monitor.Wait(gate, (int)Math.Min(1000.0, left));

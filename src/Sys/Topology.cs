@@ -321,6 +321,14 @@ namespace FrameForge.Sys
             snap.IsHybrid = IsHybrid;
             snap.Group0Only = true;
             CpuSetInfo[] info = CpuSets();
+            for (int i = 0; i < info.Length; i++)
+            {
+                if (info[i].Group != 0)
+                {
+                    snap.Group0Only = false;
+                    break;
+                }
+            }
             for (int i = 0; i < cores.Length; i++)
             {
                 // -1 是未知哨兵，不能把缺少 CPU Set 信息的核心当成真实 CCD 0。
@@ -330,7 +338,6 @@ namespace FrameForge.Sys
                 if (ci == null) continue;
                 snap.CcdByCore[i] = ci.LlcIndex;
                 snap.NumaByCore[i] = ci.NumaIndex;
-                if (ci.Group != 0) snap.Group0Only = false;
             }
             return snap;
         }

@@ -226,16 +226,24 @@ namespace FrameForge.Sys
             int done = 0;
             if (savedScheme.Length > 0)
             {
-                try { if (BoostEngine.SetScheme(savedScheme)) done++; }
+                bool schemeOk = false;
+                try { schemeOk = BoostEngine.SetScheme(savedScheme); }
                 catch (Exception ex) { Log.Write("tune scheme: " + ex.Message); }
+                if (schemeOk)
+                {
+                    done++;
+                    savedScheme = "";
+                }
             }
 
+            var remaining = new List<Saved>();
             foreach (Saved s in saved)
             {
                 RegistryHive hive = s.Hive == "HKLM" ? RegistryHive.LocalMachine : RegistryHive.CurrentUser;
                 if (hive == RegistryHive.LocalMachine && !MemEngine.IsAdmin)
                 {
                     needAdmin = true;
+                    remaining.Add(s);
                     continue;
                 }
                 bool admin;
@@ -251,14 +259,20 @@ namespace FrameForge.Sys
                     else ok = DeleteValue(hive, s.Path, s.Name, out admin);
                 }
                 if (ok) done++;
+                else remaining.Add(s);
                 if (admin) needAdmin = true;
             }
 
-            if (!needAdmin)
+            saved.Clear();
+            saved.AddRange(remaining);
+
+            if (saved.Count == 0 && savedScheme.Length == 0)
             {
-                saved.Clear();
-                savedScheme = "";
                 ClearJournal();
+            }
+            else
+            {
+                SaveJournal();
             }
             return done;
         }
@@ -539,7 +553,8 @@ namespace FrameForge.Sys
                 || p.StartsWith(@"SOFTWARE\MICROSOFT\DIRECTX\USERGPUPREFERENCES", StringComparison.Ordinal)
                 || p.StartsWith(@"SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\GAMEDVR", StringComparison.Ordinal)
                 || p.StartsWith(@"SOFTWARE\MICROSOFT\WINDOWS NT\CURRENTVERSION\APPCOMPATFLAGS\LAYERS", StringComparison.Ordinal)
-                || p.StartsWith(@"SOFTWARE\MICROSOFT\WINDOWS NT\CURRENTVERSION\IMAGE FILE EXECUTION OPTIONS", StringComparison.Ordinal);
+                || p.StartsWith(@"SOFTWARE\MICROSOFT\WINDOWS NT\CURRENTVERSION\IMAGE FILE EXECUTION OPTIONS", StringComparison.Ordinal)
+                || p.Equals(@"SYSTEM\GAMECONFIGSTORE", StringComparison.Ordinal);
         }
 
         private static void SaveJournal()
@@ -561,10 +576,7 @@ namespace FrameForge.Sys
                         sb.Append(s.Value.ToString(CultureInfo.InvariantCulture));
                     sb.AppendLine();
                 }
-                string tmp = JournalPath + ".tmp";
-                File.WriteAllText(tmp, sb.ToString(), Encoding.UTF8);
-                if (File.Exists(JournalPath)) File.Delete(JournalPath);
-                File.Move(tmp, JournalPath);
+                SafeFile.WriteAllText(JournalPath, sb.ToString(), new UTF8Encoding(false));
             }
             catch (Exception ex) { Log.Write("tune journal save: " + ex.Message); }
         }

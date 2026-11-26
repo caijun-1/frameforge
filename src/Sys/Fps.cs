@@ -104,26 +104,30 @@ namespace FrameForge.Sys
             }
         }
 
+        private static readonly object VerifyGate = new object();
         private static string verifiedPath;
         private static long verifiedStamp;
         private static bool verifiedOk;
 
         private static bool VerifiedOurs(string path)
         {
-            try
+            lock (VerifyGate)
             {
-                var f = new FileInfo(path);
-                if (!f.Exists) return false;
-                long stamp = f.LastWriteTimeUtc.Ticks;
-                if (string.Equals(path, verifiedPath, StringComparison.OrdinalIgnoreCase) && stamp == verifiedStamp)
-                    return verifiedOk;
-                bool ok = f.Length > 200 * 1024 && SignedByIntel(path);
-                verifiedPath = path;
-                verifiedStamp = stamp;
-                verifiedOk = ok;
-                return ok;
+                try
+                {
+                    var f = new FileInfo(path);
+                    if (!f.Exists) return false;
+                    long stamp = f.LastWriteTimeUtc.Ticks;
+                    if (string.Equals(path, verifiedPath, StringComparison.OrdinalIgnoreCase) && stamp == verifiedStamp)
+                        return verifiedOk;
+                    bool ok = f.Length > 200 * 1024 && SignedByIntel(path);
+                    verifiedPath = path;
+                    verifiedStamp = stamp;
+                    verifiedOk = ok;
+                    return ok;
+                }
+                catch { return false; }
             }
-            catch { return false; }
         }
 
         /// <summary>下载 PresentMon 到 %LOCALAPPDATA%\FrameForge\bin。返回空串表示成功。</summary>
@@ -326,49 +330,74 @@ namespace FrameForge.Sys
         /// <summary>开始跟踪某个进程;pid 未变化时什么也不做。</summary>
         public void Track(int pid)
         {
-            if (pid != trackedPid)
+            if (pid <= 0)
             {
-                // 换游戏(包括崩溃后重启)时重置失败计数,否则新游戏会被上一个
-                // 游戏留下的"放弃"状态挡住,帧率永远起不来。
-                watchFails = 0;
-                nextRetryAt = DateTime.MinValue;
-            }
-
-            if (pid == trackedPid && !ExitedSafe(proc))
-            {
-                // PresentMon 有时"活着但不再输出":ETW 实时会话被系统诊断会话挤占时,
-                // 进程不退出、stderr 只刷 lost events,界面上的帧率就停在最后一个数字。
-                // 按"最近一行数据"做心跳,超过 15 秒没有新行才重启采集会话。
-                // 读盘/加载场景本来就不出帧,定得太短会在加载时反复重启,
-                // 每次重启都要拆一次 ETW 实时会话,那本身就是卡顿源。
-                long last = Interlocked.Read(ref lastRowTicks);
-                if (last == 0) return;
-                if (DateTime.UtcNow < nextRetryAt) return;
-                if ((DateTime.UtcNow - new DateTime(last, DateTimeKind.Utc)).TotalSeconds < 15) return;
-                if (DateTime.UtcNow < nextRecoverAt) return;
-                nextRecoverAt = DateTime.UtcNow.AddSeconds(6);
-                Log.Write("presentmon stalled, restart pid=" + pid);
+                lock (startGate)
+                {
+                    if (pid != trackedPid)
+                    {
+                        watchFails = 0;
+                        nextRetryAt = DateTime.MinValue;
+                    }
+                }
                 Stop();
-                trackedPid = pid;
-                lastTry = DateTime.UtcNow;
-                Start(pid);
                 return;
             }
-            if (pid <= 0) { Stop(); return; }
-            if (!Installed) { trackedPid = pid; Status = FpsStatus.NotInstalled; return; }
-            // PresentMon 2.x 在普通权限下也能采集同账户进程的帧事件(只有跨账户/短命进程
-            // 才需要提权),以前在这里直接因"不是管理员"返回,叠加层就永远只显示 --。
-            // 但它异常退出后会占着 ETW 会话名,失败后先等 3 秒再重启,避免每秒开一次进程。
-            if (pid == trackedPid && watchFails >= MaxFails) return;
-            if (pid == trackedPid && DateTime.UtcNow < nextRetryAt) return;
-            if (pid == trackedPid && Status == FpsStatus.NeedAdmin) return;
-            if (pid == trackedPid && Status == FpsStatus.Failed
-                && (DateTime.UtcNow - lastTry).TotalSeconds < 3) return;
 
-            Stop();
-            trackedPid = pid;
-            lastTry = DateTime.UtcNow;
-            Start(pid);
+            bool needRestart = false;
+            lock (startGate)
+            {
+                if (pid != trackedPid)
+                {
+                    // 换游戏(包括崩溃后重启)时重置失败计数,否则新游戏会被上一个
+                    // 游戏留下的"放弃"状态挡住,帧率永远起不来。
+                    watchFails = 0;
+                    nextRetryAt = DateTime.MinValue;
+                }
+
+                if (pid == trackedPid && !ExitedSafe(proc))
+                {
+                    // PresentMon 有时"活着但不再输出":ETW 实时会话被系统诊断会话挤占时,
+                    // 进程不退出、stderr 只刷 lost events,界面上的帧率就停在最后一个数字。
+                    // 按"最近一行数据"做心跳,超过 15 秒没有新行才重启采集会话。
+                    // 读盘/加载场景本来就不出帧,定得太短会在加载时反复重启,
+                    // 每次重启都要拆一次 ETW 实时会话,那本身就是卡顿源。
+                    long last = Interlocked.Read(ref lastRowTicks);
+                    if (last == 0) return;
+                    if (DateTime.UtcNow < nextRetryAt) return;
+                    if ((DateTime.UtcNow - new DateTime(last, DateTimeKind.Utc)).TotalSeconds < 15) return;
+                    if (DateTime.UtcNow < nextRecoverAt) return;
+                    nextRecoverAt = DateTime.UtcNow.AddSeconds(6);
+                    Log.Write("presentmon stalled, restart pid=" + pid);
+                    needRestart = true;
+                }
+                else
+                {
+                    if (!Installed) { trackedPid = pid; Status = FpsStatus.NotInstalled; return; }
+                    // PresentMon 2.x 在普通权限下也能采集同账户进程的帧事件(只有跨账户/短命进程
+                    // 才需要提权),以前在这里直接因"不是管理员"返回,叠加层就永远只显示 --。
+                    // 但它异常退出后会占着 ETW 会话名,失败后先等 3 秒再重启,避免每秒开一次进程。
+                    if (pid == trackedPid && watchFails >= MaxFails) return;
+                    if (pid == trackedPid && DateTime.UtcNow < nextRetryAt) return;
+                    if (pid == trackedPid && Status == FpsStatus.NeedAdmin) return;
+                    if (pid == trackedPid && Status == FpsStatus.Failed
+                        && (DateTime.UtcNow - lastTry).TotalSeconds < 3) return;
+                    needRestart = true;
+                }
+            }
+
+            if (needRestart)
+            {
+                Stop();
+                lock (startGate)
+                {
+                    trackedPid = pid;
+                    lastTry = DateTime.UtcNow;
+                    if (!Installed) { Status = FpsStatus.NotInstalled; return; }
+                    if (proc != null && !ExitedSafe(proc)) return;
+                    StartCore(pid);
+                }
+            }
         }
 
         private void Start(int pid)
@@ -442,9 +471,21 @@ namespace FrameForge.Sys
 
         public void Stop()
         {
-            stopping = true;
-            Process p = proc;
-            proc = null;
+            Process p;
+            lock (startGate)
+            {
+                stopping = true;
+                p = proc;
+                proc = null;
+                reader = null;
+                errReader = null;
+                trackedPid = -1;
+                Interlocked.Exchange(ref lastRowTicks, 0);
+                Fps = -1;
+                Low1 = -1;
+                FrameTime = -1;
+                if (Status == FpsStatus.Running || Status == FpsStatus.NeedAdmin) Status = FpsStatus.Idle;
+            }
             if (p != null)
             {
                 try { if (!ExitedSafe(p)) p.Kill(); }
@@ -455,14 +496,6 @@ namespace FrameForge.Sys
                 // --stop_existing_session,但残留会话会干扰采集,这里顺手停干净。
                 Logman("stop \"FrameForge\" -ets", false);
             }
-            reader = null;
-            errReader = null;
-            trackedPid = -1;
-            Interlocked.Exchange(ref lastRowTicks, 0);
-            Fps = -1;
-            Low1 = -1;
-            FrameTime = -1;
-            if (Status == FpsStatus.Running || Status == FpsStatus.NeedAdmin) Status = FpsStatus.Idle;
         }
 
         /// <summary>
@@ -472,51 +505,72 @@ namespace FrameForge.Sys
         /// </summary>
         private void StartWatchdog(int pid, int gen)
         {
+            int failsSnapshot;
+            lock (startGate) { failsSnapshot = watchFails; }
             Thread t = new Thread(delegate()
             {
                 // 连续失败时退避:10 / 20 / 40 秒。以前固定 6 秒重试,
                 // 采集抢不到事件时会变成一直杀进程、反复跑 logman,抖动本身就是卡顿源。
                 // 另外游戏加载/编译着色器时本来就不出帧,首行常常要等十几秒。
                 int waitSec = 10;
-                for (int k = 0; k < watchFails && k < 2; k++) waitSec *= 2;
+                for (int k = 0; k < failsSnapshot && k < 2; k++) waitSec *= 2;
                 for (int i = 0; i < waitSec * 2; i++)
                 {
                     Thread.Sleep(500);
                     if (gen != Volatile.Read(ref watchGen)) return;
+                    lock (startGate)
+                    {
+                        if (stopping || gotRow || proc == null || trackedPid != pid) return;
+                    }
+                }
+
+                Process p;
+                bool doResetEtw = false;
+                lock (startGate)
+                {
+                    if (gen != Volatile.Read(ref watchGen)) return;
                     if (stopping || gotRow || proc == null || trackedPid != pid) return;
+                    if (Status == FpsStatus.NeedAdmin) return;
+
+                    watchFails++;
+                    Log.Write("presentmon watchdog: no rows in " + waitSec + "s, retry #" + watchFails);
+                    p = proc;
+                    proc = null;
+
+                    // 清理噪声会话要为每个会话起一次 logman,代价不小,10 分钟内只做一次。
+                    if ((DateTime.UtcNow - lastEtwReset).TotalMinutes >= 10)
+                    {
+                        lastEtwReset = DateTime.UtcNow;
+                        doResetEtw = true;
+                    }
                 }
-                if (gen != Volatile.Read(ref watchGen)) return;
-                if (stopping || gotRow || proc == null || trackedPid != pid) return;
-                if (Status == FpsStatus.NeedAdmin) return;
 
-                watchFails++;
-                Log.Write("presentmon watchdog: no rows in " + waitSec + "s, retry #" + watchFails);
-                Process p = proc;
-                proc = null;
-                try { if (!ExitedSafe(p)) p.Kill(); }
-                catch { }
-                try { p.Dispose(); }
-                catch { }
-
-                // 清理噪声会话要为每个会话起一次 logman,代价不小,10 分钟内只做一次。
-                if ((DateTime.UtcNow - lastEtwReset).TotalMinutes >= 10)
+                if (p != null)
                 {
-                    lastEtwReset = DateTime.UtcNow;
-                    ResetEtw();
+                    try { if (!ExitedSafe(p)) p.Kill(); }
+                    catch { }
+                    try { p.Dispose(); }
+                    catch { }
                 }
+                if (doResetEtw) ResetEtw();
 
-                if (watchFails >= MaxFails)
+                bool shouldStart = false;
+                lock (startGate)
                 {
-                    // 一直采不到就停手。鸣潮(ACE/KRSDK)这类带内核反作弊的游戏会挡住
-                    // ETW 呈现事件,再重启一百次也拿不到一行,只会白烧 CPU 和日志。
-                    Status = FpsStatus.Failed;
-                    Message = "presentmon no data";
-                    Log.Write("presentmon giving up after " + watchFails + " tries (frame capture blocked?)");
-                    return;
-                }
+                    if (watchFails >= MaxFails)
+                    {
+                        // 一直采不到就停手。鸣潮(ACE/KRSDK)这类带内核反作弊的游戏会挡住
+                        // ETW 呈现事件,再重启一百次也拿不到一行,只会白烧 CPU 和日志。
+                        Status = FpsStatus.Failed;
+                        Message = "presentmon no data";
+                        Log.Write("presentmon giving up after " + watchFails + " tries (frame capture blocked?)");
+                        return;
+                    }
 
-                nextRetryAt = DateTime.UtcNow.AddSeconds(waitSec >= 20 ? 30 : 10);
-                if (!stopping && trackedPid == pid && gen == Volatile.Read(ref watchGen)) Start(pid);
+                    nextRetryAt = DateTime.UtcNow.AddSeconds(waitSec >= 20 ? 30 : 10);
+                    shouldStart = !stopping && trackedPid == pid && gen == Volatile.Read(ref watchGen);
+                }
+                if (shouldStart) Start(pid);
             });
             t.IsBackground = true;
             t.Name = "FrameForge.FpsWatch";
@@ -658,9 +712,15 @@ namespace FrameForge.Sys
             Interlocked.Exchange(ref lastRowTicks, DateTime.UtcNow.Ticks);
             if (!gotRow)
             {
-                gotRow = true;
-                watchFails = 0;
-                Log.Write("presentmon first row t=" + t.ToString("0.00", CultureInfo.InvariantCulture));
+                lock (startGate)
+                {
+                    if (!gotRow)
+                    {
+                        gotRow = true;
+                        watchFails = 0;
+                        Log.Write("presentmon first row t=" + t.ToString("0.00", CultureInfo.InvariantCulture));
+                    }
+                }
             }
             lock (Gate)
             {

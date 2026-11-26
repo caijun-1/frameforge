@@ -7,8 +7,15 @@ namespace FrameForge.Sys
     /// <summary>单个 PDH 计数器。构造时建立查询并预热两次,之后每次 Read 前需要 Collect。</summary>
     public sealed class PdhCounter : IDisposable
     {
+        private static readonly int ItemStride = Marshal.SizeOf(typeof(Native.PDH_FMT_COUNTERVALUE_ITEM));
+        private static readonly int FmtOffset = Marshal.OffsetOf(typeof(Native.PDH_FMT_COUNTERVALUE_ITEM), "FmtValue").ToInt32();
+
         private IntPtr query = IntPtr.Zero;
         private IntPtr counter = IntPtr.Zero;
+        private IntPtr buf = IntPtr.Zero;
+        private uint bufCap;
+        private readonly List<double> valList = new List<double>();
+        private readonly List<string> nameList = new List<string>();
         private bool valid;
 
         public PdhCounter(string path)
@@ -47,33 +54,45 @@ namespace FrameForge.Sys
             return v.Length > 0 ? v[0] : -1;
         }
 
+        private void EnsureBuffer(uint size)
+        {
+            if (size <= bufCap && buf != IntPtr.Zero) return;
+            if (buf != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(buf);
+                buf = IntPtr.Zero;
+                bufCap = 0;
+            }
+            buf = Marshal.AllocHGlobal((int)size);
+            bufCap = size;
+        }
+
         /// <summary>读多实例计数器的全部值,实例名形如 pid_1234_luid_0x..._engtype_3D。</summary>
         public double[] ReadArray()
         {
             if (!valid || counter == IntPtr.Zero) return new double[0];
             uint size = 0;
             uint count = 0;
-            IntPtr buf = IntPtr.Zero;
             try
             {
                 uint ret = Native.PdhGetFormattedCounterArray(counter, Native.PDH_FMT_DOUBLE, ref size, out count, IntPtr.Zero);
                 if (ret != Native.PDH_MORE_DATA || size == 0) return new double[0];
-                buf = Marshal.AllocHGlobal((int)size);
+                EnsureBuffer(size);
                 ret = Native.PdhGetFormattedCounterArray(counter, Native.PDH_FMT_DOUBLE, ref size, out count, buf);
                 if (ret != 0) return new double[0];
 
-                int stride = Marshal.SizeOf(typeof(Native.PDH_FMT_COUNTERVALUE_ITEM));
-                var list = new List<double>((int)count);
+                valList.Clear();
+                if (valList.Capacity < (int)count) valList.Capacity = (int)count;
+                long baseAddr = buf.ToInt64();
                 for (uint i = 0; i < count; i++)
                 {
-                    IntPtr item = new IntPtr(buf.ToInt64() + i * stride);
-                    var v = (Native.PDH_FMT_COUNTERVALUE_ITEM)Marshal.PtrToStructure(item, typeof(Native.PDH_FMT_COUNTERVALUE_ITEM));
-                    if (v.FmtValue.CStatus == 0) list.Add(v.FmtValue.doubleValue);
+                    IntPtr item = new IntPtr(baseAddr + i * ItemStride);
+                    if (Marshal.ReadInt32(item, FmtOffset) == 0)
+                        valList.Add(BitConverter.Int64BitsToDouble(Marshal.ReadInt64(item, FmtOffset + 8)));
                 }
-                return list.ToArray();
+                return valList.ToArray();
             }
             catch { return new double[0]; }
-            finally { if (buf != IntPtr.Zero) Marshal.FreeHGlobal(buf); }
         }
 
         /// <summary>
@@ -87,41 +106,48 @@ namespace FrameForge.Sys
             if (!valid || counter == IntPtr.Zero) return;
             uint size = 0;
             uint count = 0;
-            IntPtr buf = IntPtr.Zero;
             try
             {
                 uint ret = Native.PdhGetFormattedCounterArray(counter, Native.PDH_FMT_DOUBLE, ref size, out count, IntPtr.Zero);
                 if (ret != Native.PDH_MORE_DATA || size == 0) return;
-                buf = Marshal.AllocHGlobal((int)size);
+                EnsureBuffer(size);
                 ret = Native.PdhGetFormattedCounterArray(counter, Native.PDH_FMT_DOUBLE, ref size, out count, buf);
                 if (ret != 0) return;
 
-                int stride = Marshal.SizeOf(typeof(Native.PDH_FMT_COUNTERVALUE_ITEM));
-                var ns = new List<string>((int)count);
-                var vs = new List<double>((int)count);
+                nameList.Clear();
+                valList.Clear();
+                if (nameList.Capacity < (int)count) nameList.Capacity = (int)count;
+                if (valList.Capacity < (int)count) valList.Capacity = (int)count;
+                long baseAddr = buf.ToInt64();
                 for (uint i = 0; i < count; i++)
                 {
-                    IntPtr item = new IntPtr(buf.ToInt64() + i * stride);
-                    var v = (Native.PDH_FMT_COUNTERVALUE_ITEM)Marshal.PtrToStructure(item, typeof(Native.PDH_FMT_COUNTERVALUE_ITEM));
-                    if (v.FmtValue.CStatus != 0 || v.szName == IntPtr.Zero) continue;
-                    ns.Add(Marshal.PtrToStringUni(v.szName));
-                    vs.Add(v.FmtValue.doubleValue);
+                    IntPtr item = new IntPtr(baseAddr + i * ItemStride);
+                    if (Marshal.ReadInt32(item, FmtOffset) != 0) continue;
+                    IntPtr namePtr = Marshal.ReadIntPtr(item, 0);
+                    if (namePtr == IntPtr.Zero) continue;
+                    nameList.Add(Marshal.PtrToStringUni(namePtr));
+                    valList.Add(BitConverter.Int64BitsToDouble(Marshal.ReadInt64(item, FmtOffset + 8)));
                 }
-                names = ns.ToArray();
-                values = vs.ToArray();
+                names = nameList.ToArray();
+                values = valList.ToArray();
             }
             catch
             {
                 names = new string[0];
                 values = new double[0];
             }
-            finally { if (buf != IntPtr.Zero) Marshal.FreeHGlobal(buf); }
         }
 
         public void Dispose()
         {
             try { if (query != IntPtr.Zero) Native.PdhCloseQuery(query); }
             catch { }
+            if (buf != IntPtr.Zero)
+            {
+                try { Marshal.FreeHGlobal(buf); } catch { }
+                buf = IntPtr.Zero;
+                bufCap = 0;
+            }
             query = IntPtr.Zero;
             counter = IntPtr.Zero;
             valid = false;

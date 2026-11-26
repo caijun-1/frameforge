@@ -470,7 +470,7 @@ namespace FrameForge.UI
                 gameSub.Text = sub;
             }
 
-            string threads = Environment.ProcessorCount.ToString() + (I18n.IsEn ? " threads" : " 线程");
+            string threads = I18n.T("mon.threads", Environment.ProcessorCount);
             cpuRing.SetValue(s.Cpu < 0 ? 0 : s.Cpu / 100.0, s.Cpu < 0 ? I18n.T("mon.none") : threads);
 
             string gpuSub = I18n.T("mon.none");

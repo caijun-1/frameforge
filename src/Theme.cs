@@ -481,7 +481,18 @@ namespace FrameForge
 
         public static string Family { get { return I18n.IsEn ? "Segoe UI" : "Microsoft YaHei UI"; } }
 
-        public static void ResetFonts() { Fonts.Clear(); }
+        public static void ResetFonts()
+        {
+            foreach (Font f in Fonts.Values)
+            {
+                if (f != null)
+                {
+                    try { f.Dispose(); }
+                    catch { }
+                }
+            }
+            Fonts.Clear();
+        }
 
         /// <summary>字体按点数创建,由 GDI+ 依据 DPI 自动换算像素,天然适配缩放。</summary>
         public static Font F(float size, FontStyle style)

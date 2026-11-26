@@ -55,6 +55,7 @@ namespace FrameForge.Sys
         private readonly Nvml nvml;
         private readonly AmdGpu amd;
         private readonly List<NetworkInterface> nics = new List<NetworkInterface>();
+        private int nicsDirty;
         private Thread thread;
         private volatile bool running;
         private long lastIdle, lastKernel, lastUser;
@@ -169,6 +170,7 @@ namespace FrameForge.Sys
             // NVML 不认 AMD 卡,这时改用驱动自带的 ADL;都没有就只剩系统计数器。
             amd = new AmdGpu();
             if (!nvml.Available) amd.Init();
+            NetworkChange.NetworkAddressChanged += OnNetworkAddressChanged;
             CacheNics();
             Native.GetSystemTimes(out lastIdle, out lastKernel, out lastUser);
         }
@@ -462,8 +464,14 @@ namespace FrameForge.Sys
             return Clamp(busy, 0, 100);
         }
 
+        private void OnNetworkAddressChanged(object sender, EventArgs e)
+        {
+            Interlocked.Exchange(ref nicsDirty, 1);
+        }
+
         private void CacheNics()
         {
+            nics.Clear();
             try
             {
                 foreach (NetworkInterface ni in NetworkInterface.GetAllNetworkInterfaces())
@@ -479,6 +487,11 @@ namespace FrameForge.Sys
 
         private void ReadNet(SysSample s)
         {
+            if (Interlocked.Exchange(ref nicsDirty, 0) != 0)
+            {
+                CacheNics();
+                firstNet = true;
+            }
             try
             {
                 long rx = 0, tx = 0;
@@ -1314,6 +1327,8 @@ namespace FrameForge.Sys
 
         public void Dispose()
         {
+            try { NetworkChange.NetworkAddressChanged -= OnNetworkAddressChanged; }
+            catch { }
             Stop();
             cpuUtil.Dispose();
             cpuUtility.Dispose();

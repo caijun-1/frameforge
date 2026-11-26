@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
+using System.Text;
 using System.Windows.Forms;
 
 namespace FrameForge.Sys
@@ -50,6 +52,8 @@ namespace FrameForge.Sys
         // LUT 只能做逐通道的亮度/对比度/色温,做不了跨通道饱和度,但至少不会"开了没反应"。
         private static readonly List<IntPtr> gammaDcs = new List<IntPtr>();
         private static readonly List<ushort[]> gammaSaved = new List<ushort[]>();
+        private static readonly List<string> gammaDevices = new List<string>();
+        private const string GammaMarkerName = "filter_gamma.dat";
         private static bool gammaDirty;
         // 最近一次写进 LUT 的矩阵:游戏切分辨率、驱动自我修复都会把 LUT 冲掉,
         // 需要定期按这份矩阵补写回去(见 RefreshGamma)。
@@ -222,6 +226,7 @@ namespace FrameForge.Sys
 
             gammaM = (float[])m.Clone();
             gammaApprox = approximate;
+            if (!gammaDirty) SaveGammaMarker();
             ushort[] ramp = BuildRamp(m, approximate);
             bool ok = false;
             for (int i = 0; i < gammaDcs.Count; i++)
@@ -235,10 +240,14 @@ namespace FrameForge.Sys
                 if (!gammaDirty) Log.Write("filter gamma lut" + (approximate > 0.01 ? " approx" : ""));
                 gammaDirty = true;
             }
-            else if ((DateTime.UtcNow - gammaLogAt).TotalSeconds > 30)
+            else
             {
-                gammaLogAt = DateTime.UtcNow;
-                Log.Write("SetDeviceGammaRamp failed");
+                if (!gammaDirty) DeleteGammaMarker();
+                if ((DateTime.UtcNow - gammaLogAt).TotalSeconds > 30)
+                {
+                    gammaLogAt = DateTime.UtcNow;
+                    Log.Write("SetDeviceGammaRamp failed");
+                }
             }
         }
 
@@ -360,6 +369,7 @@ namespace FrameForge.Sys
                 try { if (gammaSaved[i] != null) Native.SetDeviceGammaRamp(gammaDcs[i], gammaSaved[i]); }
                 catch { }
             }
+            DeleteGammaMarker();
         }
 
         /// <summary>
@@ -418,6 +428,7 @@ namespace FrameForge.Sys
                 }
                 gammaDcs.Add(dc);
                 gammaSaved.Add(saved);
+                gammaDevices.Add(screens[i].DeviceName ?? "");
             }
             if (gammaDcs.Count > 0) Log.Write("filter gamma dc=" + gammaDcs.Count);
         }
@@ -430,6 +441,122 @@ namespace FrameForge.Sys
             }
             gammaDcs.Clear();
             gammaSaved.Clear();
+            gammaDevices.Clear();
+        }
+
+        /// <summary>响应 WM_DISPLAYCHANGE:安全释放旧的 gamma HDC 并重新获取当前显示器句柄。</summary>
+        public static void ReacquireGammaDcs()
+        {
+            bool wasDirty = gammaDirty;
+            float[] m = gammaM;
+            double approx = gammaApprox;
+            ReleaseGammaDcs();
+            EnsureGammaDcs();
+            if (!wasDirty || m == null) return;
+            if (gammaDcs.Count == 0)
+            {
+                gammaDirty = false;
+                return;
+            }
+            ushort[] ramp = BuildRamp(m, approx);
+            for (int i = 0; i < gammaDcs.Count; i++)
+            {
+                try { Native.SetDeviceGammaRamp(gammaDcs[i], ramp); }
+                catch { }
+            }
+        }
+
+        /// <summary>启动时检查崩溃遗留的 gamma LUT 备份标记,若存在则还原原值并删除标记。</summary>
+        public static void RecoverStale()
+        {
+            string[] paths = GammaMarkerPaths();
+            for (int p = 0; p < paths.Length; p++)
+            {
+                string path = paths[p];
+                if (!File.Exists(path)) continue;
+                int restored = 0;
+                try
+                {
+                    string[] lines = File.ReadAllLines(path, Encoding.UTF8);
+                    for (int i = 0; i < lines.Length; i++)
+                    {
+                        string line = lines[i];
+                        int eq = line.IndexOf('=');
+                        if (eq <= 0) continue;
+                        string dev = line.Substring(0, eq);
+                        string b64 = line.Substring(eq + 1).Trim();
+                        byte[] raw;
+                        try { raw = Convert.FromBase64String(b64); }
+                        catch { continue; }
+                        if (raw.Length != 3 * 256 * 2) continue;
+                        var ramp = new ushort[3 * 256];
+                        Buffer.BlockCopy(raw, 0, ramp, 0, raw.Length);
+                        IntPtr dc = IntPtr.Zero;
+                        try
+                        {
+                            dc = Native.CreateDC("DISPLAY", dev, IntPtr.Zero, IntPtr.Zero);
+                            if (dc != IntPtr.Zero && Native.SetDeviceGammaRamp(dc, ramp)) restored++;
+                        }
+                        catch { }
+                        finally
+                        {
+                            if (dc != IntPtr.Zero) { try { Native.DeleteDC(dc); } catch { } }
+                        }
+                    }
+                    if (restored > 0) Log.Write("filter gamma stale recovered=" + restored);
+                }
+                catch (Exception ex) { Log.Write("filter gamma recover: " + ex.Message); }
+                try { File.Delete(path); } catch { }
+            }
+        }
+
+        private static string[] GammaMarkerPaths()
+        {
+            string progDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "FrameForge");
+            return new string[]
+            {
+                Path.Combine(progDir, GammaMarkerName),
+                Path.Combine(Settings.Dir, GammaMarkerName)
+            };
+        }
+
+        private static void SaveGammaMarker()
+        {
+            if (gammaDevices.Count == 0 || gammaSaved.Count == 0) return;
+            var sb = new StringBuilder();
+            byte[] raw = new byte[3 * 256 * 2];
+            for (int i = 0; i < gammaDevices.Count && i < gammaSaved.Count; i++)
+            {
+                if (string.IsNullOrEmpty(gammaDevices[i]) || gammaSaved[i] == null) continue;
+                Buffer.BlockCopy(gammaSaved[i], 0, raw, 0, raw.Length);
+                sb.Append(gammaDevices[i]).Append('=').Append(Convert.ToBase64String(raw)).Append('\n');
+            }
+            if (sb.Length == 0) return;
+            string content = sb.ToString();
+            string[] paths = GammaMarkerPaths();
+            for (int i = 0; i < paths.Length; i++)
+            {
+                try
+                {
+                    string dir = Path.GetDirectoryName(paths[i]);
+                    if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                    SafeFile.WriteAllText(paths[i], content, new UTF8Encoding(false));
+                    return;
+                }
+                catch { }
+            }
+        }
+
+        private static void DeleteGammaMarker()
+        {
+            string[] paths = GammaMarkerPaths();
+            for (int i = 0; i < paths.Length; i++)
+            {
+                try { if (File.Exists(paths[i])) File.Delete(paths[i]); }
+                catch { }
+            }
         }
 
         /// <summary>按设置算出的当前矩阵,供界面预览使用。</summary>

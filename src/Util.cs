@@ -53,8 +53,14 @@ namespace FrameForge
     {
         public static void WriteAllText(string path, string text, Encoding enc)
         {
-            string tmp = path + ".tmp";
-            File.WriteAllText(tmp, text, enc);
+            string tmp = path + "." + Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp";
+            using (var fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+            using (var sw = new StreamWriter(fs, enc))
+            {
+                sw.Write(text);
+                sw.Flush();
+                fs.Flush(true);
+            }
             try
             {
                 if (File.Exists(path)) File.Replace(tmp, path, null);
@@ -63,8 +69,8 @@ namespace FrameForge
             catch (Exception)
             {
                 // FAT/exFAT 上 File.Replace 不被支持,退回覆盖写;至少临时文件是完整的。
-                File.Copy(tmp, path, true);
-                try { File.Delete(tmp); } catch { }
+                try { File.Copy(tmp, path, true); }
+                finally { try { File.Delete(tmp); } catch { } }
             }
         }
     }

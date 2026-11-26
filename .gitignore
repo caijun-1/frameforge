@@ -1,5 +1,6 @@
 # 构建产物
 FrameForge.exe
+FrameForge.exe.sha256
 *.pdb
 
 # 编译中间件
@@ -11,15 +12,21 @@ bin/
 *.p12
 *.cer
 *.snk
+signing/
 
-# 本地截图与临时脚本
+# 本地截图、宣传与交付产物
 tmp_shots/
+deliverables/
+promo/
 
-# IDE
+# IDE 与本地工具目录
 .vs/
 *.user
 *.suo
+.tools/
+.trae/
+.workbuddy/
 
 # 运行期数据（不应提交）
-settings.json
+settings.ini
 log.txt

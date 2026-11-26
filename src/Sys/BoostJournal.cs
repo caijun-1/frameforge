@@ -303,6 +303,7 @@ namespace FrameForge.Sys
         private static byte[] macKey;
         private static bool macTried;
         private static bool macExisted;
+        public static bool HasUnverifiedJournal { get; private set; }
         // P1-2：密钥创建/读取必须串行，且用 CreateNew 原子发布，避免并发读到半成品。
         private static readonly object MacGate = new object();
 
@@ -510,6 +511,7 @@ namespace FrameForge.Sys
                         // 隔离为 unverified 并写明显告警，不按伪造静默处理。
                         if (!macExisted)
                         {
+                            HasUnverifiedJournal = true;
                             Log.Write("journal mac unverifiable: key created this run, journal predates it");
                             Quarantine(owner, "unverified", "mac mismatch (key regenerated)");
                         }
@@ -527,6 +529,11 @@ namespace FrameForge.Sys
                     {
                         Quarantine(owner, "bad", "missing mac");
                         return null;
+                    }
+                    if (!macExisted)
+                    {
+                        HasUnverifiedJournal = true;
+                        Log.Write("journal mac missing: key created this run, loading unverified journal by fnv1a");
                     }
                 }
 
@@ -821,6 +828,11 @@ namespace FrameForge.Sys
         private static void ReconcileOne(JournalAction a, Transaction tx, ReconcileContext ctx,
             ReconcileReport report)
         {
+            if (!a.Revertible)
+            {
+                Noop(a, report, "non-revertible: " + a.Kind);
+                return;
+            }
             switch (a.Kind)
             {
                 case ActionKind.PRIORITY_CLASS:
@@ -1151,17 +1163,15 @@ namespace FrameForge.Sys
             string actual = Native.ProcessName(g.Pid);
             if (actual.Length == 0 || !string.Equals(actual, g.Name, StringComparison.OrdinalIgnoreCase))
                 return IntPtr.Zero;
-            if (g.StartTime > 0)
+            if (g.StartTime <= 0) return IntPtr.Zero;
+            try
             {
-                try
+                using (Process p = Process.GetProcessById(g.Pid))
                 {
-                    using (Process p = Process.GetProcessById(g.Pid))
-                    {
-                        if (p.StartTime.Ticks != g.StartTime) return IntPtr.Zero;
-                    }
+                    if (p.StartTime.Ticks != g.StartTime) return IntPtr.Zero;
                 }
-                catch { return IntPtr.Zero; }
             }
+            catch { return IntPtr.Zero; }
             if (g.SessionId >= 0)
             {
                 try
@@ -1201,7 +1211,8 @@ namespace FrameForge.Sys
             }
             catch { alive = false; }
 
-            if (alive) Fail(a, report, "target exists but cannot be opened");
+            if (alive && g.StartTime <= 0) Conflict(a, report, "missing start time; cannot verify pid");
+            else if (alive) Fail(a, report, "target exists but cannot be opened");
             else Noop(a, report, "target gone or pid reused");
         }
 

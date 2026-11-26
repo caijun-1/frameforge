@@ -48,6 +48,8 @@ namespace FrameForge.Sys
             public uint RefreshNum;
             public uint RefreshDen;
             public uint ScanLineOrdering;
+            public int TargetAvailable;
+            public uint StatusFlags;
         }
 
         [StructLayout(LayoutKind.Sequential)]

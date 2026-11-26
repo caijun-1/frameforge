@@ -180,41 +180,57 @@ namespace FrameForge.Sys
 
         private void MoveOthers(int pid, ref AffinityResult r)
         {
-            int self = Process.GetCurrentProcess().Id;
+            int self;
+            using (Process curProc = Process.GetCurrentProcess())
+                self = curProc.Id;
             Process[] procs;
             try { procs = Process.GetProcesses(); }
             catch { return; }
 
-            foreach (Process p in procs)
+            try
             {
-                IntPtr h = IntPtr.Zero;
-                try
+                for (int i = 0; i < procs.Length; i++)
                 {
-                    if (p.Id <= 4 || p.Id == self || p.Id == pid) continue;
-                    string name = p.ProcessName;
-                    if (name.Length == 0 || BoostEngine.Protected.Contains(name)) continue;
+                    Process p = procs[i];
+                    if (p == null) continue;
+                    IntPtr h = IntPtr.Zero;
+                    try
+                    {
+                        if (p.Id <= 4 || p.Id == self || p.Id == pid) continue;
+                        string name = p.ProcessName;
+                        if (name.Length == 0 || BoostEngine.Protected.Contains(name)) continue;
 
-                    h = Native.OpenProcess(Native.PROCESS_SET_INFORMATION | Native.PROCESS_QUERY_INFORMATION, false, p.Id);
-                    if (h == IntPtr.Zero) continue;
+                        h = Native.OpenProcess(Native.PROCESS_SET_INFORMATION | Native.PROCESS_QUERY_INFORMATION, false, p.Id);
+                        if (h == IntPtr.Zero) continue;
 
-                    IntPtr procMask, sysMask;
-                    if (!Native.GetProcessAffinityMask(h, out procMask, out sysMask)) continue;
-                    long cur = procMask.ToInt64();
-                    if ((cur & gameMask) == 0) continue;
+                        IntPtr procMask, sysMask;
+                        if (!Native.GetProcessAffinityMask(h, out procMask, out sysMask)) continue;
+                        long cur = procMask.ToInt64();
+                        if ((cur & gameMask) == 0) continue;
 
-                    long target = cur & ~gameMask;
-                    if (target == 0 || target == cur) continue;
-                    if (!Native.SetProcessAffinityMask(h, new IntPtr(target))) continue;
+                        long target = cur & ~gameMask;
+                        if (target == 0 || target == cur) continue;
+                        if (!Native.SetProcessAffinityMask(h, new IntPtr(target))) continue;
 
-                    saved.Add(new MaskSaved { Pid = p.Id, Name = name, Mask = cur });
-                    r.Moved++;
-                    if (r.Moved >= MaxMoved) break;
+                        saved.Add(new MaskSaved { Pid = p.Id, Name = name, Mask = cur });
+                        r.Moved++;
+                        if (r.Moved >= MaxMoved) break;
+                    }
+                    catch { }
+                    finally
+                    {
+                        if (h != IntPtr.Zero) Native.CloseHandle(h);
+                    }
                 }
-                catch { }
-                finally
+            }
+            finally
+            {
+                for (int i = 0; i < procs.Length; i++)
                 {
-                    if (h != IntPtr.Zero) Native.CloseHandle(h);
-                    try { p.Dispose(); } catch { }
+                    if (procs[i] != null)
+                    {
+                        try { procs[i].Dispose(); } catch { }
+                    }
                 }
             }
         }

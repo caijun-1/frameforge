@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace FrameForge.Sys
 {
@@ -62,6 +64,7 @@ namespace FrameForge.Sys
 
         private static bool applied;
         private static double fraction;
+        private const string DvcMarkerName = "nvapi_dvc.dat";
 
         /// <summary>当前是否正由我们接管数字振动。</summary>
         public static bool Applied { get { return applied; } }
@@ -79,7 +82,11 @@ namespace FrameForge.Sys
             if (fraction < 0) fraction = 0;
             if (fraction > 1) fraction = 1;
             // 每次接管前重新读一遍用户当前值,免得把探测之后的改动还原回去。
-            if (!applied) Capture();
+            if (!applied)
+            {
+                Capture();
+                SaveDvcMarker();
+            }
 
             bool ok = false;
             for (int i = 0; i < targets.Length; i++)
@@ -89,7 +96,11 @@ namespace FrameForge.Sys
                 try { if (setDvc(targets[i], 0, v) == Ok) ok = true; }
                 catch { }
             }
-            if (!ok) return false;
+            if (!ok)
+            {
+                if (!applied) DeleteDvcMarker();
+                return false;
+            }
             if (!applied) Log.Write("nvapi dvc frac=" + fraction.ToString("0.00"));
             applied = true;
             NvApi.fraction = fraction;
@@ -122,7 +133,101 @@ namespace FrameForge.Sys
                 try { setDvc(targets[i], 0, saved[i]); }
                 catch { }
             }
+            DeleteDvcMarker();
             Log.Write("nvapi dvc restore");
+        }
+
+        /// <summary>启动时检查崩溃遗留的 DVC 原始值标记,若存在则还原并删除标记。</summary>
+        public static void RecoverStale()
+        {
+            string[] paths = DvcMarkerPaths();
+            for (int p = 0; p < paths.Length; p++)
+            {
+                string path = paths[p];
+                if (!File.Exists(path)) continue;
+                int restored = 0;
+                try
+                {
+                    string[] lines = File.ReadAllLines(path, Encoding.UTF8);
+                    var items = new List<KeyValuePair<int, int>>();
+                    for (int i = 0; i < lines.Length; i++)
+                    {
+                        string line = lines[i];
+                        int eq = line.IndexOf('=');
+                        if (eq <= 0) continue;
+                        int idx, val;
+                        if (int.TryParse(line.Substring(0, eq), out idx) &&
+                            int.TryParse(line.Substring(eq + 1).Trim(), out val))
+                        {
+                            items.Add(new KeyValuePair<int, int>(idx, val));
+                        }
+                    }
+                    if (items.Count > 0)
+                    {
+                        Probe();
+                        if (available)
+                        {
+                            for (int i = 0; i < items.Count; i++)
+                            {
+                                int idx = items[i].Key;
+                                if (idx < 0 || idx >= targets.Length) continue;
+                                try
+                                {
+                                    if (setDvc(targets[idx], 0, items[i].Value) == Ok) restored++;
+                                }
+                                catch { }
+                            }
+                        }
+                    }
+                    if (restored > 0) Log.Write("nvapi dvc stale recovered=" + restored);
+                }
+                catch (Exception ex) { Log.Write("nvapi dvc recover: " + ex.Message); }
+                try { File.Delete(path); } catch { }
+            }
+        }
+
+        private static string[] DvcMarkerPaths()
+        {
+            string progDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "FrameForge");
+            return new string[]
+            {
+                Path.Combine(progDir, DvcMarkerName),
+                Path.Combine(Settings.Dir, DvcMarkerName)
+            };
+        }
+
+        private static void SaveDvcMarker()
+        {
+            if (targets.Length == 0 || saved.Length == 0) return;
+            var sb = new StringBuilder();
+            for (int i = 0; i < targets.Length && i < saved.Length; i++)
+                sb.Append(i).Append('=').Append(saved[i]).Append('\n');
+            if (sb.Length == 0) return;
+            string content = sb.ToString();
+            string[] paths = DvcMarkerPaths();
+            for (int i = 0; i < paths.Length; i++)
+            {
+                try
+                {
+                    string dir = Path.GetDirectoryName(paths[i]);
+                    if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                    SafeFile.WriteAllText(paths[i], content, new UTF8Encoding(false));
+                    return;
+                }
+                catch { }
+            }
+        }
+
+        private static void DeleteDvcMarker()
+        {
+            string[] paths = DvcMarkerPaths();
+            for (int i = 0; i < paths.Length; i++)
+            {
+                try { if (File.Exists(paths[i])) File.Delete(paths[i]); }
+                catch { }
+            }
         }
 
         /// <summary>退出时调用:还原并卸载 nvapi 模块。</summary>

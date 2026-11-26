@@ -78,6 +78,8 @@ namespace FrameForge
                 // 上次加速如果没来得及还原(崩溃/强杀),这里把注册表和电源计划拨回去。
                 try { BoostJournal.RecoverStale(); }
                 catch (Exception ex) { Log.Write("journal recover: " + ex.Message); }
+                InvokeRecoverStale(typeof(Filter), "filter recover");
+                InvokeRecoverStale(typeof(Filter).Assembly.GetType("FrameForge.Sys.NvApi"), "nvapi recover");
 
                 try
                 {
@@ -91,6 +93,19 @@ namespace FrameForge
                 GC.KeepAlive(mutex);
             }
             return 0;
+        }
+
+        private static void InvokeRecoverStale(Type t, string label)
+        {
+            if (t == null) return;
+            try
+            {
+                MethodInfo m = t.GetMethod("RecoverStale",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
+                    null, Type.EmptyTypes, null);
+                if (m != null) m.Invoke(null, null);
+            }
+            catch (Exception ex) { Log.Write(label + ": " + ex.Message); }
         }
 
         private static bool HasArg(string[] args, string name)
@@ -635,7 +650,7 @@ namespace FrameForge
             {
                 if (BoostJournal.Pending)
                 {
-                    check("boost journal v2", true, "pending journal, skipped");
+                    skip("boost journal v2", "pending journal, skipped");
                 }
                 else
                 {
@@ -1032,6 +1047,99 @@ namespace FrameForge
                 check("app icon", ico != null && ico.Width > 0, ico == null ? "null" : ico.Width + "px");
             }
             catch (Exception ex) { check("app icon", false, ex.Message); }
+
+            // 21. 事务日志防篡改与隔离（HMAC / 缺 sum= / 未知版本 v=99）
+            if (!BoostJournal.Pending)
+            {
+                string jPath = BoostJournal.FilePath;
+                string jDir = Path.GetDirectoryName(jPath);
+                string jBase = Path.GetFileName(jPath);
+                var utf8NoBom = new UTF8Encoding(false);
+                try
+                {
+                    // 21a. tampered HMAC (sum=<fnv1a>:<hmac>)
+                    var txHmac = BoostJournal.NewTransaction(OwnerKind.ONE_SHOT, 0, "selftest-hmac", -1);
+                    txHmac.State = TxState.COMMITTED;
+                    BoostJournal.Save(txHmac);
+                    string[] hmacLines = File.ReadAllLines(jPath, utf8NoBom);
+                    bool macFound = false;
+                    for (int i = 0; i < hmacLines.Length; i++)
+                    {
+                        if (hmacLines[i].StartsWith("sum=", StringComparison.Ordinal))
+                        {
+                            int colon = hmacLines[i].IndexOf(':');
+                            if (colon > 4 && colon < hmacLines[i].Length - 1)
+                            {
+                                char ch = hmacLines[i][hmacLines[i].Length - 1] == '0' ? '1' : '0';
+                                hmacLines[i] = hmacLines[i].Substring(0, hmacLines[i].Length - 1) + ch;
+                                macFound = true;
+                            }
+                        }
+                    }
+                    if (macFound)
+                    {
+                        File.WriteAllLines(jPath, hmacLines, utf8NoBom);
+                        Transaction loadedHmac = BoostJournal.Load();
+                        check("journal tampered hmac quarantined",
+                            loadedHmac == null && !File.Exists(jPath),
+                            "tampered hmac rejected and quarantined");
+                    }
+                    else
+                    {
+                        skip("journal tampered hmac quarantined", "no mac key available");
+                    }
+
+                    // 21b. missing sum=
+                    var txSum = BoostJournal.NewTransaction(OwnerKind.ONE_SHOT, 0, "selftest-nosum", -1);
+                    txSum.State = TxState.COMMITTED;
+                    BoostJournal.Save(txSum);
+                    string[] sumLines = File.ReadAllLines(jPath, utf8NoBom);
+                    var stripped = new List<string>();
+                    for (int i = 0; i < sumLines.Length; i++)
+                        if (!sumLines[i].StartsWith("sum=", StringComparison.Ordinal)) stripped.Add(sumLines[i]);
+                    File.WriteAllLines(jPath, stripped.ToArray(), utf8NoBom);
+                    Transaction loadedSum = BoostJournal.Load();
+                    check("journal missing sum quarantined",
+                        loadedSum == null && !File.Exists(jPath),
+                        "missing sum= rejected and quarantined");
+
+                    // 21c. unknown schema v=99
+                    File.WriteAllText(jPath, "v=99\ntx=selftest\n", utf8NoBom);
+                    Transaction loadedVer = BoostJournal.Load();
+                    check("journal unknown schema v99 quarantined",
+                        loadedVer == null && !File.Exists(jPath),
+                        "v=99 rejected and quarantined");
+                }
+                catch (Exception ex) { check("journal tamper quarantine", false, ex.Message); }
+                finally
+                {
+                    BoostJournal.Clear();
+                    try
+                    {
+                        if (Directory.Exists(jDir))
+                        {
+                            string[] leftover = Directory.GetFiles(jDir, jBase + ".*");
+                            for (int i = 0; i < leftover.Length; i++)
+                                try { File.Delete(leftover[i]); } catch { }
+                        }
+                    }
+                    catch { }
+                }
+            }
+            else skip("journal tamper quarantine", "pending journal, skipped");
+
+            // 22. 版本号比较单元测试
+            try
+            {
+                bool cmpOk = UpdateCheck.Compare("1.6.5", "1.6.4") > 0
+                    && UpdateCheck.Compare("1.6.5", "1.6.5") == 0
+                    && UpdateCheck.Compare("1.6.4", "1.6.5") < 0
+                    && UpdateCheck.Compare("1.6.5.1", "1.6.5") > 0
+                    && UpdateCheck.Compare("1.6.5", "1.6.5.0") == 0
+                    && UpdateCheck.Compare("1.10.0", "1.2.0") > 0;
+                check("update version compare", cmpOk, "semver & 4-part compare");
+            }
+            catch (Exception ex) { check("update version compare", false, ex.Message); }
 
             sb.AppendLine();
             sb.AppendLine(fail == 0

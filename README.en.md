@@ -13,17 +13,17 @@ One-Click Reversible Boost · PresentMon / RTSS Modern HUD · Hardware Screen Fi
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
   <img src="https://img.shields.io/badge/size-7%20MB-brightgreen" alt="size 7 MB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.6.5-orange" alt="1.6.5">
+  <img src="https://img.shields.io/badge/version-1.6.6-orange" alt="1.6.6">
 </p>
 
 <p align="center">
-  <a href="https://github.com/caijun-1/frameforge/releases/latest">Download Latest (v1.6.5)</a> ·
+  <a href="https://github.com/caijun-1/frameforge/releases/latest">Download Latest (v1.6.6)</a> ·
   <a href="https://caijun-1.github.io/frameforge/">Website</a> ·
   <a href="#why-frameforge">Why FrameForge</a> ·
   <a href="README.md">简体中文</a>
 </p>
 
-<p align="center"><img src="docs/social-preview.png" width="840" alt="FrameForge v1.6.5"></p>
+<p align="center"><img src="docs/social-preview.png" width="840" alt="FrameForge v1.6.6"></p>
 
 ---
 
@@ -114,6 +114,14 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 ---
 
 ## Recent Changelog
+
+### v1.6.6
+
+> Comprehensive stability, state-rollback, concurrency, and update-security hardening release across 32 files (Zh/En localization parity at 659/659 keys).
+
+- **Display & Overlay**: Fixed `Display.PathTargetInfo` struct size (+8 bytes to 48 bytes) for `QueryDisplayConfig`; added crash-safe disk persistence & startup recovery for hardware Gamma LUT and NVIDIA DVC; refreshed gamma HDCs on `WM_DISPLAYCHANGE`; fixed 64-bit `Rtss.ZeroMemory`, fallback `MapViewOfFile` access mask, and ANSI truncation; cached the 1×1 probe bitmap in `Overlay.Render()`.
+- **State Rollback & Concurrency**: Added `SYSTEM\GAMECONFIGSTORE` to `Tune.AllowedJournalKey()`; retained failed items in `Tune.RestoreAll()`; upgraded `SafeFile.WriteAllText()` to unique `.tmp` + `WriteThrough`; enforced `Revertible` & `StartTime` guards in `BoostJournal`; added `BusyToken` generation guards in `SystemResourceArbiter`; synchronized `FpsEngine` start/stop/watchdog; eliminated per-tick reflection and tray-minimized `StateHub` polling.
+- **Update Security & UX**: Used exclusive GUID updater scripts and publisher certificate pinning in `UpdateCheck`; moved `schtasks` off the UI thread; rebuilt tray menus on theme/language switch; disposed control animation timers and enabled keyboard focus; expanded `--selftest` with HMAC tamper, missing `sum=`, and unknown schema `v=99` quarantine checks.
 
 ### v1.6.5
 

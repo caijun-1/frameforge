@@ -102,6 +102,7 @@ namespace FrameForge.Sys
     {
         private const int SampleMs = 220;
         private readonly AffinityEngine affinity = new AffinityEngine();
+        private readonly object stateGate = new object();
         private CoreSchedulerState state = new CoreSchedulerState();
 
         public CorePlan Plan(CpuTopologySnapshot topo, ProcessTelemetry tel, CorePolicy policy)
@@ -113,7 +114,7 @@ namespace FrameForge.Sys
             if (topo == null) topo = CpuTopology.Snapshot();
             if (tel == null || !tel.CpuBound)
             {
-                plan.Reason = "cpu-bound=false，跳过核心改动";
+                plan.Reason = I18n.T("core.reason.cpubound_skip");
                 return plan;
             }
 
@@ -129,7 +130,7 @@ namespace FrameForge.Sys
                 plan.GameMask = mask;
                 plan.IdealCandidates = CandidateIds(topo, CorePolicy.SingleCcd, mask);
                 plan.Reason = mask != 0 && plan.IdealCandidates.Length > 0
-                    ? "single-ccd 软亲和"
+                    ? I18n.T("core.reason.single_ccd")
                     : FrameForge.I18n.T("core.reason.singleccd.noCandidate");
                 return plan;
             }
@@ -137,12 +138,12 @@ namespace FrameForge.Sys
             if (policy == CorePolicy.PCoreFirst)
             {
                 plan.IdealCandidates = CandidateIds(topo, CorePolicy.PCoreFirst, 0);
-                plan.Reason = plan.IdealCandidates.Length > 0 ? "pcore-first 仅 P 核候选" : "no p-core candidate";
+                plan.Reason = plan.IdealCandidates.Length > 0 ? I18n.T("core.reason.pcore_first") : "no p-core candidate";
                 return plan;
             }
 
             plan.IdealCandidates = CandidateIds(topo, CorePolicy.Auto, 0);
-            plan.Reason = "auto 现状行为";
+            plan.Reason = I18n.T("core.reason.auto");
             return plan;
         }
 
@@ -189,12 +190,15 @@ namespace FrameForge.Sys
             res.Mode = a.Ok ? (a.Soft ? 1 : 2) : 0;
             if (a.Ok)
             {
-                state.Mode = res.Mode;
-                state.UsedCores = a.Cores;
-                state.AffinityMode = res.Mode;
-                state.AffinityMask = a.Mask;
-                state.Reason = plan.Reason;
-                state.Policy = plan.Policy;
+                lock (stateGate)
+                {
+                    state.Mode = res.Mode;
+                    state.UsedCores = a.Cores;
+                    state.AffinityMode = res.Mode;
+                    state.AffinityMask = a.Mask;
+                    state.Reason = plan.Reason;
+                    state.Policy = plan.Policy;
+                }
             }
             else
             {
@@ -264,14 +268,20 @@ namespace FrameForge.Sys
         public void Restore()
         {
             affinity.Restore();
-            state = new CoreSchedulerState();
+            lock (stateGate)
+            {
+                state = new CoreSchedulerState();
+            }
         }
 
         /// <summary>SetIdealFor 成功后由执行方调用；决策阶段不提前公开 ideal。</summary>
         public void MarkIdealApplied(CorePolicy policy, int idealCpu)
         {
-            state.Policy = policy;
-            state.IdealCpu = idealCpu;
+            lock (stateGate)
+            {
+                state.Policy = policy;
+                state.IdealCpu = idealCpu;
+            }
         }
 
         public List<JournalAction> SnapshotCoreActions()
@@ -287,10 +297,12 @@ namespace FrameForge.Sys
                 a.Status = ActionStatus.APPLIED_CONFIRMED;
                 list.Add(a);
             }
-            if (state.IdealCpu >= 0)
+            int idealCpu;
+            lock (stateGate) { idealCpu = state.IdealCpu; }
+            if (idealCpu >= 0)
             {
                 var a = BoostJournal.NewAction(new Transaction(), ActionKind.IDEAL_CPU,
-                    new ProcessGuard(), "64", state.IdealCpu.ToString(CultureInfo.InvariantCulture));
+                    new ProcessGuard(), "64", idealCpu.ToString(CultureInfo.InvariantCulture));
                 a.Status = ActionStatus.APPLIED_CONFIRMED;
                 list.Add(a);
             }
@@ -299,15 +311,18 @@ namespace FrameForge.Sys
 
         public CoreSchedulerState SnapshotState()
         {
-            var s = new CoreSchedulerState();
-            s.Policy = state.Policy;
-            s.IdealCpu = state.IdealCpu;
-            s.UsedCores = state.UsedCores;
-            s.Mode = state.Mode;
-            s.AffinityMode = state.AffinityMode;
-            s.AffinityMask = state.AffinityMask;
-            s.Reason = state.Reason;
-            return s;
+            lock (stateGate)
+            {
+                var s = new CoreSchedulerState();
+                s.Policy = state.Policy;
+                s.IdealCpu = state.IdealCpu;
+                s.UsedCores = state.UsedCores;
+                s.Mode = state.Mode;
+                s.AffinityMode = state.AffinityMode;
+                s.AffinityMask = state.AffinityMask;
+                s.Reason = state.Reason;
+                return s;
+            }
         }
 
         private static int UsedCoresFrom(ProcessTelemetry tel)
@@ -317,10 +332,13 @@ namespace FrameForge.Sys
 
         private void ClearAffinityState()
         {
-            state.Mode = 0;
-            state.UsedCores = 0;
-            state.AffinityMode = 0;
-            state.AffinityMask = 0;
+            lock (stateGate)
+            {
+                state.Mode = 0;
+                state.UsedCores = 0;
+                state.AffinityMode = 0;
+                state.AffinityMask = 0;
+            }
         }
 
         private static int[] CandidateIds(CpuTopologySnapshot topo, CorePolicy policy, long mask)

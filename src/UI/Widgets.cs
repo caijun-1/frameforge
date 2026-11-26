@@ -42,7 +42,56 @@ namespace FrameForge.UI
             Invalidate();
         }
 
-        public Slider() { Cursor = Cursors.Hand; }
+        public Slider()
+        {
+            SetStyle(ControlStyles.Selectable, true);
+            TabStop = true;
+            Cursor = Cursors.Hand;
+        }
+
+        protected override bool IsInputKey(Keys keyData)
+        {
+            Keys k = keyData & Keys.KeyCode;
+            if (k == Keys.Left || k == Keys.Right || k == Keys.Up || k == Keys.Down) return true;
+            return base.IsInputKey(keyData);
+        }
+
+        protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+        protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (Enabled)
+            {
+                if (e.KeyCode == Keys.Space && ShowSwitch)
+                {
+                    Switched = !Switched;
+                    Invalidate();
+                    if (SwitchChanged != null) SwitchChanged(this, EventArgs.Empty);
+                    e.Handled = true;
+                }
+                else if (e.KeyCode == Keys.Left || e.KeyCode == Keys.Down || e.KeyCode == Keys.Right || e.KeyCode == Keys.Up)
+                {
+                    int step = e.Shift ? 1 : Math.Max(1, (Max - Min) / 20);
+                    int delta = (e.KeyCode == Keys.Right || e.KeyCode == Keys.Up) ? step : -step;
+                    int nv = val + delta;
+                    if (nv < Min) nv = Min;
+                    if (nv > Max) nv = Max;
+                    if (ShowSwitch && !Switched)
+                    {
+                        Switched = true;
+                        if (SwitchChanged != null) SwitchChanged(this, EventArgs.Empty);
+                    }
+                    if (nv != val)
+                    {
+                        val = nv;
+                        Invalidate();
+                        if (Changed != null) Changed(this, EventArgs.Empty);
+                    }
+                    e.Handled = true;
+                }
+            }
+            base.OnKeyDown(e);
+        }
 
         /// <summary>标签左侧显示一个迷你开关,用于带独立开关的滑块。</summary>
         public bool ShowSwitch;
@@ -176,6 +225,12 @@ namespace FrameForge.UI
             using (var b = new SolidBrush(Theme.Card)) g.FillEllipse(b, kr);
             using (var pen = new Pen(!live ? Theme.Faint : hover || drag ? Theme.AccentHover : Theme.Accent, stroke))
                 g.DrawEllipse(pen, kr);
+            if (Focused && ShowFocusCues)
+            {
+                var focusR = new RectangleF(kr.X - 2f, kr.Y - 2f, kr.Width + 4f, kr.Height + 4f);
+                using (var pen = new Pen(Theme.Alpha(Theme.Accent, 180), 1.5f))
+                    g.DrawEllipse(pen, focusR);
+            }
         }
     }
 
@@ -215,6 +270,17 @@ namespace FrameForge.UI
         public Color AccentColor = Color.Empty;
         private double target, disp;
         private Timer t;
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && t != null)
+            {
+                t.Stop();
+                t.Dispose();
+                t = null;
+            }
+            base.Dispose(disposing);
+        }
 
         public void SetValue(double v)
         {
@@ -270,6 +336,17 @@ namespace FrameForge.UI
         private double target, disp;
         private Timer t;
         private string sub = "";
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && t != null)
+            {
+                t.Stop();
+                t.Dispose();
+                t = null;
+            }
+            base.Dispose(disposing);
+        }
 
         public void SetValue(double v, string subText)
         {

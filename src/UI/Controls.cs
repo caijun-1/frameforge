@@ -324,6 +324,24 @@ namespace FrameForge.UI
         private int spin;
         private Timer anim;
 
+        public FlatButton()
+        {
+            SetStyle(ControlStyles.Selectable, true);
+            TabStop = true;
+            Cursor = Cursors.Hand;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && anim != null)
+            {
+                anim.Stop();
+                anim.Dispose();
+                anim = null;
+            }
+            base.Dispose(disposing);
+        }
+
         public bool Busy
         {
             get { return busy; }
@@ -357,6 +375,17 @@ namespace FrameForge.UI
         protected override void OnMouseLeave(EventArgs e) { hover = false; down = false; Invalidate(); base.OnMouseLeave(e); }
         protected override void OnMouseDown(MouseEventArgs e) { down = true; Invalidate(); base.OnMouseDown(e); }
         protected override void OnMouseUp(MouseEventArgs e) { down = false; Invalidate(); base.OnMouseUp(e); }
+        protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+        protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (Enabled && (e.KeyCode == Keys.Space || e.KeyCode == Keys.Enter))
+            {
+                OnClick(EventArgs.Empty);
+                e.Handled = true;
+            }
+            base.OnKeyDown(e);
+        }
 
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -421,6 +450,11 @@ namespace FrameForge.UI
                     }
                 }
             }
+            if (Focused && ShowFocusCues)
+            {
+                Color fc = Primary ? Theme.Alpha(Theme.Hex("#FBEFDD"), 180) : Theme.Alpha(Theme.Accent, 180);
+                Ui.Stroke(g, r, rad, fc, 1.5f);
+            }
         }
     }
 
@@ -437,6 +471,17 @@ namespace FrameForge.UI
         protected override void OnMouseLeave(EventArgs e) { hover = false; down = false; Invalidate(); base.OnMouseLeave(e); }
         protected override void OnMouseDown(MouseEventArgs e) { down = true; Invalidate(); base.OnMouseDown(e); }
         protected override void OnMouseUp(MouseEventArgs e) { down = false; Invalidate(); base.OnMouseUp(e); }
+        protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+        protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (Enabled && (e.KeyCode == Keys.Space || e.KeyCode == Keys.Enter))
+            {
+                OnClick(EventArgs.Empty);
+                e.Handled = true;
+            }
+            base.OnKeyDown(e);
+        }
 
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -525,7 +570,23 @@ namespace FrameForge.UI
 
         public event EventHandler CheckedChanged;
 
-        public Toggle() { Cursor = Cursors.Hand; }
+        public Toggle()
+        {
+            SetStyle(ControlStyles.Selectable, true);
+            TabStop = true;
+            Cursor = Cursors.Hand;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && t != null)
+            {
+                t.Stop();
+                t.Dispose();
+                t = null;
+            }
+            base.Dispose(disposing);
+        }
 
         public bool Checked
         {
@@ -565,6 +626,18 @@ namespace FrameForge.UI
         {
             if (e.Button == MouseButtons.Left) Checked = !Checked;
             base.OnMouseDown(e);
+        }
+
+        protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+        protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (Enabled && (e.KeyCode == Keys.Space || e.KeyCode == Keys.Enter))
+            {
+                Checked = !Checked;
+                e.Handled = true;
+            }
+            base.OnKeyDown(e);
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -611,6 +684,8 @@ namespace FrameForge.UI
                 g.FillEllipse(b, kx, ky, knob, knob);
             using (var pen = new Pen(Theme.Alpha(Color.Black, 25), 1f))
                 g.DrawEllipse(pen, kx + 0.5f, ky + 0.5f, knob - 1f, knob - 1f);
+            if (Focused && ShowFocusCues)
+                Ui.Stroke(g, track, rad, Theme.Alpha(Theme.Accent, 180), 1.5f);
         }
     }
 
@@ -625,6 +700,24 @@ namespace FrameForge.UI
         private float anim = 0;
         private int hoverIndex = -1;
         private Timer t;
+
+        public Segmented()
+        {
+            SetStyle(ControlStyles.Selectable, true);
+            TabStop = true;
+            Cursor = Cursors.Hand;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && t != null)
+            {
+                t.Stop();
+                t.Dispose();
+                t = null;
+            }
+            base.Dispose(disposing);
+        }
 
         public int Selected
         {
@@ -682,6 +775,33 @@ namespace FrameForge.UI
             base.OnMouseDown(e);
         }
 
+        protected override bool IsInputKey(Keys keyData)
+        {
+            Keys k = keyData & Keys.KeyCode;
+            if (k == Keys.Left || k == Keys.Right || k == Keys.Up || k == Keys.Down) return true;
+            return base.IsInputKey(keyData);
+        }
+
+        protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+        protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (Enabled && Items.Length > 0)
+            {
+                if (e.KeyCode == Keys.Left || e.KeyCode == Keys.Up)
+                {
+                    Selected = (sel - 1 + Items.Length) % Items.Length;
+                    e.Handled = true;
+                }
+                else if (e.KeyCode == Keys.Right || e.KeyCode == Keys.Down)
+                {
+                    Selected = (sel + 1) % Items.Length;
+                    e.Handled = true;
+                }
+            }
+            base.OnKeyDown(e);
+        }
+
         private int Hit(int x)
         {
             if (Items.Length == 0 || Width <= 0) return -1;
@@ -722,7 +842,8 @@ namespace FrameForge.UI
             var pill = new RectangleF(anim * itemW + Ui.Fp(1), 0,
                 itemW - Ui.Fp(2), Height - Ui.Fp(2));
             Ui.Fill(g, pill, Ui.Fp(6), Theme.NavPill);
-            Ui.Stroke(g, pill, Ui.Fp(6), Theme.NavBorder, 1f);
+            Ui.Stroke(g, pill, Ui.Fp(6), Focused && ShowFocusCues ? Theme.Alpha(Theme.Accent, 180) : Theme.NavBorder,
+                Focused && ShowFocusCues ? 1.5f : 1f);
             Color acc = AccentColor.A == 0 ? Theme.Accent : AccentColor;
             float uw = Math.Min(Ui.Fp(26), pill.Width * 0.34f);
             Ui.Fill(g, new RectangleF(pill.X + (pill.Width - uw) / 2f, pill.Bottom - Ui.Fp(5), uw, Ui.Fp(2)),
@@ -751,6 +872,13 @@ namespace FrameForge.UI
         public int LastItemInset = 0;
         private int sel;
         private int hoverIndex = -1;
+
+        public TabBar()
+        {
+            SetStyle(ControlStyles.Selectable, true);
+            TabStop = true;
+            Cursor = Cursors.Hand;
+        }
 
         public int Selected
         {
@@ -782,6 +910,33 @@ namespace FrameForge.UI
             int i = Hit(e.X);
             if (i >= 0) Selected = i;
             base.OnMouseDown(e);
+        }
+
+        protected override bool IsInputKey(Keys keyData)
+        {
+            Keys k = keyData & Keys.KeyCode;
+            if (k == Keys.Left || k == Keys.Right || k == Keys.Up || k == Keys.Down) return true;
+            return base.IsInputKey(keyData);
+        }
+
+        protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+        protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (Enabled && Items.Length > 0)
+            {
+                if (e.KeyCode == Keys.Left || e.KeyCode == Keys.Up)
+                {
+                    Selected = (sel - 1 + Items.Length) % Items.Length;
+                    e.Handled = true;
+                }
+                else if (e.KeyCode == Keys.Right || e.KeyCode == Keys.Down)
+                {
+                    Selected = (sel + 1) % Items.Length;
+                    e.Handled = true;
+                }
+            }
+            base.OnKeyDown(e);
         }
 
         private int Hit(int x)
@@ -821,6 +976,11 @@ namespace FrameForge.UI
                     var bar = new RectangleF(r.X + (r.Width - uw) / 2f, Height - Ui.Fp(7), uw, Math.Max(2f, Ui.Fp(2.5)));
                     // 一条实心下划线就够了:去掉外圈光晕,让文字自己说明选中状态。
                     Ui.Fill(g, bar, bar.Height / 2f, acc);
+                    if (Focused && ShowFocusCues)
+                    {
+                        var focusR = new RectangleF(r.X + Ui.Fp(4), Ui.Fp(2), Math.Max(4f, r.Width - Ui.Fp(8)), Height - Ui.Fp(4));
+                        Ui.Stroke(g, focusR, Ui.Fp(5), Theme.Alpha(acc, 140), 1f);
+                    }
                 }
             }
         }
@@ -838,6 +998,17 @@ namespace FrameForge.UI
         private double target, disp;
         private Timer t;
         private string sub = "";
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && t != null)
+            {
+                t.Stop();
+                t.Dispose();
+                t = null;
+            }
+            base.Dispose(disposing);
+        }
 
         public void SetValue(double v, string subText)
         {
@@ -1143,6 +1314,17 @@ namespace FrameForge.UI
         private int ticks;
         private int phase; // 0 淡入 1 保持 2 淡出 3 隐藏
         private Timer t;
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && t != null)
+            {
+                t.Stop();
+                t.Dispose();
+                t = null;
+            }
+            base.Dispose(disposing);
+        }
 
         public void Show(string text)
         {

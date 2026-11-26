@@ -1,6 +1,6 @@
 # FrameForge 开源推广与涨星文案包
 
-> 以下文案均已针对各平台风格定制，可直接复制发布。图片可直接选用仓库内的 `docs/social-preview.png` 与 `docs/screenshots/v1.6.5/overlay-hud.png`。
+> 以下文案均已针对各平台风格定制，可直接复制发布。图片可直接选用仓库内的 `docs/social-preview.png` 与 `docs/screenshots/v1.6.6/overlay-hud.png`。
 
 ---
 
@@ -20,12 +20,12 @@
 ```markdown
 自己平时打 FPS 游戏，一直觉得微星小飞机 + 游戏加加 + 各种加速工具装一堆太重了，有些还会往游戏里注入 DLL 或者偷偷改完系统设置不还原。
 
-于是用纯 C#（.NET Framework 4.8 + 原生 GDI+，直接 `csc.exe` 单文件编译，不引第三方 UI 库）写了个轻量级开源工具 **FrameForge**，目前刚发到 **v1.6.5**。
+于是用纯 C#（.NET Framework 4.8 + 原生 GDI+，直接 `csc.exe` 单文件编译，不引第三方 UI 库）写了个轻量级开源工具 **FrameForge**，目前刚发到 **v1.6.6**。
 
 ### 核心特点
 1. **极轻单文件**：整个程序只有 ~7 MB，免安装双击即用，零广告零遥测。
 2. **默认零注入（反作弊友好）**：帧率通过 Intel PresentMon ETW 采集，叠加层默认用分层透明窗口绘制；独占全屏下支持无缝交给 RTSS 接管（同步多色主题与字号层级）。
-3. **v1.6.5 全新现代 HUD 叠加层**：毛玻璃渐变暗底 + 主题色竖条 + 放大主视觉 FPS + 等宽不抖动列对齐，支持 5 套配色主题（朱砂 / 翠绿 / 粉紫 / 青蓝 / 极简）和 3 档底板自由切换。
+3. **v1.6.6 全新现代 HUD 叠加层**：毛玻璃渐变暗底 + 主题色竖条 + 放大主视觉 FPS + 等宽不抖动列对齐，支持 5 套配色主题（朱砂 / 翠绿 / 粉紫 / 青蓝 / 极简）和 3 档底板自由切换。
 4. **所有优化 100% 事务级回滚**：基于自研 SCTL v2 事务预写日志（带 HMAC 校验），哪怕游戏崩溃或被强杀，重启/看门狗也会把电源计划、计时器、核心亲和性、挂起的后台进程全部还原。
 5. **硬件级画面滤镜 & 系统体检**：支持 Gamma LUT + NVAPI 数字振动、DDC/CI 硬件背光调节、ICC 校色导入，以及 VBS / HAGS / MPO / MSI 中断一键体检切换。
 
@@ -52,7 +52,7 @@ Release 下载：https://github.com/caijun-1/frameforge/releases/latest
 ## 四、Reddit (`r/OptimizedGaming` / `r/opensource`) 发帖模板
 
 **Title**:
-`[Open Source] FrameForge v1.6.5 — 7 MB portable Windows FPS toolkit (PresentMon/RTSS modern HUD, 100% reversible boost, hardware filters, zero DLL injection)`
+`[Open Source] FrameForge v1.6.6 — 7 MB portable Windows FPS toolkit (PresentMon/RTSS modern HUD, 100% reversible boost, hardware filters, zero DLL injection)`
 
 **Body**:
 ```markdown
@@ -60,7 +60,7 @@ Hi everyone, I've been building **FrameForge**, an open-source (MIT), single-fil
 
 Instead of installing multiple heavy background suites or injecting hooks into anti-cheat games, FrameForge runs as a single portable `.exe` compiled cleanly against .NET Framework 4.8.
 
-### What's inside (v1.6.5):
+### What's inside (v1.6.6):
 - **Modern HUD & RTSS Overlay**: Translucent glass HUD with enlarged hero FPS, monospaced fixed-width columns (no jitter), 5 colour themes (Cinnabar, Emerald, Neon, Cyber, Mono), and 3 backdrop tiers (`HUD` / `Subtle` / `None`). Works via layered window by default (zero injection) or hands off seamlessly to RTSS with matching colour tags for exclusive fullscreen.
 - **ETW Frame-Time & Hardware Telemetry**: Powered by Intel PresentMon for FPS & 1% Low, NVML/ADL for GPU temp/clock/power/VRAM, plus automatic post-match performance reports (last 300 sessions with FPS graphs & CSV export).
 - **100% Reversible System Boost (WAL Journal)**: Priority class, 1 ms timer, high-perf power plan, core topology steering (P-cores / 3D V-Cache CCD), and optional background process suspend (strictly skips ACE/EAC/BattlEye/Vanguard). Every change is recorded in an HMAC-signed Write-Ahead Log (`BoostJournal`) with an out-of-process watchdog so even a crash or force-kill rolls everything back cleanly.
@@ -68,7 +68,7 @@ Instead of installing multiple heavy background suites or injecting hooks into a
 - **System Check-up**: One-click audit & toggle for VBS/HVCI, HAGS, MPO, Game DVR, FSO, and MSI interrupt mode.
 
 GitHub: https://github.com/caijun-1/frameforge
-Release v1.6.5 (with SHA-256): https://github.com/caijun-1/frameforge/releases/tag/v1.6.5
+Release v1.6.6 (with SHA-256): https://github.com/caijun-1/frameforge/releases/tag/v1.6.6
 
 Would love feedback from the optimization community — especially on the new HUD readability and core scheduler behavior!
 ```
@@ -92,8 +92,8 @@ Would love feedback from the optimization community — especially on the new HU
 
 ## 六、Winget 官方仓库提交命令（可选）
 
-已为你生成好 `packaging/winget/manifests/j/JunCai/FrameForge/1.6.5/` 下的三份清单文件（含精确 SHA-256）。
-只需 Fork `microsoft/winget-pkgs`，把该 `1.6.5` 文件夹拷贝到对应目录提 PR，通过审核后全球用户即可直接：
+已为你生成好 `packaging/winget/manifests/j/JunCai/FrameForge/1.6.6/` 下的三份清单文件（含精确 SHA-256）。
+只需 Fork `microsoft/winget-pkgs`，把该 `1.6.6` 文件夹拷贝到对应目录提 PR，通过审核后全球用户即可直接：
 ```powershell
 winget install JunCai.FrameForge
 ```
@@ -126,7 +126,7 @@ Adds [FrameForge](https://github.com/caijun-1/frameforge), a lightweight (~7 MB)
 
 ### 2. Scoop 清单提交（`ScoopInstaller/Extras`）
 
-已在仓库内生成标准清单文件 `packaging/scoop/frameforge.json`（含 `v1.6.5` 精确 SHA-256 及 `checkver`/`autoupdate` 自动更新配置）。
+已在仓库内生成标准清单文件 `packaging/scoop/frameforge.json`（含 `v1.6.6` 精确 SHA-256 及 `checkver`/`autoupdate` 自动更新配置）。
 将该文件复制到 `ScoopInstaller/Extras` 仓库的 `bucket/frameforge.json` 提交 PR；合入后全球用户可通过以下命令直接安装：
 
 ```powershell

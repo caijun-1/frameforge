@@ -106,6 +106,7 @@ namespace FrameForge.Sys
 
         // 核心调度策略层：Auto 保持零回归，非 Auto 只做候选过滤。
         private readonly ICoreScheduler coreScheduler = new CoreScheduler();
+        public ICoreScheduler CoreScheduler { get { return coreScheduler; } }
 
         public bool Active;
         public int GamePid = -1;
@@ -840,7 +841,7 @@ namespace FrameForge.Sys
                     Confirm(tx, ActionKind.AFFINITY_MASK, cr.Ok, cr.Error, "");
                     if (cp.GameMask != 0) coreScheduler.SnapshotCoreActions();
                 }
-                catch (Exception ex) { Log.Write("boost core scheduler: " + ex.Message); }
+                catch (Exception ex) { Log.Write("boost core scheduler: " + ex.Message); Confirm(tx, ActionKind.AFFINITY_MASK, false, ex.Message, ""); }
             }
             else if (plan.Affinity)
             {

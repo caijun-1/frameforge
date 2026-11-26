@@ -13,12 +13,12 @@
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
   <img src="https://img.shields.io/badge/size-7%20MB-brightgreen" alt="size 7 MB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.6.5-orange" alt="1.6.5">
+  <img src="https://img.shields.io/badge/version-1.6.6-orange" alt="1.6.6">
 </p>
 
-<p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版 (v1.6.5)</a> · <a href="https://caijun-1.github.io/frameforge/">项目主页</a> · <a href="#为什么选择-frameforge">对比优势</a> · <a href="README.en.md">English</a></p>
+<p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版 (v1.6.6)</a> · <a href="https://caijun-1.github.io/frameforge/">项目主页</a> · <a href="#为什么选择-frameforge">对比优势</a> · <a href="README.en.md">English</a></p>
 
-<p align="center"><img src="docs/social-preview.zh-CN.png" width="840" alt="FrameForge v1.6.5"></p>
+<p align="center"><img src="docs/social-preview.zh-CN.png" width="840" alt="FrameForge v1.6.6"></p>
 
 ---
 
@@ -308,6 +308,14 @@ frameforge/
 - 仅支持 Windows；Linux / macOS 不在计划内。
 
 ## 更新日志
+
+### v1.6.6
+
+> 稳定性、状态回滚闭环与工程安全全面加固版本：修复多屏 HDR 探测结构体对齐、硬件 Gamma LUT / NVIDIA DVC 崩溃兜底恢复、DVR 与事务日志原子化回滚、PresentMon 启停竞态、更新器签名校验与托盘待机零反射，中英词条扩充至 659/659 键一致。
+
+- **显示、滤镜与叠加层**：补齐 `Display.PathTargetInfo` 缺失的 8 字节字段；Gamma LUT 与 NVIDIA DVC 原值原子落盘并支持崩溃启动恢复；`WM_DISPLAYCHANGE` 时自动刷新显示器 HDC；修复 RTSS 64 位 `ZeroMemory`、`OpenFileMapping` 回退掩码与 ANSI 字符截断；`Overlay.Render()` 复用 1×1 探针位图。
+- **状态回滚与并发性能**：`Tune.AllowedJournalKey()` 补全 `SYSTEM\GAMECONFIGSTORE`，`RestoreAll()` 保留失败项，写入全面切换 `SafeFile.WriteAllText`（唯一 `.tmp` + `WriteThrough`）；`BoostEngine` 与 `BoostJournal` 补全 `AFFINITY_MASK` 异常确认与 `Revertible` / `StartTime` 守卫；`SystemResourceArbiter` 新增 `BusyToken` 代际计数；`FpsEngine` 启停纳入 `startGate` 锁；托盘最小化跳过轮询且取消每 tick 反射。
+- **更新安全与桌面体验**：更新脚本使用随机 GUID 文件名并校验发布者签名证书；`schtasks` 开机自启移至后台线程；语言/主题切换重建托盘菜单；自绘控件补全动画定时器释放与键盘焦点导航；`--selftest` 新增 HMAC 篡改、缺 `sum=` 与 `v=99` 隔离回归测试。
 
 ### v1.6.5
 

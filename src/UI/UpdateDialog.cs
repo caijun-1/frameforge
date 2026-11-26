@@ -51,16 +51,7 @@ namespace FrameForge.UI
             btnInstall.Primary = true;
             btnInstall.Text = I18n.T(canInstall ? "upd.install" : "upd.open");
             btnInstall.FontPt = 9.5f;
-            btnInstall.Click += delegate
-            {
-                if (!canInstall)
-                {
-                    DialogResult = DialogResult.OK;
-                    Close();
-                    return;
-                }
-                StartInstall();
-            };
+            btnInstall.Click += delegate { OnInstallClick(); };
             Controls.Add(btnInstall);
 
             LayoutButtons();
@@ -69,8 +60,23 @@ namespace FrameForge.UI
             {
                 if (downloading) return;
                 if (k.KeyCode == Keys.Escape) { DialogResult = DialogResult.Cancel; Close(); }
-                if (k.KeyCode == Keys.Enter) { DialogResult = DialogResult.OK; Close(); }
+                if (k.KeyCode == Keys.Enter && btnInstall.Visible && btnInstall.Enabled)
+                {
+                    k.Handled = true;
+                    OnInstallClick();
+                }
             };
+        }
+
+        private void OnInstallClick()
+        {
+            if (!canInstall)
+            {
+                DialogResult = DialogResult.OK;
+                Close();
+                return;
+            }
+            StartInstall();
         }
 
         private void StartInstall()

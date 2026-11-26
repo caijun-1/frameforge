@@ -598,9 +598,12 @@ namespace FrameForge.Sys
         /// <summary>退出/关闭叠加层时把自己的 OSD 内容清空,别留在屏幕上。</summary>
         public static void Clear()
         {
-            lastText = "";
-            try { Write(""); }
-            catch { }
+            lock (osdLock)
+            {
+                lastText = "";
+                try { WriteLocked(""); }
+                catch { }
+            }
         }
 
         private static bool Write(string text)
@@ -616,20 +619,28 @@ namespace FrameForge.Sys
             int room = Math.Min(TextCap, entrySize - textOffset);
             if (room <= 1) return false;
 
-            byte[] bytes = Encoding.Default.GetBytes(text);
-            if (bytes.Length > room - 1)
+            if (text.Length > 0 && Encoding.Default.GetByteCount(text) > room - 1)
             {
                 // 只截断到字符边界,免得半个汉字把 RTSS 的字体渲染弄乱。
-                int n = room - 1;
-                while (n > 0 && (bytes[n] & 0xC0) == 0x80) n--;
-                Array.Resize(ref bytes, n);
+                int maxBytes = room - 1;
+                char[] chars = text.ToCharArray();
+                int lo = 0, hi = chars.Length;
+                while (lo < hi)
+                {
+                    int mid = (lo + hi + 1) / 2;
+                    if (Encoding.Default.GetByteCount(chars, 0, mid) <= maxBytes) lo = mid;
+                    else hi = mid - 1;
+                }
+                if (lo > 0 && char.IsHighSurrogate(chars[lo - 1])) lo--;
+                text = new string(chars, 0, lo);
             }
+            byte[] bytes = Encoding.Default.GetBytes(text);
 
             int idx = FindSlot();
             if (idx < 0) return false;
             IntPtr entry = (IntPtr)(view.ToInt64() + arrOffset + (long)idx * entrySize);
 
-            ZeroMemory((IntPtr)(entry.ToInt64() + textOffset), room);
+            if (room > 0) ZeroMemory((IntPtr)(entry.ToInt64() + textOffset), (UIntPtr)(uint)room);
             if (bytes.Length > 0)
                 Marshal.Copy(bytes, 0, (IntPtr)(entry.ToInt64() + textOffset), bytes.Length);
             // 通知 RTSS 重画 OSD。
@@ -679,15 +690,19 @@ namespace FrameForge.Sys
             }
             if (DateTime.UtcNow < nextTry) return false;
 
-            map = OpenFileMapping(FileMapAllAccess, false, MapName);
+            uint mapAccess = FileMapAllAccess;
+            map = OpenFileMapping(mapAccess, false, MapName);
             if (map == IntPtr.Zero)
-                map = OpenFileMapping(0x0002, false, MapName);   // 降级成只拿写权限
+            {
+                mapAccess = 0x0002;   // 降级成只拿写权限
+                map = OpenFileMapping(mapAccess, false, MapName);
+            }
             if (map == IntPtr.Zero)
             {
                 nextTry = DateTime.UtcNow.AddSeconds(3);
                 return false;
             }
-            view = MapViewOfFile(map, FileMapAllAccess, 0, 0, UIntPtr.Zero);
+            view = MapViewOfFile(map, mapAccess, 0, 0, UIntPtr.Zero);
             if (view == IntPtr.Zero)
             {
                 CloseHandle(map);
@@ -697,7 +712,7 @@ namespace FrameForge.Sys
             }
             if (Marshal.ReadInt32(view) != Signature)
             {
-                Release();
+                ReleaseLocked();
                 nextTry = DateTime.UtcNow.AddSeconds(3);
                 return false;
             }
@@ -709,7 +724,7 @@ namespace FrameForge.Sys
             slot = -1;
             if (version < 0x00020000 || entrySize < 512 || arrSize < 2 || arrOffset < 36)
             {
-                Release();
+                ReleaseLocked();
                 nextTry = DateTime.UtcNow.AddSeconds(3);
                 return false;
             }
@@ -733,10 +748,11 @@ namespace FrameForge.Sys
 
         private static void WriteAnsi(IntPtr dst, int cap, string s)
         {
+            if (cap < 0) return;
             byte[] b = Encoding.Default.GetBytes(s);
             int n = Math.Min(b.Length, cap);
-            ZeroMemory(dst, cap + 1);
-            Marshal.Copy(b, 0, dst, n);
+            if (cap + 1 > 0) ZeroMemory(dst, (UIntPtr)(uint)(cap + 1));
+            if (n > 0) Marshal.Copy(b, 0, dst, n);
         }
 
         private static string ReadAnsi(IntPtr src, int cap)
@@ -752,7 +768,7 @@ namespace FrameForge.Sys
         }
 
         [DllImport("ntdll.dll", EntryPoint = "RtlZeroMemory")]
-        private static extern void ZeroMemory(IntPtr dst, int len);
+        private static extern void ZeroMemory(IntPtr dst, UIntPtr len);
 
         /// <summary>RTSS 装在哪个目录:先看注册表,再按默认位置找。</summary>
         private static string FindInstall()

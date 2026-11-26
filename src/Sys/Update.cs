@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -20,11 +21,18 @@ namespace FrameForge.Sys
         private const string Api = "https://api.github.com/repos/" + Repo + "/releases/latest";
         private const string FallbackUrl = "https://github.com/" + Repo + "/releases/latest";
 
-        public static string LatestTag = "";
-        public static string LatestUrl = "";
-        public static string ExeUrl = "";
-        public static string ShaUrl = "";
-        public static bool Busy;
+        private static readonly object Gate = new object();
+        private static string latestTag = "";
+        private static string latestUrl = "";
+        private static string exeUrl = "";
+        private static string shaUrl = "";
+        private static int busy;
+
+        public static string LatestTag { get { lock (Gate) { return latestTag; } } }
+        public static string LatestUrl { get { lock (Gate) { return latestUrl; } } }
+        public static string ExeUrl { get { lock (Gate) { return exeUrl; } } }
+        public static string ShaUrl { get { lock (Gate) { return shaUrl; } } }
+        public static bool Busy { get { return Volatile.Read(ref busy) != 0; } }
 
         public static string CurrentVersion
         {
@@ -42,8 +50,7 @@ namespace FrameForge.Sys
         /// <summary>后台请求最新版本,回调参数为"是否有更新"。回调在后台线程执行。</summary>
         public static void Start(Action<bool> done)
         {
-            if (Busy) return;
-            Busy = true;
+            if (Interlocked.CompareExchange(ref busy, 1, 0) != 0) return;
             Thread t = new Thread(delegate()
             {
                 bool newer = false;
@@ -55,18 +62,28 @@ namespace FrameForge.Sys
                     string url = Field(json, "html_url");
                     if (tag.Length > 0)
                     {
-                        LatestTag = Fix(tag).TrimStart('v', 'V');
-                        LatestUrl = url.Length > 0 ? Fix(url) : FallbackUrl;
-                        ExeUrl = Asset(json, "FrameForge.exe");
-                        ShaUrl = Asset(json, "FrameForge.exe.sha256");
-                        newer = Compare(LatestTag, CurrentVersion) > 0;
+                        string nextTag = Fix(tag).TrimStart('v', 'V');
+                        string nextUrl = url.Length > 0 ? Fix(url) : FallbackUrl;
+                        string nextExe = Asset(json, "FrameForge.exe");
+                        string nextSha = Asset(json, "FrameForge.exe.sha256");
+                        lock (Gate)
+                        {
+                            latestTag = nextTag;
+                            latestUrl = nextUrl;
+                            exeUrl = nextExe;
+                            shaUrl = nextSha;
+                        }
+                        newer = Compare(nextTag, CurrentVersion) > 0;
                     }
                 }
                 catch (Exception ex)
                 {
                     Log.Write("update check failed: " + ex.Message);
                 }
-                Busy = false;
+                finally
+                {
+                    Interlocked.Exchange(ref busy, 0);
+                }
                 if (done != null)
                 {
                     try { done(newer); }
@@ -80,7 +97,8 @@ namespace FrameForge.Sys
 
         public static void OpenDownloadPage()
         {
-            string url = string.IsNullOrEmpty(LatestUrl) ? FallbackUrl : LatestUrl;
+            string url = LatestUrl;
+            if (string.IsNullOrEmpty(url)) url = FallbackUrl;
             try { Process.Start(url); }
             catch (Exception ex) { Log.Write("open update page failed: " + ex.Message); }
         }
@@ -96,16 +114,23 @@ namespace FrameForge.Sys
                 "FrameForge.update." + Guid.NewGuid().ToString("N") + ".exe");
             try
             {
-                if (ExeUrl.Length == 0) return I18n.T("upd.err.asset");
-                if (ShaUrl.Length == 0) return I18n.T("upd.err.sha");
-                if (!Trusted(ExeUrl) || !Trusted(ShaUrl)) return I18n.T("upd.err.url");
+                string currentExeUrl;
+                string currentShaUrl;
+                lock (Gate)
+                {
+                    currentExeUrl = exeUrl;
+                    currentShaUrl = shaUrl;
+                }
+                if (currentExeUrl.Length == 0) return I18n.T("upd.err.asset");
+                if (currentShaUrl.Length == 0) return I18n.T("upd.err.sha");
+                if (!Trusted(currentExeUrl) || !Trusted(currentShaUrl)) return I18n.T("upd.err.url");
 
                 TryEnableTls12();
-                string want = FirstHash(Get(ShaUrl));
+                string want = FirstHash(Get(currentShaUrl));
                 if (want.Length != 64) return I18n.T("upd.err.sha");
 
                 if (progress != null) progress(0);
-                DownloadFile(ExeUrl, tmp, progress);
+                DownloadFile(currentExeUrl, tmp, progress);
 
                 if (!string.Equals(HashFile(tmp), want, StringComparison.OrdinalIgnoreCase))
                 {
@@ -119,6 +144,7 @@ namespace FrameForge.Sys
             catch (Exception ex)
             {
                 Log.Write("update install failed: " + ex.Message);
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch (Exception) { }
                 return ex.Message;
             }
         }
@@ -187,15 +213,19 @@ namespace FrameForge.Sys
                 int pid = Process.GetCurrentProcess().Id;
                 string exe = Native.ProcessPath(pid);
                 if (exe.Length == 0) exe = Process.GetCurrentProcess().MainModule.FileName;
-                // 如果当前程序本身是签名发布的,新包也必须通过同样的签名链校验。
+                // 如果当前程序本身是签名发布的,新包也必须通过同样的签名链与同发布者校验。
                 // 未签名构建(本地 csc 编译)不做此要求,否则自更新会被自己拦住。
-                if (FpsEngine.HasTrustedSignature(exe) && !FpsEngine.HasTrustedSignature(file))
+                if (FpsEngine.HasTrustedSignature(exe))
                 {
-                    try { File.Delete(file); } catch (Exception) { }
-                    error = I18n.T("err.sign");
-                    return false;
+                    if (!FpsEngine.HasTrustedSignature(file) || !SamePublisher(exe, file))
+                    {
+                        try { File.Delete(file); } catch (Exception) { }
+                        error = I18n.T("err.sign");
+                        return false;
+                    }
                 }
-                string script = Path.Combine(Path.GetTempPath(), "frameforge_update.cmd");
+                string script = Path.Combine(Path.GetTempPath(),
+                    "frameforge_update_" + Guid.NewGuid().ToString("N") + ".cmd");
 
                 var sb = new StringBuilder();
                 sb.AppendLine("@echo off");
@@ -214,7 +244,9 @@ namespace FrameForge.Sys
                 sb.AppendLine(":run");
                 sb.AppendLine("start \"\" \"" + exe + "\"");
                 sb.AppendLine("del \"%~f0\"");
-                File.WriteAllText(script, sb.ToString(), Encoding.Default);
+                using (var fs = new FileStream(script, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                using (var sw = new StreamWriter(fs, Encoding.Default))
+                    sw.Write(sb.ToString());
 
                 var psi = new ProcessStartInfo(Native.System32("cmd.exe"), "/c \"\"" + script + "\"\"");
                 psi.CreateNoWindow = true;
@@ -226,6 +258,23 @@ namespace FrameForge.Sys
             catch (Exception ex)
             {
                 error = ex.Message;
+                return false;
+            }
+        }
+
+        private static bool SamePublisher(string exe, string file)
+        {
+            try
+            {
+                X509Certificate cur = X509Certificate.CreateFromSignedFile(exe);
+                X509Certificate next = X509Certificate.CreateFromSignedFile(file);
+                if (string.Equals(cur.GetCertHashString(), next.GetCertHashString(), StringComparison.OrdinalIgnoreCase))
+                    return true;
+                return string.Equals(cur.Issuer, next.Issuer, StringComparison.Ordinal)
+                    && string.Equals(cur.Subject, next.Subject, StringComparison.Ordinal);
+            }
+            catch (Exception)
+            {
                 return false;
             }
         }
