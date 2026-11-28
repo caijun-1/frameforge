@@ -64,11 +64,24 @@ namespace FrameForge.Sys
         private int windowHead;
         private int windowCount;
         private double lastAggregateAt = double.MinValue;
+        private double firstFrameT = double.MinValue;
+        private double avgMs;
+        private int stutterCount;
+
+        private const int GraphBuckets = 90;
+        private const double BucketSeconds = 0.033;
+        private readonly float[] graphRing = new float[GraphBuckets];
+        private int graphHead;
+        private int graphCount;
+        private double graphBucketStart = double.MinValue;
+        private float graphBucketPeak;
 
         public volatile FpsStatus Status = FpsStatus.Idle;
         public double Fps = -1;
         public double Low1 = -1;
+        public double Low01 = -1;
         public double FrameTime = -1;
+        public int StutterCount;
         public string Message = "";
 
         private struct Frame
@@ -423,10 +436,24 @@ namespace FrameForge.Sys
             int gen = Interlocked.Increment(ref watchGen);
             try
             {
-                lock (Gate) { windowHead = 0; windowCount = 0; lastAggregateAt = double.MinValue; }
+                lock (Gate)
+                {
+                    windowHead = 0;
+                    windowCount = 0;
+                    lastAggregateAt = double.MinValue;
+                    firstFrameT = double.MinValue;
+                    avgMs = 0;
+                    stutterCount = 0;
+                    graphHead = 0;
+                    graphCount = 0;
+                    graphBucketStart = double.MinValue;
+                    graphBucketPeak = 0;
+                }
                 Fps = -1;
                 Low1 = -1;
+                Low01 = -1;
                 FrameTime = -1;
+                StutterCount = 0;
                 stopping = false;
                 gotRow = false;
                 Interlocked.Exchange(ref lastRowTicks, DateTime.UtcNow.Ticks);
@@ -483,7 +510,9 @@ namespace FrameForge.Sys
                 Interlocked.Exchange(ref lastRowTicks, 0);
                 Fps = -1;
                 Low1 = -1;
+                Low01 = -1;
                 FrameTime = -1;
+                StutterCount = 0;
                 if (Status == FpsStatus.Running || Status == FpsStatus.NeedAdmin) Status = FpsStatus.Idle;
             }
             if (p != null)
@@ -738,9 +767,65 @@ namespace FrameForge.Sys
                 windowCount++;
                 FrameTime = ms;
 
+                if (firstFrameT == double.MinValue) firstFrameT = t;
+                if (ms <= 500.0)
+                {
+                    if (avgMs > 0 && (t - firstFrameT) >= 3.0 && ms > Math.Max(avgMs * 2.0, avgMs + 12.0))
+                    {
+                        stutterCount++;
+                        StutterCount = stutterCount;
+                    }
+                    avgMs = avgMs <= 0 ? ms : (avgMs * 0.95 + ms * 0.05);
+                }
+
+                float msF = (float)ms;
+                if (graphBucketStart == double.MinValue)
+                {
+                    graphBucketStart = t;
+                    graphBucketPeak = msF;
+                }
+                else if (t - graphBucketStart < BucketSeconds)
+                {
+                    if (msF > graphBucketPeak) graphBucketPeak = msF;
+                }
+                else
+                {
+                    if (graphCount < GraphBuckets)
+                    {
+                        graphRing[(graphHead + graphCount) % GraphBuckets] = graphBucketPeak;
+                        graphCount++;
+                    }
+                    else
+                    {
+                        graphRing[graphHead] = graphBucketPeak;
+                        graphHead = (graphHead + 1) % GraphBuckets;
+                    }
+                    graphBucketStart = t;
+                    graphBucketPeak = msF;
+                }
+
                 if (windowCount < 2 || t - lastAggregateAt < 0.2) return;
                 lastAggregateAt = t;
                 Aggregate(t);
+            }
+        }
+
+        /// <summary>复制最近约 3 秒(最多 90 个 ~33ms 桶)的峰值帧时间曲线,零每帧堆分配。</summary>
+        public void CopyFrameGraph(float[] dst, out int count, out float avgMs)
+        {
+            lock (Gate)
+            {
+                avgMs = (float)this.avgMs;
+                if (dst == null || dst.Length == 0 || graphCount == 0)
+                {
+                    count = 0;
+                    return;
+                }
+                int n = Math.Min(graphCount, dst.Length);
+                int startOffset = graphCount - n;
+                for (int i = 0; i < n; i++)
+                    dst[i] = graphRing[(graphHead + startOffset + i) % GraphBuckets];
+                count = n;
             }
         }
 
@@ -778,9 +863,12 @@ namespace FrameForge.Sys
             Array.Sort(sortBuffer, 0, windowCount);
             int idx = (int)Math.Floor((windowCount - 1) * 0.99);
             double p99 = sortBuffer[Math.Min(idx, windowCount - 1)];
+            int idx01 = (int)Math.Floor((windowCount - 1) * 0.999);
+            double p999 = sortBuffer[Math.Min(idx01, windowCount - 1)];
 
             Fps = fps > 0 ? fps : -1;
             Low1 = p99 > 0 ? 1000.0 / p99 : -1;
+            Low01 = p999 > 0 ? 1000.0 / p999 : -1;
         }
 
         internal static bool SelfTestAggregation(out string note)
@@ -792,10 +880,11 @@ namespace FrameForge.Sys
                 double ms = 1000.0 / 240.0 + (i % 480 == 0 ? 8 : 0);
                 engine.Push(t, ms);
             }
-            bool ok = engine.Fps >= 200 && engine.Fps <= 280 && engine.Low1 > 0
+            bool ok = engine.Fps >= 200 && engine.Fps <= 280 && engine.Low1 > 0 && engine.Low01 > 0
                 && engine.FrameTime > 0 && engine.windowCount > 0 && engine.windowCount < 1300;
             note = "fps=" + engine.Fps.ToString("0.0", CultureInfo.InvariantCulture)
                 + " low=" + engine.Low1.ToString("0.0", CultureInfo.InvariantCulture)
+                + " low01=" + engine.Low01.ToString("0.0", CultureInfo.InvariantCulture)
                 + " window=" + engine.windowCount;
             engine.Stop();
             return ok;

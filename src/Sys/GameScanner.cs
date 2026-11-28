@@ -6,13 +6,14 @@ using Microsoft.Win32;
 
 namespace FrameForge.Sys
 {
-    /// <summary>一款本机游戏:显示名、启动 exe、来源平台。</summary>
+    /// <summary>一款本机游戏:显示名、启动 exe、来源平台、启动协议 URI。</summary>
     public sealed class InstalledGame
     {
         public string Name = "";
         public string ExePath = "";
-        /// <summary>steam | epic | gog | reg | manual</summary>
+        /// <summary>steam | epic | gog | xbox | hoyoplay | riot | battlenet | ea | ubisoft | wegame | reg | disk | manual</summary>
         public string Source = "";
+        public string LaunchUri = "";
 
         /// <summary>进程名(不含 .exe),识别时按它匹配。</summary>
         public string ProcName
@@ -36,7 +37,7 @@ namespace FrameForge.Sys
         public static InstalledGame[] Scan()
         {
             var found = new List<InstalledGame>();
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var seen = new Dictionary<string, InstalledGame>(StringComparer.OrdinalIgnoreCase);
 
             try { ScanSteam(found, seen); }
             catch (Exception ex) { Log.Write("gamescan steam: " + ex.Message); }
@@ -44,6 +45,20 @@ namespace FrameForge.Sys
             catch (Exception ex) { Log.Write("gamescan epic: " + ex.Message); }
             try { ScanGog(found, seen); }
             catch (Exception ex) { Log.Write("gamescan gog: " + ex.Message); }
+            try { ScanXbox(found, seen); }
+            catch (Exception ex) { Log.Write("gamescan xbox: " + ex.Message); }
+            try { ScanHoYoPlay(found, seen); }
+            catch (Exception ex) { Log.Write("gamescan hoyoplay: " + ex.Message); }
+            try { ScanRiot(found, seen); }
+            catch (Exception ex) { Log.Write("gamescan riot: " + ex.Message); }
+            try { ScanBattleNet(found, seen); }
+            catch (Exception ex) { Log.Write("gamescan battlenet: " + ex.Message); }
+            try { ScanEaApp(found, seen); }
+            catch (Exception ex) { Log.Write("gamescan ea: " + ex.Message); }
+            try { ScanUbisoft(found, seen); }
+            catch (Exception ex) { Log.Write("gamescan ubisoft: " + ex.Message); }
+            try { ScanWeGame(found, seen); }
+            catch (Exception ex) { Log.Write("gamescan wegame: " + ex.Message); }
             try { ScanUninstall(found, seen); }
             catch (Exception ex) { Log.Write("gamescan reg: " + ex.Message); }
             // 鸣潮、三角洲这类新游戏有的不走 Steam/Epic,注册表里也不带安装位置,
@@ -60,7 +75,7 @@ namespace FrameForge.Sys
 
         // ---------------- Steam ----------------
 
-        private static void ScanSteam(List<InstalledGame> found, HashSet<string> seen)
+        private static void ScanSteam(List<InstalledGame> found, Dictionary<string, InstalledGame> seen)
         {
             var roots = new List<string>();
             string steam = RegStr(Registry.CurrentUser, @"Software\Valve\Steam", "SteamPath");
@@ -103,13 +118,15 @@ namespace FrameForge.Sys
                     string text;
                     try { text = File.ReadAllText(acfs[k], Encoding.UTF8); }
                     catch { continue; }
+                    string appid = Acf(text, "appid");
                     string name = Acf(text, "name");
                     string installdir = Acf(text, "installdir");
                     if (name.Length == 0 || installdir.Length == 0) continue;
                     if (LooksLikeTool(name)) continue;
                     string dir = Path.Combine(Path.Combine(apps, "common"), installdir);
                     string exe = FindExe(dir, name);
-                    Add(found, seen, name, exe, "steam");
+                    string uri = appid.Length > 0 ? "steam://rungameid/" + appid : "";
+                    Add(found, seen, name, exe, "steam", uri);
                 }
             }
         }
@@ -156,7 +173,7 @@ namespace FrameForge.Sys
 
         // ---------------- Epic ----------------
 
-        private static void ScanEpic(List<InstalledGame> found, HashSet<string> seen)
+        private static void ScanEpic(List<InstalledGame> found, Dictionary<string, InstalledGame> seen)
         {
             string dir;
             try
@@ -194,7 +211,11 @@ namespace FrameForge.Sys
                     catch { exe = ""; }
                 }
                 if (exe.Length == 0 || !File.Exists(exe)) exe = FindExe(loc, name);
-                Add(found, seen, name, exe, "epic");
+                string appName = JsonStr(text, "AppName");
+                string uri = appName.Length > 0
+                    ? "com.epicgames.launcher://apps/" + appName + "?action=launch&silent=true"
+                    : "";
+                Add(found, seen, name, exe, "epic", uri);
             }
         }
 
@@ -239,7 +260,7 @@ namespace FrameForge.Sys
 
         // ---------------- GOG ----------------
 
-        private static void ScanGog(List<InstalledGame> found, HashSet<string> seen)
+        private static void ScanGog(List<InstalledGame> found, Dictionary<string, InstalledGame> seen)
         {
             RegistryKey[] roots = new RegistryKey[]
             {
@@ -287,9 +308,551 @@ namespace FrameForge.Sys
             }
         }
 
+        // ---------------- Xbox / Microsoft Store ----------------
+
+        private static void ScanXbox(List<InstalledGame> found, Dictionary<string, InstalledGame> seen)
+        {
+            var roots = new List<string>();
+            DriveInfo[] drives;
+            try { drives = DriveInfo.GetDrives(); }
+            catch { return; }
+
+            for (int d = 0; d < drives.Length; d++)
+            {
+                try
+                {
+                    if (drives[d].DriveType != DriveType.Fixed || !drives[d].IsReady) continue;
+                    string root = drives[d].RootDirectory.FullName.TrimEnd('\\') + "\\";
+
+                    string gamingRoot = Path.Combine(root, ".GamingRoot");
+                    if (File.Exists(gamingRoot))
+                    {
+                        try
+                        {
+                            byte[] raw = File.ReadAllBytes(gamingRoot);
+                            string text = Encoding.Unicode.GetString(raw).Replace("\0", "").Trim();
+                            if (text.Length == 0)
+                                text = Encoding.UTF8.GetString(raw).Replace("\0", "").Trim();
+                            int idx = text.IndexOf('\\');
+                            if (idx >= 0) text = text.Substring(idx).Trim();
+                            text = text.TrimStart('\\');
+                            if (text.Length > 0)
+                            {
+                                string cand = Path.Combine(root, text);
+                                if (Directory.Exists(cand)) AddUniqueDir(roots, cand);
+                            }
+                        }
+                        catch { }
+                    }
+
+                    string xboxDir = Path.Combine(root, "XboxGames");
+                    if (Directory.Exists(xboxDir)) AddUniqueDir(roots, xboxDir);
+                }
+                catch { }
+            }
+
+            for (int r = 0; r < roots.Count; r++)
+            {
+                string[] games;
+                try { games = Directory.GetDirectories(roots[r]); }
+                catch { continue; }
+                for (int i = 0; i < games.Length && i < 300; i++)
+                {
+                    string gameDir = games[i];
+                    string cfg = Path.Combine(gameDir, "MicrosoftGame.config");
+                    string contentDir = gameDir;
+                    if (!File.Exists(cfg))
+                    {
+                        contentDir = Path.Combine(gameDir, "Content");
+                        cfg = Path.Combine(contentDir, "MicrosoftGame.config");
+                    }
+                    if (!File.Exists(cfg)) continue;
+
+                    string xml;
+                    try { xml = File.ReadAllText(cfg, Encoding.UTF8); }
+                    catch { continue; }
+
+                    string name = XmlAttr(xml, "ShellVisuals", "DefaultDisplayName");
+                    if (name.Length == 0 || name.StartsWith("ms-resource:", StringComparison.OrdinalIgnoreCase))
+                        name = Path.GetFileName(gameDir);
+                    if (LooksLikeTool(name)) continue;
+
+                    string exeRel = XmlAttr(xml, "Executable", "Name");
+                    string exe = "";
+                    if (exeRel.Length > 0)
+                    {
+                        try
+                        {
+                            string cand = Path.Combine(contentDir, exeRel.Replace('/', '\\'));
+                            if (File.Exists(cand)) exe = cand;
+                        }
+                        catch { exe = ""; }
+                    }
+                    if (exe.Length == 0) exe = FindExe(contentDir, name);
+                    Add(found, seen, name, exe, "xbox", "");
+                }
+            }
+        }
+
+        // ---------------- HoYoPlay / miHoYo Launcher ----------------
+
+        private static void ScanHoYoPlay(List<InstalledGame> found, Dictionary<string, InstalledGame> seen)
+        {
+            var gameDirs = new List<string>();
+            string[] hypKeys = new string[]
+            {
+                @"Software\Cognosphere\HYP",
+                @"Software\miHoYo\HYP"
+            };
+            for (int k = 0; k < hypKeys.Length; k++)
+            {
+                try
+                {
+                    using (RegistryKey hyp = Registry.CurrentUser.OpenSubKey(hypKeys[k]))
+                    {
+                        if (hyp == null) continue;
+                        CollectRegInstallPaths(hyp, gameDirs, 0);
+                    }
+                }
+                catch { }
+            }
+
+            DriveInfo[] drives;
+            try { drives = DriveInfo.GetDrives(); }
+            catch { drives = new DriveInfo[0]; }
+            for (int d = 0; d < drives.Length; d++)
+            {
+                try
+                {
+                    if (drives[d].DriveType != DriveType.Fixed || !drives[d].IsReady) continue;
+                    string root = drives[d].RootDirectory.FullName.TrimEnd('\\') + "\\";
+                    string[] hypBases = new string[]
+                    {
+                        root + "HoYoPlay\\games",
+                        root + "Program Files\\HoYoPlay\\games",
+                        root + "miHoYo Launcher\\games",
+                        root + "Program Files\\miHoYo Launcher\\games"
+                    };
+                    for (int b = 0; b < hypBases.Length; b++)
+                    {
+                        if (!Directory.Exists(hypBases[b])) continue;
+                        string[] subs;
+                        try { subs = Directory.GetDirectories(hypBases[b]); }
+                        catch { continue; }
+                        for (int i = 0; i < subs.Length && i < 100; i++)
+                            AddUniqueDir(gameDirs, subs[i]);
+                    }
+                }
+                catch { }
+            }
+
+            for (int i = 0; i < gameDirs.Count; i++)
+            {
+                string dir = gameDirs[i];
+                if (!Directory.Exists(dir)) continue;
+                string ini = Path.Combine(dir, "config.ini");
+                string targetDir = dir;
+                string startExe = "";
+                if (File.Exists(ini))
+                {
+                    try
+                    {
+                        string[] lines = File.ReadAllLines(ini, Encoding.UTF8);
+                        for (int l = 0; l < lines.Length; l++)
+                        {
+                            string line = lines[l].Trim();
+                            if (line.StartsWith("game_install_path=", StringComparison.OrdinalIgnoreCase))
+                            {
+                                string p = line.Substring("game_install_path=".Length).Trim().Replace('/', '\\');
+                                if (Directory.Exists(p)) targetDir = p;
+                            }
+                            else if (line.StartsWith("game_start_name=", StringComparison.OrdinalIgnoreCase))
+                            {
+                                startExe = line.Substring("game_start_name=".Length).Trim();
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
+                string dirName = Path.GetFileName(targetDir.TrimEnd('\\'));
+                string exe = "";
+                if (startExe.Length > 0)
+                {
+                    try
+                    {
+                        string cand = Path.Combine(targetDir, startExe);
+                        if (File.Exists(cand)) exe = cand;
+                    }
+                    catch { exe = ""; }
+                }
+                if (exe.Length == 0) exe = FindExe(targetDir, dirName, 45);
+                if (exe.Length > 0) Add(found, seen, dirName, exe, "hoyoplay", "");
+            }
+        }
+
+        // ---------------- Riot Client ----------------
+
+        private static void ScanRiot(List<InstalledGame> found, Dictionary<string, InstalledGame> seen)
+        {
+            string riotData;
+            try
+            {
+                riotData = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                    "Riot Games");
+            }
+            catch { return; }
+            if (!Directory.Exists(riotData)) return;
+
+            string metaDir = Path.Combine(riotData, "Metadata");
+            if (Directory.Exists(metaDir))
+            {
+                string[] products;
+                try { products = Directory.GetDirectories(metaDir); }
+                catch { products = new string[0]; }
+                for (int i = 0; i < products.Length; i++)
+                {
+                    string[] yamls;
+                    try { yamls = Directory.GetFiles(products[i], "*.product_settings.yaml"); }
+                    catch { continue; }
+                    for (int k = 0; k < yamls.Length; k++)
+                    {
+                        string[] lines;
+                        try { lines = File.ReadAllLines(yamls[k], Encoding.UTF8); }
+                        catch { continue; }
+                        string installPath = "";
+                        for (int l = 0; l < lines.Length; l++)
+                        {
+                            string t = lines[l].Trim();
+                            if (t.StartsWith("product_install_full_path:", StringComparison.OrdinalIgnoreCase))
+                            {
+                                installPath = t.Substring("product_install_full_path:".Length).Trim().Trim('"', '\'');
+                                break;
+                            }
+                            if (installPath.Length == 0 && t.StartsWith("product_install_root:", StringComparison.OrdinalIgnoreCase))
+                            {
+                                installPath = t.Substring("product_install_root:".Length).Trim().Trim('"', '\'');
+                            }
+                        }
+                        installPath = installPath.Replace('/', '\\').TrimEnd('\\');
+                        if (installPath.Length == 0 || !Directory.Exists(installPath)) continue;
+                        string name = Path.GetFileName(installPath);
+                        if (LooksLikeTool(name)) continue;
+                        string exe = FindExe(installPath, name);
+                        Add(found, seen, name, exe, "riot", "");
+                    }
+                }
+            }
+
+            string installsJson = Path.Combine(riotData, "RiotClientInstalls.json");
+            if (File.Exists(installsJson))
+            {
+                try
+                {
+                    string json = File.ReadAllText(installsJson, Encoding.UTF8);
+                    string rc = JsonStr(json, "rc_default");
+                    if (rc.Length > 0)
+                    {
+                        string rcDir = Path.GetDirectoryName(rc.Replace('/', '\\'));
+                        if (!string.IsNullOrEmpty(rcDir))
+                        {
+                            string parent = Path.GetDirectoryName(rcDir);
+                            if (!string.IsNullOrEmpty(parent) && Directory.Exists(parent))
+                            {
+                                string[] subs = Directory.GetDirectories(parent);
+                                for (int i = 0; i < subs.Length && i < 40; i++)
+                                {
+                                    string n = Path.GetFileName(subs[i]);
+                                    if (string.Equals(n, "Riot Client", StringComparison.OrdinalIgnoreCase)) continue;
+                                    if (LooksLikeTool(n)) continue;
+                                    string exe = FindExe(subs[i], n);
+                                    Add(found, seen, n, exe, "riot", "");
+                                }
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+
+        // ---------------- Battle.net ----------------
+
+        private static void ScanBattleNet(List<InstalledGame> found, Dictionary<string, InstalledGame> seen)
+        {
+            string[] regPaths = new string[]
+            {
+                @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+            };
+            for (int p = 0; p < regPaths.Length; p++)
+            {
+                try
+                {
+                    using (RegistryKey key = Registry.LocalMachine.OpenSubKey(regPaths[p]))
+                    {
+                        if (key == null) continue;
+                        string[] subs = key.GetSubKeyNames();
+                        for (int i = 0; i < subs.Length; i++)
+                        {
+                            using (RegistryKey g = key.OpenSubKey(subs[i]))
+                            {
+                                if (g == null) continue;
+                                string pub = Val(g, "Publisher");
+                                if (pub.IndexOf("Blizzard", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                                string name = Val(g, "DisplayName");
+                                if (name.Length == 0 || LooksLikeTool(name)) continue;
+                                string dir = Val(g, "InstallLocation");
+                                if (dir.Length == 0 || !Directory.Exists(dir)) continue;
+                                string exe = FindExe(dir, name);
+                                Add(found, seen, name, exe, "battlenet", "");
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            try
+            {
+                string db = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                    @"Battle.net\Agent\product.db");
+                if (File.Exists(db))
+                {
+                    byte[] bytes = File.ReadAllBytes(db);
+                    string ascii = Encoding.UTF8.GetString(bytes);
+                    int idx = 0;
+                    while (idx < ascii.Length)
+                    {
+                        int colon = ascii.IndexOf(":\\", idx, StringComparison.Ordinal);
+                        if (colon < 0) colon = ascii.IndexOf(":/", idx, StringComparison.Ordinal);
+                        if (colon < 0) break;
+                        if (colon >= 1 && char.IsLetter(ascii[colon - 1]))
+                        {
+                            int start = colon - 1;
+                            int end = colon + 2;
+                            while (end < ascii.Length && ascii[end] >= 32 && ascii[end] != '"' && ascii[end] != '<' && ascii[end] != '>')
+                                end++;
+                            string cand = ascii.Substring(start, end - start).Replace('/', '\\').TrimEnd('\\');
+                            if (cand.Length > 3 && cand.Length < 200 && Directory.Exists(cand))
+                            {
+                                string n = Path.GetFileName(cand);
+                                if (!LooksLikeTool(n) && n.IndexOf("Battle.net", StringComparison.OrdinalIgnoreCase) < 0)
+                                {
+                                    string exe = FindExe(cand, n);
+                                    Add(found, seen, n, exe, "battlenet", "");
+                                }
+                            }
+                            idx = end;
+                        }
+                        else
+                        {
+                            idx = colon + 2;
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        // ---------------- EA App ----------------
+
+        private static void ScanEaApp(List<InstalledGame> found, Dictionary<string, InstalledGame> seen)
+        {
+            string[] roots = new string[]
+            {
+                @"SOFTWARE\Electronic Arts",
+                @"SOFTWARE\WOW6432Node\Electronic Arts",
+                @"SOFTWARE\Origin Games",
+                @"SOFTWARE\WOW6432Node\Origin Games"
+            };
+            for (int r = 0; r < roots.Length; r++)
+            {
+                try
+                {
+                    using (RegistryKey key = Registry.LocalMachine.OpenSubKey(roots[r]))
+                    {
+                        if (key == null) continue;
+                        string[] subs = key.GetSubKeyNames();
+                        for (int i = 0; i < subs.Length; i++)
+                        {
+                            if (string.Equals(subs[i], "EA Desktop", StringComparison.OrdinalIgnoreCase)) continue;
+                            using (RegistryKey g = key.OpenSubKey(subs[i]))
+                            {
+                                if (g == null) continue;
+                                string dir = Val(g, "Install Dir");
+                                if (dir.Length == 0) dir = Val(g, "InstallDir");
+                                dir = dir.Replace('/', '\\').TrimEnd('\\');
+                                if (dir.Length == 0 || !Directory.Exists(dir)) continue;
+                                string name = Val(g, "DisplayName");
+                                if (name.Length == 0) name = Path.GetFileName(dir);
+                                if (LooksLikeTool(name)) continue;
+                                string exe = FindExe(dir, name);
+                                Add(found, seen, name, exe, "ea", "");
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+
+        // ---------------- Ubisoft Connect ----------------
+
+        private static void ScanUbisoft(List<InstalledGame> found, Dictionary<string, InstalledGame> seen)
+        {
+            string[] paths = new string[]
+            {
+                @"SOFTWARE\WOW6432Node\Ubisoft\Launcher\Installs",
+                @"SOFTWARE\Ubisoft\Launcher\Installs"
+            };
+            for (int p = 0; p < paths.Length; p++)
+            {
+                try
+                {
+                    using (RegistryKey key = Registry.LocalMachine.OpenSubKey(paths[p]))
+                    {
+                        if (key == null) continue;
+                        string[] subs = key.GetSubKeyNames();
+                        for (int i = 0; i < subs.Length; i++)
+                        {
+                            using (RegistryKey g = key.OpenSubKey(subs[i]))
+                            {
+                                if (g == null) continue;
+                                string dir = Val(g, "InstallDir").Replace('/', '\\').TrimEnd('\\');
+                                if (dir.Length == 0 || !Directory.Exists(dir)) continue;
+                                string name = Path.GetFileName(dir);
+                                if (LooksLikeTool(name)) continue;
+                                string exe = FindExe(dir, name);
+                                string uri = subs[i].Length > 0 ? "uplay://launch/" + subs[i] + "/0" : "";
+                                Add(found, seen, name, exe, "ubisoft", uri);
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+
+        // ---------------- WeGame ----------------
+
+        private static void ScanWeGame(List<InstalledGame> found, Dictionary<string, InstalledGame> seen)
+        {
+            var wegameDirs = new List<string>();
+            string[] regPaths = new string[]
+            {
+                @"Software\Tencent\WeGame",
+                @"SOFTWARE\WOW6432Node\Tencent\WeGame",
+                @"SOFTWARE\Tencent\WeGame"
+            };
+            RegistryKey[] regRoots = new RegistryKey[]
+            {
+                Registry.CurrentUser,
+                Registry.LocalMachine,
+                Registry.LocalMachine
+            };
+            for (int i = 0; i < regPaths.Length; i++)
+            {
+                string p = RegStr(regRoots[i], regPaths[i], "InstallPath");
+                if (p.Length == 0) p = RegStr(regRoots[i], regPaths[i], "Path");
+                if (p.Length > 0) AddUniqueDir(wegameDirs, p.Replace('/', '\\').TrimEnd('\\'));
+            }
+
+            DriveInfo[] drives;
+            try { drives = DriveInfo.GetDrives(); }
+            catch { drives = new DriveInfo[0]; }
+            for (int d = 0; d < drives.Length; d++)
+            {
+                try
+                {
+                    if (drives[d].DriveType != DriveType.Fixed || !drives[d].IsReady) continue;
+                    string root = drives[d].RootDirectory.FullName.TrimEnd('\\') + "\\";
+                    AddUniqueDir(wegameDirs, root + "WeGameApps\\rail_apps");
+                    AddUniqueDir(wegameDirs, root + "WeGameApps\\common_apps");
+                }
+                catch { }
+            }
+
+            for (int w = 0; w < wegameDirs.Count; w++)
+            {
+                string baseDir = wegameDirs[w];
+                if (!Directory.Exists(baseDir)) continue;
+                string[] subs;
+                try { subs = Directory.GetDirectories(baseDir); }
+                catch { continue; }
+                for (int i = 0; i < subs.Length && i < 200; i++)
+                {
+                    string dirName = Path.GetFileName(subs[i]);
+                    if (LooksLikeTool(dirName)) continue;
+                    string exe = FindExe(subs[i], dirName, 45);
+                    if (exe.Length > 0) Add(found, seen, dirName, exe, "wegame", "");
+                }
+            }
+        }
+
+        private static void AddUniqueDir(List<string> dirs, string path)
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            string clean = path.Replace('/', '\\').TrimEnd('\\');
+            if (clean.Length == 0) return;
+            for (int i = 0; i < dirs.Count; i++)
+                if (string.Equals(dirs[i], clean, StringComparison.OrdinalIgnoreCase)) return;
+            dirs.Add(clean);
+        }
+
+        private static void CollectRegInstallPaths(RegistryKey key, List<string> dirs, int depth)
+        {
+            if (depth > 3 || key == null) return;
+            string[] names;
+            try { names = key.GetValueNames(); }
+            catch { names = new string[0]; }
+            for (int i = 0; i < names.Length; i++)
+            {
+                if (names[i].IndexOf("InstallPath", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    string p = Val(key, names[i]).Replace('/', '\\').TrimEnd('\\');
+                    if (p.Length > 0 && Directory.Exists(p)) AddUniqueDir(dirs, p);
+                }
+            }
+            string[] subs;
+            try { subs = key.GetSubKeyNames(); }
+            catch { return; }
+            for (int i = 0; i < subs.Length; i++)
+            {
+                try
+                {
+                    using (RegistryKey sub = key.OpenSubKey(subs[i]))
+                        CollectRegInstallPaths(sub, dirs, depth + 1);
+                }
+                catch { }
+            }
+        }
+
+        private static string XmlAttr(string xml, string tagName, string attrName)
+        {
+            if (string.IsNullOrEmpty(xml)) return "";
+            int tagIdx = xml.IndexOf("<" + tagName, StringComparison.OrdinalIgnoreCase);
+            if (tagIdx < 0) return "";
+            int endIdx = xml.IndexOf('>', tagIdx);
+            if (endIdx < 0) return "";
+            string header = xml.Substring(tagIdx, endIdx - tagIdx);
+            string pat = attrName + "=";
+            int aIdx = header.IndexOf(pat, StringComparison.OrdinalIgnoreCase);
+            if (aIdx < 0) return "";
+            int qStart = aIdx + pat.Length;
+            if (qStart >= header.Length) return "";
+            char quote = header[qStart];
+            if (quote != '"' && quote != '\'') return "";
+            int qEnd = header.IndexOf(quote, qStart + 1);
+            if (qEnd < 0) return "";
+            return header.Substring(qStart + 1, qEnd - qStart - 1).Trim();
+        }
+
         // ---------------- 卸载注册表 ----------------
 
-        private static void ScanUninstall(List<InstalledGame> found, HashSet<string> seen)
+        private static void ScanUninstall(List<InstalledGame> found, Dictionary<string, InstalledGame> seen)
         {
             string[] paths = new string[]
             {
@@ -403,7 +966,7 @@ namespace FrameForge.Sys
         /// 在各固定磁盘的常见安装位置找内置名单里的游戏目录。
         /// 只列目录名、命中才进去找 exe,开销很小。
         /// </summary>
-        private static void ScanKnownDirs(List<InstalledGame> found, HashSet<string> seen)
+        private static void ScanKnownDirs(List<InstalledGame> found, Dictionary<string, InstalledGame> seen)
         {
             DriveInfo[] drives;
             try { drives = DriveInfo.GetDrives(); }
@@ -452,7 +1015,7 @@ namespace FrameForge.Sys
             }
         }
 
-        private static void AddKnownDir(List<InstalledGame> found, HashSet<string> seen,
+        private static void AddKnownDir(List<InstalledGame> found, Dictionary<string, InstalledGame> seen,
             string dir, string name)
         {
             string exe = FindExe(dir, name, 45);
@@ -491,18 +1054,53 @@ namespace FrameForge.Sys
 
         // ---------------- 公共 ----------------
 
-        private static void Add(List<InstalledGame> found, HashSet<string> seen,
+        private static void Add(List<InstalledGame> found, Dictionary<string, InstalledGame> seen,
             string name, string exe, string source)
         {
+            Add(found, seen, name, exe, source, "");
+        }
+
+        private static void Add(List<InstalledGame> found, Dictionary<string, InstalledGame> seen,
+            string name, string exe, string source, string launchUri)
+        {
             if (string.IsNullOrEmpty(exe) || !File.Exists(exe)) return;
-            if (!seen.Add(exe)) return;
+            string norm = NormalizeExePath(exe);
+            if (norm.Length == 0) return;
+
+            string uri = launchUri ?? "";
+            InstalledGame existing;
+            if (seen.TryGetValue(norm, out existing))
+            {
+                if (existing.LaunchUri.Length == 0 && uri.Length > 0)
+                {
+                    existing.LaunchUri = uri;
+                    existing.Source = source;
+                }
+                return;
+            }
+
             var g = new InstalledGame();
             // 名字统一在这里收口:平台给的真名保留,机器名换成游戏名。
             g.Name = GameDb.DisplayName(name, exe);
             if (g.Name.Length == 0) g.Name = name;
             g.ExePath = exe;
             g.Source = source;
+            g.LaunchUri = uri;
+            seen[norm] = g;
             found.Add(g);
+        }
+
+        private static string NormalizeExePath(string exe)
+        {
+            if (string.IsNullOrEmpty(exe)) return "";
+            try
+            {
+                return Path.GetFullPath(exe).Trim().TrimEnd('\\');
+            }
+            catch
+            {
+                return exe.Trim().Replace('/', '\\').TrimEnd('\\');
+            }
         }
 
         private static bool LooksLikeTool(string name)

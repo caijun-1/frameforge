@@ -1141,6 +1141,145 @@ namespace FrameForge
             }
             catch (Exception ex) { check("update version compare", false, ex.Message); }
 
+            // 23. Wave 1 & Wave 2: ProcessGuardList
+            try
+            {
+                bool guardOk = ProcessGuardList.IsAntiCheat("neacsafe64")
+                    && ProcessGuardList.IsAntiCheat("eaanticheat.gameservice")
+                    && ProcessGuardList.IsProtectedBackground("discord");
+                check("process guard list", guardOk, "anticheat + protected background");
+            }
+            catch (Exception ex) { check("process guard list", false, ex.Message); }
+
+            // 24. Wave 1 & Wave 2: GameDb 2024-2026 titles
+            try
+            {
+                string t1 = GameDb.Title("nightreign.exe");
+                string t2 = GameDb.Title("uagame.exe");
+                bool dbOk = !string.IsNullOrEmpty(t1)
+                    && !string.Equals(t1, "nightreign.exe", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(t1, "nightreign", StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrEmpty(t2)
+                    && !string.Equals(t2, "uagame.exe", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(t2, "uagame", StringComparison.OrdinalIgnoreCase);
+                check("gamedb 2024-2026 titles", dbOk, t1 + " | " + t2);
+            }
+            catch (Exception ex) { check("gamedb 2024-2026 titles", false, ex.Message); }
+
+            // 25. Wave 1 & Wave 2: FpsEngine CopyFrameGraph + Low01
+            try
+            {
+                using (var fps = new FpsEngine())
+                {
+                    MethodInfo pushMethod = typeof(FpsEngine).GetMethod("Push",
+                        BindingFlags.Instance | BindingFlags.NonPublic);
+                    if (pushMethod != null)
+                    {
+                        for (int i = 0; i < 1200; i++)
+                        {
+                            double t = i / 240.0;
+                            double ms = 1000.0 / 240.0 + (i % 240 == 0 ? 8.0 : 0.0);
+                            pushMethod.Invoke(fps, new object[] { t, ms });
+                        }
+                    }
+                    float[] graph = new float[90];
+                    int gCount;
+                    float gAvg;
+                    fps.CopyFrameGraph(graph, out gCount, out gAvg);
+                    bool fpsOk = pushMethod != null && gCount > 0 && gAvg > 0f && fps.Low01 > 0;
+                    check("fps copy frame graph & low01", fpsOk,
+                        "samples=" + gCount + " avgMs=" + gAvg.ToString("0.00", CultureInfo.InvariantCulture)
+                        + " low01=" + fps.Low01.ToString("0.0", CultureInfo.InvariantCulture));
+                }
+            }
+            catch (Exception ex) { check("fps copy frame graph & low01", false, ex.Message); }
+
+            // 26. Wave 1 & Wave 2: SessionStore.BaselineFor
+            try
+            {
+                var ss = new SessionStore();
+                ss.All.Add(new SessionRecord
+                {
+                    Id = "s1",
+                    Exe = "selftestgame.exe",
+                    Seconds = 120,
+                    FpsAvg = 100,
+                    Low1 = 80,
+                    GpuTempAvg = 65,
+                    StutterCount = 2
+                });
+                ss.All.Add(new SessionRecord
+                {
+                    Id = "s2",
+                    Exe = "selftestgame",
+                    Seconds = 180,
+                    FpsAvg = 140,
+                    Low1 = 100,
+                    GpuTempAvg = 75,
+                    StutterCount = 4
+                });
+                ss.All.Add(new SessionRecord
+                {
+                    Id = "s3",
+                    Exe = "selftestgame.exe",
+                    Seconds = 30, // < 60s, must be ignored
+                    FpsAvg = 999,
+                    Low1 = 999,
+                    GpuTempAvg = 99,
+                    StutterCount = 99
+                });
+                SessionBaseline b = ss.BaselineFor("selftestgame.exe", null, 5);
+                bool baseOk = b.Count == 2
+                    && Math.Abs(b.AvgFps - 120.0) < 0.01
+                    && Math.Abs(b.AvgLow1 - 90.0) < 0.01
+                    && Math.Abs(b.AvgTemp - 70.0) < 0.01
+                    && Math.Abs(b.AvgStutters - 3.0) < 0.01;
+                check("session baseline average", baseOk,
+                    "count=" + b.Count + " fps=" + b.AvgFps.ToString("0.0", CultureInfo.InvariantCulture)
+                    + " low1=" + b.AvgLow1.ToString("0.0", CultureInfo.InvariantCulture));
+            }
+            catch (Exception ex) { check("session baseline average", false, ex.Message); }
+
+            // 27. Wave 1 & Wave 2: ProfileStore FilterPreset/OverlayMode roundtrip & composite fallback
+            try
+            {
+                string pPath = ProfileStore.FilePath;
+                bool hadProfiles = File.Exists(pPath);
+                byte[] origProfiles = hadProfiles ? File.ReadAllBytes(pPath) : null;
+                try
+                {
+                    var ps1 = new ProfileStore();
+                    ps1.Load();
+                    string cKey = ProfileStore.CompositeKey("selftestapp", @"C:\Games\SelftestTitle\bin\selftestapp.exe");
+                    var gp1 = new GameProfile();
+                    gp1.Name = cKey;
+                    gp1.FilterPreset = 5;
+                    gp1.OverlayMode = 1;
+                    ps1.Save(gp1);
+
+                    var gp2 = new GameProfile();
+                    gp2.Name = "selftestfallback";
+                    gp2.FilterPreset = 12;
+                    gp2.OverlayMode = 0;
+                    ps1.Save(gp2);
+
+                    var ps2 = new ProfileStore();
+                    ps2.Load();
+                    GameProfile hitComposite = ps2.Find("selftestapp", @"C:\Games\SelftestTitle\bin\selftestapp.exe", "SelftestTitle");
+                    GameProfile hitFallback = ps2.Find("selftestfallback", @"D:\Other\UniqueDir\selftestfallback.exe", "Other");
+                    bool profOk = hitComposite != null && hitComposite.FilterPreset == 5 && hitComposite.OverlayMode == 1
+                        && hitFallback != null && hitFallback.FilterPreset == 12 && hitFallback.OverlayMode == 0;
+                    check("profile roundtrip & composite fallback", profOk,
+                        "composite=" + cKey + " fallback=" + (hitFallback != null ? hitFallback.Name : "null"));
+                }
+                finally
+                {
+                    if (hadProfiles) File.WriteAllBytes(pPath, origProfiles);
+                    else if (File.Exists(pPath)) try { File.Delete(pPath); } catch { }
+                }
+            }
+            catch (Exception ex) { check("profile roundtrip & composite fallback", false, ex.Message); }
+
             sb.AppendLine();
             sb.AppendLine(fail == 0
                 ? "RESULT: OK" + (skipped > 0 ? " (" + skipped + " skipped)" : "")

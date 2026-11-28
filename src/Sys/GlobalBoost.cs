@@ -18,7 +18,9 @@ namespace FrameForge.Sys
         private const int SlowEverySeconds = 5;
         /// <summary>内存检查间隔,单位秒。</summary>
         private const int MemCheckSeconds = 60;
-        /// <summary>可用内存低于总内存的这个百分比就整理一次。</summary>
+        /// <summary>待命内存清理冷却时间,单位秒。</summary>
+        private const int MemPurgeCooldownSeconds = 90;
+        /// <summary>可用内存低于总内存的这个百分比就整理一次(FreeBytes==0 时的回退阈值)。</summary>
         private const ulong MemLowPercent = 20;
 
         /// <summary>系统关键进程:即使被切到前台也不碰,避免影响登录、桌面与安全组件。</summary>
@@ -35,11 +37,11 @@ namespace FrameForge.Sys
             "sppsvc", "logonui", "userinit", "smartscreen", "taskmgr"
         };
 
-        /// <summary>常用程序:即使没在前台,也把同名进程提一档,后台同步/消息拉取更跟手。</summary>
-        private static readonly HashSet<string> CommonSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        /// <summary>浏览器进程:绝不抢占游戏优先级,也不在后台提权。</summary>
+        private static readonly HashSet<string> BrowserSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "chrome", "msedge", "firefox", "brave", "opera", "360chrome", "qqbrowser",
-            "QQ", "WeChat", "Weixin", "Telegram", "Discord"
+            "vivaldi", "arc", "waterfox"
         };
 
         /// <summary>
@@ -80,6 +82,10 @@ namespace FrameForge.Sys
 
         private readonly object gate = new object();
         private readonly Dictionary<int, SavedPriority> saved = new Dictionary<int, SavedPriority>();
+        private readonly Dictionary<int, SavedPriority> tamed = new Dictionary<int, SavedPriority>();
+        private readonly Dictionary<int, long> prevCpuTicks = new Dictionary<int, long>();
+        private DateTime prevCpuAtUtc = DateTime.MinValue;
+        private DateTime lastMemTrimUtc = DateTime.MinValue;
 
         private Timer timer;
         private bool active;
@@ -253,7 +259,7 @@ namespace FrameForge.Sys
             {
                 AcquireResult ar = SystemResourceArbiter.Instance.Acquire(this, ResourceKind.TimerResolution,
                     delegate { return "1"; },
-                    delegate { return Native.timeBeginPeriod(1) == 0; });
+                    delegate { return BoostEngine.AcquireHighResTimer(); });
                 if (!ar.Ok) AddDegraded("timer-denied");
                 else
                 {
@@ -335,7 +341,7 @@ namespace FrameForge.Sys
 
             if (period)
                 SystemResourceArbiter.Instance.Release(this, ResourceKind.TimerResolution,
-                    delegate(string old) { Native.timeEndPeriod(1); timerEnded = true; return true; });
+                    delegate(string old) { BoostEngine.ReleaseHighResTimer(); timerEnded = true; return true; });
             if (timerEnded && tx != null)
             {
                 BoostJournal.MarkReverted(tx, ActionKind.TIMER_RESOLUTION);
@@ -370,7 +376,7 @@ namespace FrameForge.Sys
         private static bool DelegateTimerRestore(string old)
         {
             // 同进程 Release 才到这里；跨进程恢复由 BoostJournal.Reconcile 一律跳过。
-            Native.timeEndPeriod(1);
+            BoostEngine.ReleaseHighResTimer();
             return true;
         }
 
@@ -529,7 +535,10 @@ namespace FrameForge.Sys
             int pid = 0;
             if (fg != IntPtr.Zero) Native.GetWindowThreadProcessId(fg, out pid);
 
-            // 前台窗口每秒看一次就够;真正重的进程枚举(常用程序、同名进程)每 5 秒一次。
+            int activeGamePid = 0;
+            bool gameActive = Monitor.FindFullscreenWindow(out activeGamePid) && activeGamePid > 0;
+
+            // 前台窗口每秒看一次就够;真正重的进程枚举(后台 EcoQoS 降噪)每 5 秒一次。
             bool slow = false;
             lock (gate)
             {
@@ -544,22 +553,40 @@ namespace FrameForge.Sys
             if (pid > 0 && pid != SelfPid && !SkipPid(pid))
             {
                 string name = Native.ProcessName(pid);
-                if (name.Length > 0 && !SkipNames.Contains(name) && !name.StartsWith("frameforge", StringComparison.OrdinalIgnoreCase))
+                if (name.Length > 0
+                    && !SkipNames.Contains(name)
+                    && !name.StartsWith("frameforge", StringComparison.OrdinalIgnoreCase)
+                    && !ProcessGuardList.IsAntiCheat(name)
+                    && !BoostEngine.IsExcluded(name)
+                    && !BrowserSet.Contains(name)
+                    && (!gameActive || pid == activeGamePid))
+                {
                     BoostForeground(pid, name, slow);
+                }
             }
 
-            if (slow) BoostCommon();
+            if (slow) TameHighCpuBackground(activeGamePid, pid);
             PurgeDeadIfNeeded();
             CheckMemory();
         }
 
-        /// <summary>常用浏览器/聊天软件即使不在前台,也把它们的同名进程提到高于正常。</summary>
-        private void BoostCommon()
+        /// <summary>
+        /// 5 秒慢速轮询:识别非保护、非游戏的高 CPU 后台进程,施以 EcoQoS + BelowNormal(不冻结)。
+        /// 绝不触碰反作弊、受保护后台进程及浏览器/游戏窗口。
+        /// </summary>
+        private void TameHighCpuBackground(int activeGamePid, int fgPid)
         {
-            // FF-026：一次全表枚举代替 13 次 GetProcessesByName，5 秒一轮的开销降一个量级。
             Process[] all = null;
             try { all = Process.GetProcesses(); }
-            catch (Exception ex) { Log.Write("global boost common: " + ex.Message); return; }
+            catch (Exception ex) { Log.Write("global boost tame: " + ex.Message); return; }
+
+            DateTime now = DateTime.UtcNow;
+            double elapsedMs = prevCpuAtUtc == DateTime.MinValue ? 0 : (now - prevCpuAtUtc).TotalMilliseconds;
+            prevCpuAtUtc = now;
+            var nextTicks = new Dictionary<int, long>();
+            double thresholdTicks = elapsedMs > 500
+                ? elapsedMs * 10000.0 * Math.Max(1, Environment.ProcessorCount) * 0.05
+                : double.MaxValue;
 
             for (int i = 0; i < all.Length; i++)
             {
@@ -567,14 +594,70 @@ namespace FrameForge.Sys
                 try
                 {
                     int id = p.Id;
-                    if (id == SelfPid || p.SessionId == 0) continue;
+                    if (id <= 4 || id == SelfPid || id == activeGamePid || id == fgPid) continue;
+                    if (p.SessionId == 0 || p.MainWindowHandle != IntPtr.Zero) continue;
                     string name = p.ProcessName;
-                    if (name.Length == 0 || !CommonSet.Contains(name)) continue;
-                    BoostProcess(id, name, Native.ABOVE_NORMAL_PRIORITY_CLASS, 2);
+                    if (string.IsNullOrEmpty(name) || SkipNames.Contains(name)) continue;
+                    if (ProcessGuardList.IsAntiCheat(name) || ProcessGuardList.IsProtectedBackground(name)) continue;
+                    if (BoostEngine.IsPermanent(name) || BoostEngine.UserWhitelist.Contains(name)) continue;
+
+                    long ticks = p.TotalProcessorTime.Ticks;
+                    nextTicks[id] = ticks;
+
+                    long prev;
+                    if (elapsedMs <= 500 || !prevCpuTicks.TryGetValue(id, out prev)) continue;
+                    if (ticks - prev < thresholdTicks) continue;
+
+                    TameOneProcess(id, name, p);
                 }
                 catch { }
                 finally { p.Dispose(); }
             }
+
+            lock (gate)
+            {
+                prevCpuTicks.Clear();
+                foreach (KeyValuePair<int, long> kv in nextTicks) prevCpuTicks[kv.Key] = kv.Value;
+            }
+        }
+
+        private void TameOneProcess(int pid, string name, Process proc)
+        {
+            lock (gate)
+            {
+                if (!active || tamed.ContainsKey(pid) || saved.ContainsKey(pid)) return;
+                DateTime until;
+                if (failedUntil.TryGetValue(pid, out until) && DateTime.UtcNow < until) return;
+            }
+
+            IntPtr h = Native.OpenProcess(Native.PROCESS_SET_INFORMATION | Native.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+            if (h == IntPtr.Zero)
+            {
+                lock (gate) { failedUntil[pid] = DateTime.UtcNow.AddSeconds(FailCooldownSeconds); }
+                return;
+            }
+            try
+            {
+                uint cur = Native.GetPriorityClass(h);
+                if (cur == 0) return;
+                if (cur == Native.NORMAL_PRIORITY_CLASS || cur == Native.ABOVE_NORMAL_PRIORITY_CLASS)
+                    Native.SetPriorityClass(h, Native.BELOW_NORMAL_PRIORITY_CLASS);
+                BoostEngine.SetProcessEcoQoS(h, true);
+
+                var item = new SavedPriority();
+                item.Pid = pid;
+                item.Name = name;
+                item.Priority = cur;
+                item.Role = 3;
+                try { item.StartTime = proc.StartTime.Ticks; } catch { item.StartTime = 0; }
+                try { item.Path = Native.ProcessPath(pid); } catch { item.Path = ""; }
+                lock (gate)
+                {
+                    if (active && !tamed.ContainsKey(pid)) tamed[pid] = item;
+                }
+            }
+            catch { }
+            finally { Native.CloseHandle(h); }
         }
 
         /// <summary>
@@ -783,11 +866,17 @@ namespace FrameForge.Sys
         private void RestorePriorities()
         {
             SavedPriority[] items;
+            SavedPriority[] tamedItems;
             lock (gate)
             {
                 items = new SavedPriority[saved.Count];
                 saved.Values.CopyTo(items, 0);
                 saved.Clear();
+                tamedItems = new SavedPriority[tamed.Count];
+                tamed.Values.CopyTo(tamedItems, 0);
+                tamed.Clear();
+                prevCpuTicks.Clear();
+                prevCpuAtUtc = DateTime.MinValue;
             }
 
             for (int i = 0; i < items.Length; i++)
@@ -803,6 +892,24 @@ namespace FrameForge.Sys
                     uint cur = Native.GetPriorityClass(h);
                     if (cur != Native.HIGH_PRIORITY_CLASS && cur != Native.ABOVE_NORMAL_PRIORITY_CLASS) continue;
                     Native.SetPriorityClass(h, s.Priority);
+                }
+                catch { }
+                finally { if (h != IntPtr.Zero) Native.CloseHandle(h); }
+            }
+
+            for (int i = 0; i < tamedItems.Length; i++)
+            {
+                SavedPriority s = tamedItems[i];
+                IntPtr h = IntPtr.Zero;
+                try
+                {
+                    if (!Matches(s)) continue;
+                    h = Native.OpenProcess(Native.PROCESS_SET_INFORMATION | Native.PROCESS_QUERY_LIMITED_INFORMATION, false, s.Pid);
+                    if (h == IntPtr.Zero) continue;
+                    BoostEngine.SetProcessEcoQoS(h, false);
+                    uint cur = Native.GetPriorityClass(h);
+                    if (cur == Native.BELOW_NORMAL_PRIORITY_CLASS && s.Priority != 0)
+                        Native.SetPriorityClass(h, s.Priority);
                 }
                 catch { }
                 finally { if (h != IntPtr.Zero) Native.CloseHandle(h); }
@@ -856,21 +963,32 @@ namespace FrameForge.Sys
         private void CheckMemory()
         {
             bool due;
+            bool inCooldown;
             lock (gate)
             {
                 if (!active) return;
-                due = DateTime.UtcNow >= nextMemCheck;
-                if (due) nextMemCheck = DateTime.UtcNow.AddSeconds(MemCheckSeconds);
+                DateTime now = DateTime.UtcNow;
+                due = now >= nextMemCheck;
+                if (due) nextMemCheck = now.AddSeconds(MemCheckSeconds);
+                inCooldown = (now - lastMemTrimUtc).TotalSeconds < MemPurgeCooldownSeconds;
             }
-            if (!due) return;
+            if (!due || inCooldown) return;
 
             try
             {
-                var mem = new Native.MEMORYSTATUSEX();
-                mem.dwLength = (uint)Marshal.SizeOf(typeof(Native.MEMORYSTATUSEX));
-                if (!Native.GlobalMemoryStatusEx(ref mem)) return;
-                if (mem.ullTotalPhys == 0) return;
-                if (mem.ullAvailPhys * 100 >= mem.ullTotalPhys * MemLowPercent) return;
+                MemSample sample = MemEngine.Sample();
+                bool needPurge;
+                if (sample.FreeBytes > 0)
+                {
+                    needPurge = sample.FreeBytes < 1024L * 1024 * 1024
+                        && sample.StandbyBytes > 2048UL * 1024 * 1024;
+                }
+                else
+                {
+                    if (sample.TotalPhys == 0) return;
+                    needPurge = sample.AvailPhys * 100 < sample.TotalPhys * MemLowPercent;
+                }
+                if (!needPurge) return;
 
                 // 只在确实有全屏游戏时清理待命列表:桌面/办公场景下清空全系统 Standby
                 // 会让浏览器、微信下次访问时重新读盘,反而更卡(报告 FF-009)。
@@ -879,14 +997,17 @@ namespace FrameForge.Sys
 
                 // A-9：与一键加速共享节流窗口，避免两项叠加反复挤压工作集造成抖动。
                 if (!SystemResourceArbiter.TryNoteMemoryTrim()) return;
-                // 只清文件缓存与待命内存,不动各进程的工作集:
-                // 实时加速若把浏览器/微信的工作集也清掉,下次打开反而要重新读盘。
-                MemEngine.SmartClean(null);
+                // 只清待命列表,不刷新已修改列表也不动工作集。
+                if (!MemEngine.PurgeStandbyOnly()) return;
                 lock (gate)
                 {
-                    if (active) lastMemTrim = DateTime.Now;
+                    if (active)
+                    {
+                        lastMemTrimUtc = DateTime.UtcNow;
+                        lastMemTrim = DateTime.Now;
+                    }
                 }
-                Log.Write("global boost: trimmed standby memory");
+                Log.Write("global boost: purged standby memory");
             }
             catch (Exception ex) { Log.Write("global boost mem: " + ex.Message); }
         }

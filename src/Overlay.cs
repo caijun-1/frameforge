@@ -152,10 +152,21 @@ namespace FrameForge
         private readonly Settings st;
         private readonly Timer timer;
         private SysSample last = new SysSample();
+        private FpsEngine fpsEngine;
         private double fps = -1;
         private double low = -1;
+        private double low01 = -1;
         private double frameTime = -1;
         private DateTime upFrom = DateTime.Now;
+        private readonly float[] graphBuf = new float[90];
+        private int graphCount;
+        private float graphAvgMs;
+
+        private bool toastActive;
+        private string toastTitle = "";
+        private string toastDetail = "";
+        private Color toastAccent = Color.Empty;
+        private DateTime toastUntil = DateTime.MinValue;
 
         private bool moving;
         // 用户是否打开了叠加层。窗口被隐藏(内容清空、被游戏压掉)后靠它自愈显示,
@@ -191,9 +202,14 @@ namespace FrameForge
         // 渲染异常按分钟记一次日志:真出问题时不至于每 200ms 写一次盘。
         private DateTime lastErrLog = DateTime.MinValue;
 
-        public Overlay(Settings settings)
+        public Overlay(Settings settings) : this(settings, null)
+        {
+        }
+
+        public Overlay(Settings settings, FpsEngine engine)
         {
             st = settings;
+            fpsEngine = engine;
             FormBorderStyle = FormBorderStyle.None;
             ShowInTaskbar = false;
             StartPosition = FormStartPosition.Manual;
@@ -205,6 +221,11 @@ namespace FrameForge
             timer = new Timer();
             timer.Interval = 200;
             timer.Tick += delegate { Render(); };
+        }
+
+        public void AttachFps(FpsEngine engine)
+        {
+            fpsEngine = engine;
         }
 
         public bool Locked { get { return st.OverlayLocked; } }
@@ -249,10 +270,62 @@ namespace FrameForge
 
         public void Feed(SysSample s, double currentFps, double low1, double frameTimeMs)
         {
+            Feed(s, currentFps, low1, fpsEngine != null ? fpsEngine.Low01 : -1, frameTimeMs);
+        }
+
+        public void Feed(SysSample s, double currentFps, double low1, double low01Val, double frameTimeMs)
+        {
             last = s ?? new SysSample();
             fps = currentFps;
             low = low1;
+            low01 = low01Val;
             frameTime = frameTimeMs;
+        }
+
+        /// <summary>在游戏顶部角落弹出短暂的电竞风格 OSD 提示（不抢焦点、鼠标穿透）。</summary>
+        public void ShowOsdToast(string title)
+        {
+            ShowOsdToast(title, "", Color.Empty, 2200);
+        }
+
+        /// <summary>在游戏顶部角落弹出短暂的电竞风格 OSD 提示（不抢焦点、鼠标穿透）。</summary>
+        public void ShowOsdToast(string title, string detail, Color accent, int durationMs)
+        {
+            if (st == null || !st.InGameOsdToast || IsDisposed) return;
+            if (InvokeRequired)
+            {
+                try
+                {
+                    BeginInvoke((Action)delegate { ShowOsdToast(title, detail, accent, durationMs); });
+                }
+                catch { }
+                return;
+            }
+
+            int dur = durationMs > 0 ? durationMs : 2200;
+            if (dur < 600) dur = 600;
+            if (dur > 10000) dur = 10000;
+
+            toastTitle = title ?? "";
+            toastDetail = detail ?? "";
+            toastAccent = accent.A > 0 ? accent : OverlayPalette.For(st.OverlayTheme).Accent;
+            toastUntil = DateTime.UtcNow.AddMilliseconds(dur);
+            toastActive = true;
+            lastKey = "";
+
+            if (!Visible)
+            {
+                try { Show(); }
+                catch { }
+            }
+            if (IsHandleCreated)
+            {
+                int ex = Native.GetWindowLong(Handle, Native.GWL_EXSTYLE);
+                if ((ex & Native.WS_EX_TRANSPARENT) == 0)
+                    Native.SetWindowLong(Handle, Native.GWL_EXSTYLE, ex | Native.WS_EX_TRANSPARENT);
+            }
+            Render();
+            if (!timer.Enabled) timer.Start();
         }
 
         private void ApplyInputMode()
@@ -359,7 +432,7 @@ namespace FrameForge
             try
             {
                 uint flags = Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE;
-                if (wanted) flags |= Native.SWP_SHOWWINDOW;
+                if (wanted || toastActive) flags |= Native.SWP_SHOWWINDOW;
                 Native.SetWindowPos(Handle, Native.HWND_TOPMOST, 0, 0, 0, 0, flags);
             }
             catch { }
@@ -396,6 +469,8 @@ namespace FrameForge
             public bool IsHero;
             /// <summary>环境信息（时间/时长）整行降为次级灰。</summary>
             public bool Ambient;
+            /// <summary>需要以紧凑徽章样式绘制的单元格索引（如 THRM / PWR）。</summary>
+            public int BadgeCell = -1;
 
             public void Add(string text, Color color)
             {
@@ -411,7 +486,7 @@ namespace FrameForge
 
         /// <summary>按设备分组生成行：FPS 为独立主视觉行，设备与环境分层。</summary>
         private static List<Row> BuildRows(Settings st, OverlaySkin skin, SysSample s,
-            double fpsVal, double lowVal, double ftVal, DateTime now, DateTime upFrom)
+            double fpsVal, double lowVal, double low01Val, double ftVal, DateTime now, DateTime upFrom)
         {
             var rows = new List<Row>();
 
@@ -421,7 +496,12 @@ namespace FrameForge
                 r.Label = "FPS";
                 r.IsHero = st.ShowFps;
                 if (st.ShowFps) r.Add(fpsVal > 0 ? fpsVal.ToString("0") : "--", skin.Fps);
-                if (st.ShowLow) r.Add("1% " + (lowVal > 0 ? lowVal.ToString("0") : "--"), skin.Low);
+                if (st.ShowLow)
+                {
+                    r.Add("1% " + (lowVal > 0 ? lowVal.ToString("0") : "--"), skin.Low);
+                    if (low01Val > 0)
+                        r.Add("0.1% " + low01Val.ToString("0"), skin.Low);
+                }
                 if (st.ShowFrameTime) r.Add(ftVal > 0 ? ftVal.ToString("0.0") + "ms" : "--ms", skin.Frame);
                 rows.Add(r);
             }
@@ -440,6 +520,13 @@ namespace FrameForge
                 if (st.ShowGpuTemp)
                     r.Add(s.GpuTemp >= 0 ? s.GpuTemp.ToString("0") + "°C" : "--°C",
                         skin.Temp(s.GpuTemp, st.OverlayTempWarn, st.OverlayTempHot));
+                if (!string.IsNullOrEmpty(s.GpuThrottle))
+                {
+                    Color tc = string.Equals(s.GpuThrottle, "THRM", StringComparison.OrdinalIgnoreCase)
+                        ? skin.Hot : skin.Warn;
+                    r.BadgeCell = r.Cells.Count;
+                    r.Add(s.GpuThrottle, tc);
+                }
                 rows.Add(r);
             }
             if (st.ShowRam || st.ShowRamPct)
@@ -484,9 +571,41 @@ namespace FrameForge
                 if (k < 0.6f) k = 0.6f;
                 if (k > 2.4f) k = 2.4f;
 
+                if (toastActive)
+                {
+                    if (DateTime.UtcNow >= toastUntil)
+                    {
+                        toastActive = false;
+                        lastKey = "";
+                        ApplyInputMode();
+                        if (!wanted)
+                        {
+                            if (Visible) Hide();
+                            if (!st.RtssOsd) timer.Stop();
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        RenderToast(k);
+                        return;
+                    }
+                }
+
+                if (fpsEngine != null)
+                {
+                    fpsEngine.CopyFrameGraph(graphBuf, out graphCount, out graphAvgMs);
+                    if (low01 <= 0 && fpsEngine.Low01 > 0) low01 = fpsEngine.Low01;
+                }
+                else
+                {
+                    graphCount = 0;
+                    graphAvgMs = 0f;
+                }
+
                 string style = st.OverlayStyle;
                 OverlaySkin skin = OverlayPalette.For(st.OverlayTheme);
-                List<Row> rows = BuildRows(st, skin, last, fps, low, frameTime, DateTime.Now, upFrom);
+                List<Row> rows = BuildRows(st, skin, last, fps, low, low01, frameTime, DateTime.Now, upFrom);
 
                 bool miniData = st.ShowFps || st.ShowLow || st.ShowGpuTemp;
                 bool hasData = style == "mini" ? miniData : rows.Count > 0;
@@ -523,6 +642,8 @@ namespace FrameForge
                            + "|" + (st.OverlayLocked ? "L" : "U")
                            + "|" + st.OverlayTempWarn.ToString(CultureInfo.InvariantCulture)
                            + "|" + st.OverlayTempHot.ToString(CultureInfo.InvariantCulture)
+                           + "|" + (st.ShowFrameGraph ? "G" : "")
+                           + "|" + (style == "v" && st.ShowFrameGraph ? GraphKey(graphBuf, graphCount).ToString(CultureInfo.InvariantCulture) : "")
                            + "|" + (style == "mini" ? ((st.ShowFps ? "F" : "") + (st.ShowLow ? "L" : "") + (st.ShowGpuTemp ? "T" : "")) : "")
                            + "|" + RowsKey(rows);
                 if (key == lastKey)
@@ -538,7 +659,7 @@ namespace FrameForge
                     probeGfx = Graphics.FromImage(probeBmp);
                     probeGfx.TextRenderingHint = TextRenderingHint.AntiAlias;
                 }
-                HudLayout layout = MeasureHud(probeGfx, st, rows, skin, k, fps, low, last.GpuTemp);
+                HudLayout layout = MeasureHud(probeGfx, st, rows, skin, k, fps, low, last.GpuTemp, graphCount);
 
                 int w = layout.W;
                 int h = layout.H;
@@ -559,7 +680,7 @@ namespace FrameForge
                         g.SmoothingMode = SmoothingMode.AntiAlias;
                         g.TextRenderingHint = TextRenderingHint.AntiAlias;
                         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                        DrawHud(g, st, rows, skin, layout, 0f, 0f, k, fps, low, last.GpuTemp, !st.OverlayLocked);
+                        DrawHud(g, st, rows, skin, layout, 0f, 0f, k, fps, low, last.GpuTemp, !st.OverlayLocked, graphBuf, graphCount, graphAvgMs);
                     }
                     Blit(bmp, w, h);
                 }
@@ -572,6 +693,110 @@ namespace FrameForge
                     Log.Write("overlay render: " + ex.Message);
                 }
             }
+        }
+
+        private void RenderToast(float k)
+        {
+            TrimFontPool();
+            Rectangle wa = TargetBounds();
+            if (wa != lastWa) { lastWa = wa; lastKey = ""; }
+
+            string key = "toast|" + toastTitle + "|" + toastDetail
+                       + "|" + toastAccent.ToArgb().ToString(CultureInfo.InvariantCulture)
+                       + "|" + k.ToString("0.00", CultureInfo.InvariantCulture)
+                       + "|" + st.OverlayCorner;
+            if (key == lastKey)
+            {
+                KeepTopmost();
+                return;
+            }
+            lastKey = key;
+
+            if (probeBmp == null)
+            {
+                probeBmp = new Bitmap(1, 1);
+                probeGfx = Graphics.FromImage(probeBmp);
+                probeGfx.TextRenderingHint = TextRenderingHint.AntiAlias;
+            }
+
+            Font tf = GetOverlayFont(10.5f * k, FontStyle.Bold);
+            Font df = GetOverlayFont(8.8f * k, FontStyle.Regular);
+            SizeF ts = probeGfx.MeasureString(toastTitle, tf, int.MaxValue, Typo);
+            bool hasDetail = !string.IsNullOrEmpty(toastDetail);
+            SizeF ds = hasDetail ? probeGfx.MeasureString(toastDetail, df, int.MaxValue, Typo) : SizeF.Empty;
+
+            float padL = 13f * k;
+            float padR = 13f * k;
+            float padY = 8f * k;
+            float gap = hasDetail ? 2.5f * k : 0f;
+            float bodyW = Math.Max(ts.Width, ds.Width);
+            int w = (int)Math.Ceiling(Math.Max(140f * k, bodyW + padL + padR));
+            int h = (int)Math.Ceiling(ts.Height + ds.Height + gap + padY * 2f);
+            if (w > 640) w = 640;
+            if (h > 160) h = 160;
+
+            int margin = (int)Math.Round(16 * k);
+            bool useLeft = string.Equals(st.OverlayCorner, "tr", StringComparison.OrdinalIgnoreCase);
+            int tx = useLeft ? wa.Left + margin : wa.Right - w - margin;
+            int ty = wa.Top + margin;
+            Location = new Point(tx, ty);
+            KeepTopmost();
+
+            Bitmap bmp = Canvas(w, h);
+            if (bmp != null)
+            {
+                using (Graphics g = Graphics.FromImage(bmp))
+                {
+                    g.Clear(Color.Transparent);
+                    g.SmoothingMode = SmoothingMode.AntiAlias;
+                    g.TextRenderingHint = TextRenderingHint.AntiAlias;
+                    g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+                    float rad = 7f * k;
+                    var rect = new RectangleF(0.5f, 0.5f, w - 1f, h - 1f);
+                    using (GraphicsPath path = RoundRect(rect, rad))
+                    {
+                        using (var grad = new LinearGradientBrush(rect,
+                            Color.FromArgb(228, 16, 19, 27),
+                            Color.FromArgb(238, 10, 12, 18),
+                            LinearGradientMode.Vertical))
+                            g.FillPath(grad, path);
+                        using (var sheen = new Pen(Color.FromArgb(30, 255, 255, 255), 1f))
+                            g.DrawLine(sheen, rad, 1.2f, w - rad, 1.2f);
+                        using (var border = new Pen(Color.FromArgb(56, 255, 255, 255), 1f))
+                            g.DrawPath(border, path);
+                    }
+
+                    float barW = Math.Max(2.5f, 3f * k);
+                    float barInset = Math.Min(h * 0.22f, 6f * k);
+                    var barRect = new RectangleF(5f * k, barInset, barW, Math.Max(6f, h - barInset * 2f));
+                    using (GraphicsPath bp = RoundRect(barRect, barW / 2f))
+                    using (var ab = new SolidBrush(Color.FromArgb(245, toastAccent)))
+                        g.FillPath(ab, bp);
+
+                    using (var tb = new SolidBrush(Color.FromArgb(255, 247, 249, 252)))
+                        ShadowString(g, toastTitle, tf, tb, padL, padY, k, true);
+                    if (hasDetail)
+                    {
+                        using (var db = new SolidBrush(Color.FromArgb(228, 198, 203, 212)))
+                            ShadowString(g, toastDetail, df, db, padL, padY + ts.Height + gap, k, true);
+                    }
+                }
+                Blit(bmp, w, h);
+            }
+        }
+
+        private static int GraphKey(float[] buf, int count)
+        {
+            if (buf == null || count <= 0) return 0;
+            int h = count;
+            int n = Math.Min(count, buf.Length);
+            for (int i = 0; i < n; i++)
+            {
+                int q = (int)(buf[i] * 10f);
+                h = (h * 31) ^ q;
+            }
+            return h;
         }
 
         /// <summary>
@@ -595,7 +820,7 @@ namespace FrameForge
 
             DateTime fakeNow = new DateTime(2026, 11, 25, 21, 40, 36);
             DateTime fakeUp = fakeNow.AddMinutes(-32).AddSeconds(-8);
-            List<Row> rows = BuildRows(st, skin, sample, 144, 112, 6.9, fakeNow, fakeUp);
+            List<Row> rows = BuildRows(st, skin, sample, 144, 112, 86, 6.9, fakeNow, fakeUp);
 
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = TextRenderingHint.AntiAlias;
@@ -623,7 +848,9 @@ namespace FrameForge
             if (k > 1.32f) k = 1.32f;
             k *= dpiScale;
 
-            HudLayout layout = MeasureHud(g, st, rows, skin, k, 144, 112, 64);
+            float[] previewGraph = BuildPreviewGraph();
+            int previewCount = st.ShowFrameGraph && style == "v" ? previewGraph.Length : 0;
+            HudLayout layout = MeasureHud(g, st, rows, skin, k, 144, 112, 64, previewCount);
 
             // 如果横向过宽撑出预览卡片，自动等比微缩以完整展示。
             float maxW = area.Width - 24f * dpiScale;
@@ -631,7 +858,7 @@ namespace FrameForge
             {
                 k = k * (maxW / layout.W);
                 if (k < 0.55f) k = 0.55f;
-                layout = MeasureHud(g, st, rows, skin, k, 144, 112, 64);
+                layout = MeasureHud(g, st, rows, skin, k, 144, 112, 64, previewCount);
             }
 
             string corner = st.OverlayCorner;
@@ -660,7 +887,20 @@ namespace FrameForge
             if (ox < area.Left + 6f) ox = area.Left + 6f;
             if (oy < area.Top + 6f) oy = area.Top + 6f;
 
-            DrawHud(g, st, rows, skin, layout, ox, oy, k, 144, 112, 64, false);
+            DrawHud(g, st, rows, skin, layout, ox, oy, k, 144, 112, 64, false, previewGraph, previewCount, 6.9f);
+        }
+
+        private static float[] BuildPreviewGraph()
+        {
+            var buf = new float[90];
+            for (int i = 0; i < 90; i++)
+            {
+                float v = 6.9f + (float)Math.Sin(i * 0.35) * 0.7f;
+                if (i == 28 || i == 64) v = 16.5f;
+                else if (i == 47) v = 22.0f;
+                buf[i] = v;
+            }
+            return buf;
         }
 
         private static void PaintRtssPreview(Graphics g, Settings st, List<Row> rows, OverlaySkin skin, Rectangle area, float dpiScale)
@@ -761,7 +1001,7 @@ namespace FrameForge
             public float PadL, PadR, PadY;
             public float LabelMax;
             public float[] ColW = new float[0];
-            public float HeroH, RowH, AmbH, DivH;
+            public float HeroH, RowH, AmbH, DivH, GraphH;
             public float Gap1, GapV, GapC, GapGrp;
             public bool HasHero;
             public bool HasBelowHero;
@@ -770,7 +1010,7 @@ namespace FrameForge
         }
 
         private static HudLayout MeasureHud(Graphics g, Settings st, List<Row> rows,
-            OverlaySkin skin, float k, double fpsVal, double lowVal, double gpuTemp)
+            OverlaySkin skin, float k, double fpsVal, double lowVal, double gpuTemp, int graphCount)
         {
             var m = new HudLayout();
             string bd = st.OverlayBackdrop ?? "hud";
@@ -893,9 +1133,18 @@ namespace FrameForge
                         if (r.IsHero || r.Ambient) continue;
                         for (int c = 0; c < r.Cells.Count; c++)
                         {
-                            float cw = g.MeasureString(r.Cells[c], vf, int.MaxValue, Typo).Width;
-                            float fw = digitW * r.Cells[c].Length;
-                            if (fw > cw) cw = fw;
+                            float cw;
+                            if (c == r.BadgeCell)
+                            {
+                                Font bf = GetOverlayFont(7.6f * k, FontStyle.Bold);
+                                cw = g.MeasureString(r.Cells[c], bf, int.MaxValue, Typo).Width + 8f * k;
+                            }
+                            else
+                            {
+                                cw = g.MeasureString(r.Cells[c], vf, int.MaxValue, Typo).Width;
+                                float fw = digitW * r.Cells[c].Length;
+                                if (fw > cw) cw = fw;
+                            }
                             if (cw > m.ColW[c]) m.ColW[c] = cw;
                         }
                     }
@@ -909,7 +1158,10 @@ namespace FrameForge
                         tableW += m.ColW[c] + (c + 1 < cols ? m.GapC : 0f);
                 }
 
+                m.GraphH = (st.ShowFrameGraph && graphCount >= 2) ? (float)Math.Round(24f * k) : 0f;
                 float bodyW = Math.Max(Math.Max(heroW, tableW), ambMaxW);
+                if (m.GraphH > 0f && bodyW < 130f * k) bodyW = 130f * k;
+
                 float totalH = m.PadY * 2f;
                 bool sawDevice = false;
                 bool sawAmbGap = false;
@@ -935,6 +1187,11 @@ namespace FrameForge
                         sawDevice = true;
                         totalH += m.RowH;
                     }
+                }
+                if (m.GraphH > 0f)
+                {
+                    if (m.HasHero && !m.HasBelowHero) totalH += m.DivH;
+                    totalH += m.GraphH + 4f * k;
                 }
 
                 m.W = (int)Math.Ceiling(bodyW + m.PadL + m.PadR);
@@ -977,7 +1234,8 @@ namespace FrameForge
         }
 
         private static void DrawHud(Graphics g, Settings st, List<Row> rows, OverlaySkin skin,
-            HudLayout m, float ox, float oy, float k, double fpsVal, double lowVal, double gpuTemp, bool unlockedHint)
+            HudLayout m, float ox, float oy, float k, double fpsVal, double lowVal, double gpuTemp, bool unlockedHint,
+            float[] graphBuf, int graphCount, float graphAvgMs)
         {
             DrawBackdrop(g, ox, oy, m.W, m.H, k, st.OverlayBackdrop ?? "hud", skin, unlockedHint);
 
@@ -1049,6 +1307,7 @@ namespace FrameForge
                 float y = oy + m.PadY;
                 bool sawDevice = false;
                 bool sawAmbGap = false;
+                bool graphDrawn = false;
 
                 for (int i = 0; i < rows.Count; i++)
                 {
@@ -1080,7 +1339,7 @@ namespace FrameForge
                         }
 
                         y += m.HeroH;
-                        if (m.HasBelowHero)
+                        if (m.HasBelowHero || m.GraphH > 0f)
                         {
                             if (m.HasBackdrop)
                             {
@@ -1090,7 +1349,22 @@ namespace FrameForge
                             }
                             y += m.DivH;
                         }
+                        if (m.GraphH > 0f && !graphDrawn)
+                        {
+                            DrawFrameGraph(g, graphBuf, graphCount, graphAvgMs,
+                                ox + m.PadL, y, m.W - m.PadL - m.PadR, m.GraphH, k, skin, m.HasBackdrop);
+                            y += m.GraphH + 4f * k;
+                            graphDrawn = true;
+                        }
                         continue;
+                    }
+
+                    if (m.GraphH > 0f && !graphDrawn)
+                    {
+                        DrawFrameGraph(g, graphBuf, graphCount, graphAvgMs,
+                            ox + m.PadL, y, m.W - m.PadL - m.PadR, m.GraphH, k, skin, m.HasBackdrop);
+                        y += m.GraphH + 4f * k;
+                        graphDrawn = true;
                     }
 
                     if (r.Ambient && (m.HasHero || sawDevice) && !sawAmbGap)
@@ -1123,10 +1397,33 @@ namespace FrameForge
                         float cx = ox + m.PadL + m.LabelMax + m.GapV;
                         for (int c = 0; c < r.Cells.Count && c < m.ColW.Length; c++)
                         {
-                            SizeF cs = g.MeasureString(r.Cells[c], rowVf, int.MaxValue, Typo);
-                            using (var b = new SolidBrush(r.ColorAt(c)))
-                                ShadowString(g, r.Cells[c], rowVf, b, cx + m.ColW[c] - cs.Width,
-                                    y + (rh - cs.Height) / 2f, k, m.HasBackdrop);
+                            if (c == r.BadgeCell)
+                            {
+                                Font bf = GetOverlayFont(7.6f * k, FontStyle.Bold);
+                                SizeF bs = g.MeasureString(r.Cells[c], bf, int.MaxValue, Typo);
+                                float bw = bs.Width + 7f * k;
+                                float bh = bs.Height + 2.5f * k;
+                                float bx = cx + m.ColW[c] - bw;
+                                float by = y + (rh - bh) / 2f;
+                                Color bc = r.ColorAt(c);
+                                var brRect = new RectangleF(bx, by, bw, bh);
+                                using (GraphicsPath bp = RoundRect(brRect, 3f * k))
+                                {
+                                    using (var bg = new SolidBrush(Color.FromArgb(46, bc)))
+                                        g.FillPath(bg, bp);
+                                    using (var pen = new Pen(Color.FromArgb(145, bc), 1f))
+                                        g.DrawPath(pen, bp);
+                                }
+                                using (var b = new SolidBrush(bc))
+                                    g.DrawString(r.Cells[c], bf, b, bx + (bw - bs.Width) / 2f, by + (bh - bs.Height) / 2f, Typo);
+                            }
+                            else
+                            {
+                                SizeF cs = g.MeasureString(r.Cells[c], rowVf, int.MaxValue, Typo);
+                                using (var b = new SolidBrush(r.ColorAt(c)))
+                                    ShadowString(g, r.Cells[c], rowVf, b, cx + m.ColW[c] - cs.Width,
+                                        y + (rh - cs.Height) / 2f, k, m.HasBackdrop);
+                            }
                             cx += m.ColW[c] + m.GapC;
                         }
                     }
@@ -1194,6 +1491,75 @@ namespace FrameForge
                             x += cs.Width;
                         }
                     }
+                }
+            }
+        }
+
+        /// <summary>绘制 90 帧实时帧时间折线图（尖刺着色，零每帧 Pen/Brush 泄漏）。</summary>
+        private static void DrawFrameGraph(Graphics g, float[] buf, int count, float avgMs,
+            float gx, float gy, float gw, float gh, float k, OverlaySkin skin, bool hasBackdrop)
+        {
+            if (buf == null || count < 2 || gw < 16f || gh < 8f) return;
+            int n = Math.Min(count, Math.Min(buf.Length, 90));
+
+            if (hasBackdrop)
+            {
+                var bgRect = new RectangleF(gx, gy, gw, gh);
+                using (GraphicsPath bgPath = RoundRect(bgRect, 3f * k))
+                using (var bgBrush = new SolidBrush(Color.FromArgb(52, 0, 0, 0)))
+                    g.FillPath(bgBrush, bgPath);
+            }
+
+            float peak = 0f;
+            for (int i = 0; i < n; i++)
+                if (buf[i] > peak) peak = buf[i];
+
+            float baseAvg = avgMs > 0.5f ? avgMs : 8.3f;
+            float spikeThresh = Math.Max(baseAvg * 1.8f, baseAvg + 8f);
+            float severeThresh = spikeThresh * 1.35f;
+            float yMax = Math.Max(peak * 1.08f, Math.Max(baseAvg * 2.2f, 16.7f));
+            if (yMax < 4f) yMax = 4f;
+
+            float pad = 2f * k;
+            float innerH = Math.Max(4f, gh - pad * 2f);
+            float bottom = gy + gh - pad;
+
+            float avgY = bottom - Math.Min(1f, baseAvg / yMax) * innerH;
+            using (var avgPen = new Pen(Color.FromArgb(46, 255, 255, 255), 1f))
+                g.DrawLine(avgPen, gx + 1f, avgY, gx + gw - 1f, avgY);
+
+            float step = (gw - 2f) / 89f;
+            int offset = 90 - n;
+            float lineW = Math.Max(1.1f, 1.35f * k);
+
+            using (var normPen = new Pen(Color.FromArgb(230, skin.Frame), lineW))
+            using (var amberPen = new Pen(Color.FromArgb(245, 255, 179, 71), lineW * 1.1f))
+            using (var spikePen = new Pen(Color.FromArgb(250, 224, 79, 69), lineW * 1.15f))
+            {
+                normPen.StartCap = LineCap.Round;
+                normPen.EndCap = LineCap.Round;
+                amberPen.StartCap = LineCap.Round;
+                amberPen.EndCap = LineCap.Round;
+                spikePen.StartCap = LineCap.Round;
+                spikePen.EndCap = LineCap.Round;
+
+                float prevX = gx + 1f + offset * step;
+                float prevV = buf[0] > 0f ? buf[0] : 0f;
+                float prevY = bottom - Math.Min(1f, prevV / yMax) * innerH;
+
+                for (int i = 1; i < n; i++)
+                {
+                    float curX = gx + 1f + (offset + i) * step;
+                    float curV = buf[i] > 0f ? buf[i] : 0f;
+                    float curY = bottom - Math.Min(1f, curV / yMax) * innerH;
+
+                    float segMax = Math.Max(prevV, curV);
+                    Pen pen = segMax > severeThresh ? spikePen : (segMax > spikeThresh ? amberPen : normPen);
+                    g.DrawLine(pen, prevX, prevY, curX, curY);
+
+                    prevX = curX;
+                    prevY = curY;
+                    prevV = curV;
                 }
             }
         }
@@ -1372,9 +1738,12 @@ namespace FrameForge
 
                     for (int c = 0; c < r.Cells.Count; c++)
                     {
-                        sb.Append(' ')
-                          .Append("<C=FF").Append(OverlayPalette.RgbHex(r.ColorAt(c))).Append('>')
-                          .Append(r.Cells[c]).Append(ResetC);
+                        sb.Append(' ');
+                        if (c == r.BadgeCell)
+                            sb.Append(Rtss.ThrottleBadge(r.Cells[c]));
+                        else
+                            sb.Append("<C=FF").Append(OverlayPalette.RgbHex(r.ColorAt(c))).Append('>')
+                              .Append(r.Cells[c]).Append(ResetC);
                     }
                 }
             }
@@ -1390,15 +1759,16 @@ namespace FrameForge
             st.ShowFps = true; st.ShowLow = true; st.ShowFrameTime = true;
             st.ShowCpu = true; st.ShowGpu = true; st.ShowGpuTemp = true;
             st.ShowRam = true; st.ShowRamPct = true; st.ShowClock = true; st.ShowSession = true;
+            st.ShowFrameGraph = true;
 
-            var s = new SysSample { Cpu = 42, Gpu = 88, GpuTemp = 76, RamUsed = 10737418240UL, RamPct = 62 };
+            var s = new SysSample { Cpu = 42, Gpu = 88, GpuTemp = 76, GpuThrottle = "THRM", RamUsed = 10737418240UL, RamPct = 62 };
             DateTime now = DateTime.Now;
 
             for (int t = 0; t < OverlayPalette.ThemeKeys.Length; t++)
             {
                 st.OverlayTheme = OverlayPalette.ThemeKeys[t];
                 OverlaySkin skin = OverlayPalette.For(st.OverlayTheme);
-                List<Row> rows = BuildRows(st, skin, s, 144, 112, 6.9, now, now.AddMinutes(-12));
+                List<Row> rows = BuildRows(st, skin, s, 144, 112, 86, 6.9, now, now.AddMinutes(-12));
 
                 st.RtssStacked = true;
                 string txt1 = RtssText(st, rows, skin);

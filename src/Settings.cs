@@ -55,6 +55,8 @@ namespace FrameForge
         public bool ShowFrameTime = false;    // 帧时间 ms
         public bool ShowClock = false;        // 当前时间
         public bool ShowSession = false;      // 已游戏时长
+        public bool ShowFrameGraph = true;    // 帧时间曲线图
+        public bool InGameOsdToast = true;    // 游戏内 OSD 提示
 
         // 加速
         public bool BoostPriority = true;
@@ -316,6 +318,8 @@ namespace FrameForge
                 case "showframetime": ShowFrameTime = Bool(v, false); break;
                 case "showclock": ShowClock = Bool(v, false); break;
                 case "showsession": ShowSession = Bool(v, false); break;
+                case "showframegraph": ShowFrameGraph = Bool(v, true); break;
+                case "ingameosdtoast": InGameOsdToast = Bool(v, true); break;
                 case "boostpriority": BoostPriority = Bool(v, true); break;
                 case "boostpowerplan": BoostPowerPlan = Bool(v, true); break;
                 case "boosttimer": BoostTimer = Bool(v, true); break;
@@ -403,6 +407,8 @@ namespace FrameForge
                 sb.AppendLine("showFrameTime=" + B(ShowFrameTime));
                 sb.AppendLine("showClock=" + B(ShowClock));
                 sb.AppendLine("showSession=" + B(ShowSession));
+                sb.AppendLine("showFrameGraph=" + B(ShowFrameGraph));
+                sb.AppendLine("inGameOsdToast=" + B(InGameOsdToast));
                 sb.AppendLine("boostPriority=" + B(BoostPriority));
                 sb.AppendLine("boostPowerPlan=" + B(BoostPowerPlan));
                 sb.AppendLine("boostTimer=" + B(BoostTimer));
@@ -422,7 +428,10 @@ namespace FrameForge
                 {
                     InstalledGame g = MyGames[i];
                     if (g == null || string.IsNullOrEmpty(g.ExePath)) continue;
-                    sb.AppendLine("myGame=" + CleanGameName(g.Name) + "|" + g.ExePath + "|" + g.Source);
+                    string line = "myGame=" + CleanGameName(g.Name) + "|" + g.ExePath + "|" + g.Source;
+                    if (!string.IsNullOrEmpty(g.LaunchUri))
+                        line += "|" + CleanLaunchUri(g.LaunchUri);
+                    sb.AppendLine(line);
                 }
                 if (GamesScannedAt != DateTime.MinValue)
                     sb.AppendLine("gamesScannedAt=" + GamesScannedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
@@ -603,14 +612,22 @@ namespace FrameForge
         /// <summary>加入一款游戏(同路径已存在就跳过)。返回是否新增。</summary>
         public bool UpsertMyGame(string name, string exePath, string source)
         {
+            return UpsertMyGame(name, exePath, source, "");
+        }
+
+        /// <summary>加入一款游戏(同路径已存在就跳过),支持可选启动 URI。</summary>
+        public bool UpsertMyGame(string name, string exePath, string source, string launchUri)
+        {
             if (string.IsNullOrEmpty(exePath)) return false;
             // 名字统一走 GameDb:平台名优先,机器名(exe / client-win64-shipping)换成真名。
             string pretty = CleanGameName(GameDb.DisplayName(name, exePath));
+            string cleanUri = CleanLaunchUri(launchUri);
             for (int i = 0; i < MyGames.Count; i++)
             {
                 if (!string.Equals(MyGames[i].ExePath, exePath, StringComparison.OrdinalIgnoreCase)) continue;
                 // 老版本存下来的机器名,下次保存时顺手修掉。
                 if (pretty.Length > 0) MyGames[i].Name = pretty;
+                if (cleanUri.Length > 0) MyGames[i].LaunchUri = cleanUri;
                 return false;
             }
 
@@ -623,6 +640,7 @@ namespace FrameForge
             }
             g.ExePath = exePath;
             g.Source = source ?? "";
+            g.LaunchUri = cleanUri;
             MyGames.Add(g);
             return true;
         }
@@ -679,7 +697,16 @@ namespace FrameForge
             if (string.IsNullOrEmpty(v)) return;
             string[] parts = v.Split('|');
             if (parts.Length < 2) return;
-            UpsertMyGame(parts[0], parts[1].Trim(), parts.Length > 2 ? parts[2].Trim() : "");
+            string source = parts.Length > 2 ? parts[2].Trim() : "";
+            string launchUri = parts.Length > 3 ? parts[3].Trim() : "";
+            UpsertMyGame(parts[0], parts[1].Trim(), source, launchUri);
+        }
+
+        /// <summary>启动 URI 写进 ini 的一行,去掉分隔符与换行。</summary>
+        private static string CleanLaunchUri(string u)
+        {
+            if (u == null) return "";
+            return u.Replace('|', ' ').Replace('\r', ' ').Replace('\n', ' ').Trim();
         }
 
         /// <summary>显示名写进 ini 的一行,去掉分隔符与换行,并限长。</summary>

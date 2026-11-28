@@ -25,6 +25,11 @@ namespace FrameForge.Sys
         // v1.4.7 方案 §6：档位落库，消除"命中游戏策略却沿用全局档位"的隐性覆盖。
         // 旧 profiles.ini 没有这一行时由 Apply() 回落到 4。
         public int PriorityLevel = 4;
+        // Wave 1: 按游戏自动化覆盖项（默认值表示跟随全局）。
+        public string CorePolicy = "";       // "" = 跟随全局 | "auto" | "pcore" | "singleccd"
+        public int FilterPreset = -1;        // -1 = 跟随全局 | 0 = 关 | 1..22 = 预设索引
+        public int FilterIntensity = -1;     // -1 = 跟随全局 | 0..100
+        public int OverlayMode = -1;         // -1 = 跟随全局 | 0 = 隐藏 | 1 = 显示
         public DateTime LastUsed = DateTime.MinValue;
 
         public BoostPlan Plan()
@@ -100,17 +105,79 @@ namespace FrameForge.Sys
                 case "cores": p.Cores = Int(v, 0); break;
                 // §6.2 向下兼容：老文件无 prioritylevel 行时保持默认 4。
                 case "prioritylevel": p.PriorityLevel = Math.Max(0, Math.Min(4, Int(v, 4))); break;
+                case "corepolicy": p.CorePolicy = NormalizeCorePolicy(v); break;
+                case "filterpreset": p.FilterPreset = Math.Max(-1, Math.Min(22, Int(v, -1))); break;
+                case "filterintensity": p.FilterIntensity = Math.Max(-1, Math.Min(100, Int(v, -1))); break;
+                case "overlaymode": p.OverlayMode = Math.Max(-1, Math.Min(1, Int(v, -1))); break;
                 case "display": p.DisplayName = v; break;
                 case "last": p.LastUsed = Date(v); break;
             }
         }
 
-        /// <summary>统一进程主键：去空白、转小写并去掉末尾的 .exe。</summary>
+        private static string NormalizeCorePolicy(string v)
+        {
+            string s = (v ?? "").Trim().ToLowerInvariant();
+            if (s == "auto" || s == "pcore" || s == "singleccd") return s;
+            return "";
+        }
+
+        /// <summary>统一进程主键：去空白、转小写并去掉末尾的 .exe（支持 procName@folderKey 复合键）。</summary>
         public static string NormalizeKey(string name)
         {
             string key = (name ?? "").Trim().ToLowerInvariant();
+            int at = key.IndexOf('@');
+            if (at > 0)
+            {
+                string proc = key.Substring(0, at).Trim();
+                if (proc.EndsWith(".exe", StringComparison.Ordinal)) proc = proc.Substring(0, proc.Length - 4);
+                string folder = key.Substring(at + 1).Trim();
+                return folder.Length > 0 ? (proc + "@" + folder) : proc;
+            }
             if (key.EndsWith(".exe", StringComparison.Ordinal)) key = key.Substring(0, key.Length - 4);
             return key;
+        }
+
+        /// <summary>从 exe 路径提取用于区分通用二进制（如 Client-Win64-Shipping.exe）的目录键。</summary>
+        public static string FolderKey(string exePath)
+        {
+            if (string.IsNullOrEmpty(exePath)) return "";
+            try
+            {
+                string dir = Path.GetDirectoryName(exePath);
+                string fallback = "";
+                for (int i = 0; i < 8 && !string.IsNullOrEmpty(dir); i++)
+                {
+                    string name = Path.GetFileName(dir.TrimEnd('\\', '/'));
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        string lower = name.Trim().ToLowerInvariant();
+                        if (fallback.Length == 0) fallback = lower;
+                        if (!IsGenericFolder(lower)) return lower;
+                    }
+                    dir = Path.GetDirectoryName(dir);
+                }
+                return fallback;
+            }
+            catch { return ""; }
+        }
+
+        private static bool IsGenericFolder(string lower)
+        {
+            return lower == "win64" || lower == "win32" || lower == "x64" || lower == "x86"
+                || lower == "binaries" || lower == "bin" || lower == "client"
+                || lower == "game" || lower == "engine" || lower == "shipping"
+                || lower == "release" || lower == "retail";
+        }
+
+        /// <summary>生成 procName@folderKey 复合主键；无法提取目录键时回退到 procName。</summary>
+        public static string CompositeKey(string procName, string exePath)
+        {
+            string proc = NormalizeKey(procName);
+            if (proc.Length == 0) return "";
+            int at = proc.IndexOf('@');
+            if (at > 0) proc = proc.Substring(0, at);
+            string fk = FolderKey(exePath);
+            return fk.Length > 0 ? (proc + "@" + fk) : proc;
         }
 
         /// <summary>先按进程主键查，再兼容旧的显示名节名及新策略的显示名别名。</summary>
@@ -125,6 +192,21 @@ namespace FrameForge.Sys
             GameProfile hit = FindKey(processName);
             if (hit != null) return hit;
             return FindDisplay(!string.IsNullOrEmpty(displayName) ? displayName : processName);
+        }
+
+        /// <summary>三段式查询：procName@folderKey 复合键 -> procName -> displayName。</summary>
+        public GameProfile Find(string procName, string exePath, string displayName)
+        {
+            if (!string.IsNullOrEmpty(exePath))
+            {
+                string composite = CompositeKey(procName, exePath);
+                if (composite.IndexOf('@') > 0)
+                {
+                    GameProfile hitComposite = FindKey(composite);
+                    if (hitComposite != null) return hitComposite;
+                }
+            }
+            return Find(procName, displayName);
         }
 
         private GameProfile FindKey(string name)
@@ -228,6 +310,15 @@ namespace FrameForge.Sys
                     sb.AppendLine("cores=" + p.Cores.ToString(CultureInfo.InvariantCulture));
                     // §6.2：整份重写时补写新键；节名转义与其余字段保持不变。
                     sb.AppendLine("prioritylevel=" + p.PriorityLevel.ToString(CultureInfo.InvariantCulture));
+                    string cp = NormalizeCorePolicy(p.CorePolicy);
+                    if (cp.Length > 0)
+                        sb.AppendLine("corepolicy=" + cp);
+                    if (p.FilterPreset >= 0)
+                        sb.AppendLine("filterpreset=" + Math.Min(22, p.FilterPreset).ToString(CultureInfo.InvariantCulture));
+                    if (p.FilterIntensity >= 0)
+                        sb.AppendLine("filterintensity=" + Math.Min(100, p.FilterIntensity).ToString(CultureInfo.InvariantCulture));
+                    if (p.OverlayMode >= 0)
+                        sb.AppendLine("overlaymode=" + Math.Min(1, p.OverlayMode).ToString(CultureInfo.InvariantCulture));
                     sb.AppendLine("last=" + p.LastUsed.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
                 }
                 SafeFile.WriteAllText(FilePath, sb.ToString(), new UTF8Encoding(false));

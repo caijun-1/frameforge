@@ -29,6 +29,16 @@ namespace FrameForge.Sys
         //  游戏进程
         // =================================================================
 
+        public static bool IsAntiCheatProcess(string procName)
+        {
+            return ProcessGuardList.IsAntiCheat(procName);
+        }
+
+        public static bool IsProtectedProcess(string procName)
+        {
+            return ProcessGuardList.IsProtectedBackground(procName);
+        }
+
         /// <summary>由进程号取完整 exe 路径;权限不足时返回空串,调用方按「未检测到」处理。</summary>
         public static string GameExePath(int pid)
         {
@@ -218,6 +228,7 @@ namespace FrameForge.Sys
                 {
                     string name = Path.GetFileName(d).ToLowerInvariant();
                     if (name == "cache" || name == "logs" || name.StartsWith(".")) continue;
+                    if (ProcessGuardList.IsAntiCheatPath(d)) continue;
                     ScanDlls(d, depth + 1, files, ref budget);
                     if (budget <= 0) return;
                 }

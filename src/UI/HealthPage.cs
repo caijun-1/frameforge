@@ -20,7 +20,7 @@ namespace FrameForge.UI
         private readonly TextLabel coreHead, coreSub, listHead, listCount;
         private readonly StatusDot summaryDot;
         private readonly CoreTopologyView topology;
-        private readonly FlatButton btnGame, btnDaily, btnAudit;
+        private readonly FlatButton btnGame, btnDaily, btnAudit, btnUndo;
         private readonly Hairline[] lines;
         private readonly StatusDot[] dots = new StatusDot[Rows];
         private readonly TextLabel[] titles = new TextLabel[Rows];
@@ -190,6 +190,15 @@ namespace FrameForge.UI
             btnAudit.Click += delegate { OpenAudit(); };
             summaryCard.Controls.Add(btnAudit);
 
+            btnUndo = new FlatButton();
+            btnUndo.FontPt = 8.5f;
+            btnUndo.Radius = 4;
+            btnUndo.Primary = false;
+            btnUndo.Text = I18n.T("health.undo_btn");
+            btnUndo.Visible = Tune.HasSaved;
+            btnUndo.Click += delegate { UndoOptimizations(); };
+            summaryCard.Controls.Add(btnUndo);
+
             // 只保留结果列表中的细分割线,不再给每一行重复描边。
             lines = new Hairline[Rows - 1];
             for (int i = 0; i < lines.Length; i++)
@@ -302,6 +311,7 @@ namespace FrameForge.UI
             summaryLbl.ForeColor = level;
             summaryDot.Dot = level;
             listCount.Text = items.Count.ToString("00") + " / " + Rows.ToString("00");
+            if (btnUndo != null) btnUndo.Visible = Tune.HasSaved;
         }
 
         private void SyncTopology()
@@ -386,6 +396,26 @@ namespace FrameForge.UI
             SysSample s = Host == null || Host.Mon == null ? null : Host.Mon.Current;
             List<SessionRecord> all = Host == null || Host.Sessions == null ? null : Host.Sessions.All;
             AuditDialog.Show(this, s, all);
+        }
+
+        private void UndoOptimizations()
+        {
+            if (!Tune.HasSaved) { Reload(); return; }
+            DialogResult ask = MessageBox.Show(this,
+                I18n.T("health.undo_confirm"),
+                I18n.T("health.undo_btn"),
+                MessageBoxButtons.OKCancel, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+            if (ask != DialogResult.OK) return;
+
+            bool needAdmin;
+            int n = Tune.RestoreAll(out needAdmin);
+            activePreset = "";
+            Reload();
+            if (Host != null)
+            {
+                if (needAdmin && n == 0) Host.Toast(I18n.T("health.toast.adminapply"));
+                else Host.Toast(I18n.T("health.undo_done", n));
+            }
         }
 
         /// <summary>说明行:推荐状态 + 现状影响,需要重启的再补一句。</summary>
@@ -536,11 +566,19 @@ namespace FrameForge.UI
                 summaryDot.SetBounds(w - pad - dotW, Ui.Px(51), dotW, dotW);
                 sub.SetBounds(pad, Ui.Px(66), innerW, Ui.Px(18));
 
-                int colBtnW = Math.Max(Ui.Px(1), (innerW - gap * 2) / 3);
+                bool showUndo = btnUndo != null && btnUndo.Visible;
+                int btnCount = showUndo ? 4 : 3;
+                int colBtnW = Math.Max(Ui.Px(1), (innerW - gap * (btnCount - 1)) / btnCount);
                 int by = Ui.Px(96);
-                btnGame.SetBounds(pad, by, colBtnW, bh);
-                btnDaily.SetBounds(pad + colBtnW + gap, by, colBtnW, bh);
-                btnAudit.SetBounds(pad + (colBtnW + gap) * 2, by, innerW - colBtnW * 2 - gap * 2, bh);
+                int bx0 = pad;
+                if (showUndo)
+                {
+                    btnUndo.SetBounds(bx0, by, colBtnW, bh);
+                    bx0 += colBtnW + gap;
+                }
+                btnGame.SetBounds(bx0, by, colBtnW, bh);
+                btnDaily.SetBounds(bx0 + colBtnW + gap, by, colBtnW, bh);
+                btnAudit.SetBounds(bx0 + (colBtnW + gap) * 2, by, w - pad - (bx0 + (colBtnW + gap) * 2), bh);
                 return;
             }
 
@@ -552,12 +590,19 @@ namespace FrameForge.UI
             summaryLbl.SetBounds(summaryX, Ui.Px(20), summaryW, Ui.Px(26));
             summaryDot.SetBounds(w - pad - dotW, Ui.Px(29), dotW, dotW);
 
-            int bw = Ui.Px(w < 700 ? 104 : 116);
-            int buttonsW = bw * 3 + gap * 2;
+            bool hasUndo = btnUndo != null && btnUndo.Visible;
+            int nBtns = hasUndo ? 4 : 3;
+            int bw = Ui.Px(hasUndo ? (w < 780 ? 94 : 110) : (w < 700 ? 104 : 116));
+            int buttonsW = bw * nBtns + gap * (nBtns - 1);
             int bx = w - pad - buttonsW;
             int by2 = Ui.Px(56);
             int subW = Math.Max(Ui.Px(80), bx - pad - Ui.Px(14));
             sub.SetBounds(pad, by2, subW, bh);
+            if (hasUndo)
+            {
+                btnUndo.SetBounds(bx, by2, bw, bh);
+                bx += bw + gap;
+            }
             btnAudit.SetBounds(bx, by2, bw, bh);
             btnDaily.SetBounds(bx + bw + gap, by2, bw, bh);
             btnGame.SetBounds(bx + (bw + gap) * 2, by2, bw, bh);

@@ -29,6 +29,36 @@ namespace FrameForge.UI
         private int lostPid = -1;
         private DateTime lostAt = DateTime.MinValue;
 
+        // 按游戏自动覆盖的桌面原值备份，游戏退出或手动还原时恢复。
+        private bool hasSavedCorePolicy;
+        private string savedCorePolicy = "auto";
+        private bool hasSavedFilter;
+        private int savedFilterMode = 0;
+        private int savedFilterPreset = 0;
+        private int savedFilterIntensity = 100;
+        private bool hasSavedOverlay;
+        private bool savedOverlayOn = false;
+
+        private void OsdToast(string key)
+        {
+            if (St == null || !St.InGameOsdToast || Ov == null) return;
+            string msg = I18n.T(key);
+            if (string.IsNullOrEmpty(msg) || msg == key) return;
+            try { Ov.ShowOsdToast(msg); }
+            catch (Exception ex) { Log.Write("osd toast: " + ex.Message); }
+        }
+
+        public void SelectBoostMode(string mode)
+        {
+            if (St == null) return;
+            St.ApplyMode(mode);
+            St.Save();
+            int themeMode = St.BoostMode == "beast" ? 1 : (St.BoostMode == "custom" ? 2 : 0);
+            ApplyModeTheme(themeMode);
+            if (boostPage != null) boostPage.SyncState();
+            Toast(I18n.T("boost.mode.reboost"));
+        }
+
         // ---------------- 页面可用 ----------------
 
         public void Toast(string text)
@@ -280,11 +310,15 @@ namespace FrameForge.UI
                         Toast(I18n.T("toast.nogame"));
                         return;
                     }
-                    if (boostPage != null) boostPage.SetResult(ComposeResult(r));
+                    string summary = ComposeResult(r);
+                    StateHub.LastBoostResult = summary;
+                    if (boostPage != null) boostPage.SetResult(summary);
                     if (St.BoostProfile)
                         SaveProfile(gameName, plan, ProfileDisplayName(gamePid, gameName, s));
                     lastAutoPid = gamePid;
                     Toast(I18n.T("toast.boosted"));
+                    OsdToast("osd.boost_on");
+                    RebuildTrayMenu();
                 });
             });
         }
@@ -410,11 +444,14 @@ namespace FrameForge.UI
 
         public void RestoreBoost(bool notify)
         {
+            bool wasActive = Boost != null && Boost.Active;
             // 手动还原后,同一个游戏不再自动套用,否则下一次采样又会把它加速回去。
             suppressAutoPid = Boost != null ? Boost.GamePid : -1;
             try { if (Boost != null) Boost.Restore(); }
             catch (Exception ex) { Log.Write("restore: " + ex.Message); }
             Perf.Reset();
+            RestoreGameOverrides();
+            StateHub.LastBoostResult = "";
 
             if (boostPage != null)
             {
@@ -422,7 +459,9 @@ namespace FrameForge.UI
                 boostPage.SyncState();
                 boostPage.SetResult(I18n.T("boost.result.empty"));
             }
+            if (wasActive) OsdToast("osd.boost_off");
             if (notify) Toast(I18n.T("toast.restored"));
+            RebuildTrayMenu();
         }
 
         /// <summary>游戏退出后自动还原,避免高性能电源计划一直挂着耗电。</summary>
@@ -477,8 +516,12 @@ namespace FrameForge.UI
             if (gamePid == lastAutoPid || gamePid == suppressAutoPid) return;
             if (BoostEngine.IsExcluded(gameName)) return;
 
+            string exePath = "";
+            try { exePath = Native.ProcessPath(gamePid); }
+            catch { }
+
             GameProfile prof = Profiles != null
-                ? Profiles.Find(gameName, ProfileDisplayName(gamePid, gameName, s)) : null;
+                ? Profiles.Find(gameName, exePath, ProfileDisplayName(gamePid, gameName, s)) : null;
             BoostPlan plan = prof != null ? prof.Plan() : St.Plan();
             // 方案 game-profile §3.2/§6 + roadmap 隐性缺陷 3：命中专属策略时档位来自
             // prof.PriorityLevel（已落库），不再用全局 St.BoostPriorityLevel 隐性覆盖。
@@ -490,6 +533,8 @@ namespace FrameForge.UI
             plan.Irq = false;
             plan.IdealCpu = false;
             if (!plan.Any) return;
+
+            ApplyGameOverrides(prof);
 
             lastAutoPid = gamePid;
             boosting = true;
@@ -505,18 +550,110 @@ namespace FrameForge.UI
                 {
                     boosting = false;
                     BoostResult r = box[0];
-                    if (boostPage != null)
-                    {
-                        boostPage.SetBusy(false);
-                        boostPage.SyncState();
-                        if (r != null) boostPage.SetResult(ComposeResult(r));
-                    }
                     if (r != null && r.Ok)
                     {
+                        string summary = ComposeResult(r);
+                        StateHub.LastBoostResult = summary;
+                        if (boostPage != null)
+                        {
+                            boostPage.SetBusy(false);
+                            boostPage.SyncState();
+                            boostPage.SetResult(summary);
+                        }
                         Toast(I18n.T("toast.auto", gameName));
+                        OsdToast("osd.boost_on");
+                        RebuildTrayMenu();
+                    }
+                    else
+                    {
+                        if (boostPage != null)
+                        {
+                            boostPage.SetBusy(false);
+                            boostPage.SyncState();
+                            if (r != null) boostPage.SetResult(ComposeResult(r));
+                        }
                     }
                 });
             });
+        }
+
+        private void ApplyGameOverrides(GameProfile prof)
+        {
+            if (prof == null || St == null) return;
+
+            if (!string.IsNullOrEmpty(prof.CorePolicy))
+            {
+                if (!hasSavedCorePolicy)
+                {
+                    savedCorePolicy = St.CorePolicy;
+                    hasSavedCorePolicy = true;
+                }
+                string mapped = prof.CorePolicy == "pcore" ? "pcorefirst" : prof.CorePolicy;
+                if (!string.Equals(St.CorePolicy, mapped, StringComparison.OrdinalIgnoreCase))
+                {
+                    St.CorePolicy = mapped;
+                    St.Save();
+                }
+            }
+
+            if (prof.FilterPreset >= 0)
+            {
+                if (!hasSavedFilter)
+                {
+                    savedFilterMode = St.FilterMode;
+                    savedFilterPreset = St.FilterPreset;
+                    savedFilterIntensity = St.FilterIntensity;
+                    hasSavedFilter = true;
+                }
+                if (prof.FilterPreset == 0)
+                {
+                    St.FilterMode = 0;
+                }
+                else
+                {
+                    St.FilterPreset = prof.FilterPreset;
+                    if (prof.FilterIntensity >= 0) St.FilterIntensity = prof.FilterIntensity;
+                    if (St.FilterMode == 0) St.FilterMode = 1;
+                }
+                ApplyFilter(true);
+            }
+
+            if (prof.OverlayMode >= 0)
+            {
+                if (!hasSavedOverlay)
+                {
+                    savedOverlayOn = St.OverlayOn;
+                    hasSavedOverlay = true;
+                }
+                St.OverlayOn = prof.OverlayMode == 1;
+                SyncOverlay();
+            }
+        }
+
+        private void RestoreGameOverrides()
+        {
+            if (St == null) return;
+
+            if (hasSavedCorePolicy)
+            {
+                St.CorePolicy = savedCorePolicy;
+                hasSavedCorePolicy = false;
+                St.Save();
+            }
+            if (hasSavedFilter)
+            {
+                St.FilterMode = savedFilterMode;
+                St.FilterPreset = savedFilterPreset;
+                St.FilterIntensity = savedFilterIntensity;
+                hasSavedFilter = false;
+                ApplyFilter(true);
+            }
+            if (hasSavedOverlay)
+            {
+                St.OverlayOn = savedOverlayOn;
+                hasSavedOverlay = false;
+                SyncOverlay();
+            }
         }
 
         /// <summary>优先取「我的游戏」里的显示名，确保旧版弹窗保存的显示名节可以回退命中。</summary>
@@ -575,17 +712,20 @@ namespace FrameForge.UI
 
         private string ComposeResult(BoostResult r)
         {
-            // 只报确认生效的数量,跳过项用原因短语挂在后面,不列一堆看起来已经成功的条目。
+            // 只报确认生效的数量,把可量化的收益(释放内存、暂停后台进程、电源/计时器/优先级等)一并列出,
+            // 跳过项用原因短语挂在后面。
             int applied = 0;
-            if (r.PriorityOk > 0) applied++;
-            if (r.AffinityOk > 0) applied++;
-            if (r.IrqOk > 0) applied++;
-            if (r.PowerOk > 0) applied++;
-            if (r.TimerOk > 0) applied++;
-            if (r.DvrOk > 0) applied++;
+            var gains = new List<string>();
+            if (r.MemReleased > 0) gains.Add(I18n.T("boost.item.mem", Fmt.Bytes((ulong)r.MemReleased)));
+            if (r.Suspended > 0) { applied++; gains.Add(I18n.T("boost.item.bg", r.Suspended)); }
+            if (r.PriorityOk > 0) { applied++; gains.Add(I18n.T("boost.item.priority")); }
+            if (r.PowerOk > 0) { applied++; gains.Add(I18n.T("boost.item.power")); }
+            if (r.TimerOk > 0) { applied++; gains.Add(I18n.T("boost.item.timer")); }
+            if (r.DvrOk > 0) { applied++; gains.Add(I18n.T("boost.item.dvr")); }
+            if (r.AffinityOk > 0) { applied++; gains.Add(I18n.T("boost.item.affinity", r.AffinityCores)); }
+            if (r.IrqOk > 0) { applied++; gains.Add(I18n.T("boost.item.irq", r.IrqDevices)); }
             if (r.MemoryOk > 0) applied++;
             if (r.IdealOk > 0) applied++;
-            if (r.Suspended > 0) applied++;
 
             var reasons = new List<string>();
             for (int i = 0; i < r.Skipped.Count; i++)
@@ -598,6 +738,8 @@ namespace FrameForge.UI
             if (applied == 0 && reasons.Count == 0) return I18n.T("boost.item.failed");
 
             string text = I18n.T("boost.result.count", applied, r.Skipped.Count);
+            if (gains.Count > 0)
+                text += " · " + string.Join(" · ", gains.ToArray());
             if (reasons.Count > 0)
                 text += I18n.T("boost.result.reasons",
                     string.Join(I18n.IsEn ? ", " : "、", reasons.ToArray()));
@@ -615,7 +757,10 @@ namespace FrameForge.UI
             if (!St.ReportAuto) return;
             try
             {
-                var f = new ReportForm(r, delegate { RestoreFromTray(); ShowPage(4); });
+                SessionBaseline baseline = Sessions != null
+                    ? Sessions.BaselineFor(r.Exe, r.Id, 10)
+                    : null;
+                var f = new ReportForm(r, baseline, delegate { RestoreFromTray(); ShowPage(4); });
                 f.Show();
             }
             catch (Exception ex) { Log.Write("report form: " + ex.Message); }
@@ -629,6 +774,8 @@ namespace FrameForge.UI
             St.Save();
             SyncOverlay();
             Toast(St.OverlayOn ? I18n.T("toast.overlay.on") : I18n.T("toast.overlay.off"));
+            OsdToast(St.OverlayOn ? "osd.overlay_on" : "osd.overlay_off");
+            RebuildTrayMenu();
         }
 
         public void SyncOverlay()
@@ -693,6 +840,8 @@ namespace FrameForge.UI
             St.Save();
             ApplyFilter(true);
             Toast(St.FilterMode != 0 ? I18n.T("toast.filter.on") : I18n.T("toast.filter.off"));
+            OsdToast(St.FilterMode != 0 ? "osd.filter_on" : "osd.filter_off");
+            RebuildTrayMenu();
         }
 
         // ---------------- 内存 ----------------

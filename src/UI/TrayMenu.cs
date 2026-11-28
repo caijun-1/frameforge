@@ -43,6 +43,58 @@ namespace FrameForge.UI
             return item;
         }
 
+        /// <summary>加一条只读状态行。</summary>
+        public ToolStripMenuItem AddStatus(string text)
+        {
+            var item = new ToolStripMenuItem(text);
+            Style(item);
+            item.Enabled = false;
+            item.Tag = Theme.Sub;
+            Items.Add(item);
+            return item;
+        }
+
+        /// <summary>加一条分隔线。</summary>
+        public void AddSeparator()
+        {
+            var sep = new ToolStripSeparator();
+            sep.Margin = Padding.Empty;
+            sep.Padding = Padding.Empty;
+            Items.Add(sep);
+        }
+
+        /// <summary>加一个带子菜单的条目（如加速模式选择）。</summary>
+        public ToolStripMenuItem AddSubmenu(string text)
+        {
+            var item = new ToolStripMenuItem(text);
+            Style(item);
+            var dd = item.DropDown as ToolStripDropDownMenu;
+            if (dd != null)
+            {
+                dd.Renderer = Renderer;
+                dd.ShowImageMargin = false;
+                dd.ShowCheckMargin = false;
+                dd.BackColor = Theme.Card;
+                dd.ForeColor = Theme.Text;
+                dd.Font = Font;
+                dd.DropShadowEnabled = false;
+            }
+            Items.Add(item);
+            return item;
+        }
+
+        /// <summary>往子菜单里加一条带勾选标记的条目。</summary>
+        public ToolStripMenuItem AddSubItem(ToolStripMenuItem parent, string text, bool active, EventHandler onClick)
+        {
+            string label = (active ? "✓  " : "    ") + text;
+            var item = new ToolStripMenuItem(label);
+            Style(item);
+            if (active) item.Tag = Theme.Accent;
+            if (onClick != null) item.Click += onClick;
+            parent.DropDownItems.Add(item);
+            return item;
+        }
+
         /// <summary>行内边距和外边距统一:外侧归零,左右留白完全交给 Gutter 和文字矩形控制。</summary>
         private static void Style(ToolStripItem item)
         {
@@ -60,18 +112,27 @@ namespace FrameForge.UI
             int textWidth = 0;
             foreach (ToolStripItem item in Items)
             {
+                if (item is ToolStripSeparator) continue;
                 Size t = TextRenderer.MeasureText(item.Text, item.Font);
                 if (t.Width > textWidth) textWidth = t.Width;
             }
 
-            int width = textWidth + Ui.Px(Gutter + Inset);
-            int min = Ui.Px(152);
+            int width = textWidth + Ui.Px(Gutter + Inset + 14);
+            int min = Ui.Px(176);
             if (width < min) width = min;
 
             int height = Padding.Top + Padding.Bottom;
             foreach (ToolStripItem item in Items)
             {
-                int row = TextRenderer.MeasureText(item.Text, item.Font).Height + item.Padding.Vertical;
+                int row;
+                if (item is ToolStripSeparator)
+                {
+                    row = Ui.Px(9);
+                }
+                else
+                {
+                    row = TextRenderer.MeasureText(item.Text, item.Font).Height + item.Padding.Vertical;
+                }
                 // 关掉自动尺寸,系统就不会把条目按自己的内容宽度重新摆一遍。
                 item.AutoSize = false;
                 item.Size = new Size(width, row);
@@ -132,6 +193,13 @@ namespace FrameForge.UI
                     using (var b = new SolidBrush(Theme.Hover))
                         g.FillPath(b, p);
                 }
+            }
+
+            protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
+            {
+                int y = e.Item.Height / 2;
+                using (var pen = new Pen(Theme.Border, 1f))
+                    e.Graphics.DrawLine(pen, Ui.Px(Gutter), y, e.Item.Width - Ui.Px(Inset), y);
             }
 
             protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)

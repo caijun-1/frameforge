@@ -354,14 +354,53 @@ namespace FrameForge.UI
         {
             if (tray == null) return;
             ContextMenuStrip old = tray.ContextMenuStrip;
-            // 菜单只留两个动作,其余功能都在主界面里,托盘保持安静。
             var menu = new TrayMenu();
-            menu.Add(I18n.T("tray.open"), delegate { RestoreFromTray(); });
 
+            string status = TrayStatusText();
+            menu.AddStatus(status);
+            menu.AddSeparator();
+
+            bool boosted = Boost != null && Boost.Active;
+            menu.Add(I18n.T(boosted ? "tray.boost_off" : "tray.boost_on"), delegate { ApplyBoost(); });
+
+            string curMode = St != null ? St.BoostMode : "balanced";
+            ToolStripMenuItem modeMenu = menu.AddSubmenu(I18n.T("tray.mode") + "  ·  " + I18n.T("boost.mode." + curMode));
+            menu.AddSubItem(modeMenu, I18n.T("boost.mode.balanced"), curMode == "balanced", delegate { SelectBoostMode("balanced"); });
+            menu.AddSubItem(modeMenu, I18n.T("boost.mode.beast"), curMode == "beast", delegate { SelectBoostMode("beast"); });
+            menu.AddSubItem(modeMenu, I18n.T("boost.mode.custom"), curMode == "custom", delegate { SelectBoostMode("custom"); });
+
+            bool ovOn = St != null && St.OverlayOn;
+            menu.Add(I18n.T("tray.overlay") + (ovOn ? "  ✓" : ""), delegate { ToggleOverlay(); });
+
+            bool fltOn = St != null && St.FilterMode != 0;
+            menu.Add(I18n.T("tray.filter") + (fltOn ? "  ✓" : ""), delegate { ToggleFilter(); });
+
+            menu.Add(I18n.T("tray.trim"), delegate { RunTrim(); });
+            menu.AddSeparator();
+
+            menu.Add(I18n.T("tray.open"), delegate { RestoreFromTray(); });
             ToolStripMenuItem exitItem = menu.Add(I18n.T("tray.exit"), delegate { Close(); });
             exitItem.Tag = Theme.Danger;
+
             tray.ContextMenuStrip = menu;
             if (old != null) old.Dispose();
+        }
+
+        private string TrayStatusText()
+        {
+            SysSample s = Mon != null ? Mon.Current : null;
+            if (s != null && s.GamePid > 0)
+            {
+                string name = s.GameTitle.Length > 0 ? s.GameTitle : s.GameName;
+                if (name.Length > 0)
+                {
+                    return (Boost != null && Boost.Active)
+                        ? name + " · " + I18n.T("tray.boost_on")
+                        : name;
+                }
+            }
+            string mode = St != null ? St.BoostMode : "balanced";
+            return "FrameForge · " + I18n.T("boost.mode." + mode);
         }
 
         private void BuildTimers()
@@ -412,6 +451,7 @@ namespace FrameForge.UI
             trayTip = text;
             if (text.Length > 63) text = text.Substring(0, 62) + "…";
             if (tray != null) tray.Text = text;
+            RebuildTrayMenu();
         }
 
         private string[] NavItems()
@@ -619,6 +659,7 @@ namespace FrameForge.UI
                     if (pages[i] != null) pages[i].Invalidate(true);
             }
             if (toast != null) toast.Invalidate();
+            RebuildTrayMenu();
             Invalidate(true);
         }
 
@@ -834,6 +875,7 @@ namespace FrameForge.UI
                 try { if (updateTimer != null) updateTimer.Stop(); } catch (Exception ex) { Log.Write("exit update timer: " + ex.Message); }
                 // 退出时正在玩的对局也要留下记录,否则关掉软件这局的成绩就丢了。
                 try { if (Tracker != null) Tracker.Flush(); } catch (Exception ex) { Log.Write("exit tracker: " + ex.Message); }
+                try { RestoreGameOverrides(); } catch (Exception ex) { Log.Write("exit overrides: " + ex.Message); }
                 try { if (St != null) St.Save(); } catch (Exception ex) { Log.Write("exit settings: " + ex.Message); }
 
                 try { UnregisterHotkeys(); } catch (Exception ex) { Log.Write("exit hotkeys: " + ex.Message); }
@@ -942,6 +984,7 @@ namespace FrameForge.UI
         public string DegradedReason = "";
         public string CorePolicy = "auto";
         public int IdealCpu = -1;
+        public string LastBoostResult = "";
 
         /// <summary>由主窗口 1 次 tick 调用一次；不修改任何引擎状态。</summary>
         public void RefreshFromEngines(MainForm host)

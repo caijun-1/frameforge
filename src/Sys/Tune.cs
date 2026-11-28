@@ -29,6 +29,7 @@ namespace FrameForge.Sys
         private const string GfxPath = @"SYSTEM\CurrentControlSet\Control\GraphicsDrivers";
         private const string DvrStore = @"System\GameConfigStore";
         private const string DvrKey = @"Software\Microsoft\Windows\CurrentVersion\GameDVR";
+        private const string IfeoPrefix = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\";
 
         private sealed class Saved
         {
@@ -171,6 +172,39 @@ namespace FrameForge.Sys
             return r;
         }
 
+        /// <summary>
+        /// 反作弊友好的 IFEO PerfOptions 设置：只写 HKLM\...\Image File Execution Options\&lt;exeName&gt;\PerfOptions
+        /// 下的 CpuPriorityClass 与 IoPriority，不注入任何 DLL。改动前记录原值到 tune.journal。
+        /// </summary>
+        public static bool SetIfeoPerfOptions(string exeName, int cpuPriorityClass, int ioPriority)
+        {
+            if (string.IsNullOrEmpty(exeName) || !MemEngine.IsAdmin) return false;
+            string exe = exeName.Trim();
+            try { exe = Path.GetFileName(exe); }
+            catch { return false; }
+            if (string.IsNullOrEmpty(exe)) return false;
+            if (!exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) exe += ".exe";
+            if (exe.IndexOf('\\') >= 0 || exe.IndexOf('/') >= 0 || exe.IndexOf('|') >= 0) return false;
+
+            string path = IfeoPrefix + exe + @"\PerfOptions";
+            bool ok = true;
+            bool admin;
+
+            Remember(RegistryHive.LocalMachine, path, "CpuPriorityClass");
+            if (cpuPriorityClass > 0)
+                ok = Write(RegistryHive.LocalMachine, path, "CpuPriorityClass", cpuPriorityClass, out admin) && ok;
+            else
+                ok = DeleteValue(RegistryHive.LocalMachine, path, "CpuPriorityClass", out admin) && ok;
+
+            Remember(RegistryHive.LocalMachine, path, "IoPriority");
+            if (ioPriority >= 0)
+                ok = Write(RegistryHive.LocalMachine, path, "IoPriority", ioPriority, out admin) && ok;
+            else
+                ok = DeleteValue(RegistryHive.LocalMachine, path, "IoPriority", out admin) && ok;
+
+            return ok;
+        }
+
         /// <summary>电源计划:高性能 / 平衡。</summary>
         public static TuneResult SetPower(bool high)
         {
@@ -256,7 +290,12 @@ namespace FrameForge.Sys
                 else
                 {
                     if (s.Exists) ok = Write(hive, s.Path, s.Name, s.Value, out admin);
-                    else ok = DeleteValue(hive, s.Path, s.Name, out admin);
+                    else
+                    {
+                        ok = DeleteValue(hive, s.Path, s.Name, out admin);
+                        if (ok && s.Path.EndsWith(@"\PerfOptions", StringComparison.OrdinalIgnoreCase))
+                            DeleteEmptySubKey(hive, s.Path);
+                    }
                 }
                 if (ok) done++;
                 else remaining.Add(s);
@@ -365,6 +404,30 @@ namespace FrameForge.Sys
                 Log.Write("tune delete: " + path + "\\" + name + " " + ex.Message);
                 return false;
             }
+        }
+
+        private static void DeleteEmptySubKey(RegistryHive hive, string path)
+        {
+            try
+            {
+                int sep = path.LastIndexOf('\\');
+                if (sep <= 0) return;
+                string parent = path.Substring(0, sep);
+                string child = path.Substring(sep + 1);
+                using (RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, RegistryView.Registry64))
+                {
+                    using (RegistryKey p = baseKey.OpenSubKey(parent, true))
+                    {
+                        if (p == null) return;
+                        using (RegistryKey k = p.OpenSubKey(child))
+                        {
+                            if (k == null || k.ValueCount > 0 || k.SubKeyCount > 0) return;
+                        }
+                        p.DeleteSubKey(child, false);
+                    }
+                }
+            }
+            catch { }
         }
 
         /// <summary>只读当前 DWORD;缺失或读不到时用 fallback。</summary>
@@ -553,7 +616,9 @@ namespace FrameForge.Sys
                 || p.StartsWith(@"SOFTWARE\MICROSOFT\DIRECTX\USERGPUPREFERENCES", StringComparison.Ordinal)
                 || p.StartsWith(@"SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\GAMEDVR", StringComparison.Ordinal)
                 || p.StartsWith(@"SOFTWARE\MICROSOFT\WINDOWS NT\CURRENTVERSION\APPCOMPATFLAGS\LAYERS", StringComparison.Ordinal)
-                || p.StartsWith(@"SOFTWARE\MICROSOFT\WINDOWS NT\CURRENTVERSION\IMAGE FILE EXECUTION OPTIONS", StringComparison.Ordinal)
+                || (hive == "HKLM"
+                    && p.StartsWith(@"SOFTWARE\MICROSOFT\WINDOWS NT\CURRENTVERSION\IMAGE FILE EXECUTION OPTIONS\", StringComparison.Ordinal)
+                    && p.EndsWith(@"\PERFOPTIONS", StringComparison.Ordinal))
                 || p.Equals(@"SYSTEM\GAMECONFIGSTORE", StringComparison.Ordinal);
         }
 

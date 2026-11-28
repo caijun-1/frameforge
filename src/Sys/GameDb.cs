@@ -220,7 +220,122 @@ namespace FrameForge.Sys
             // 我的世界:基岩版进程固定叫 Minecraft.Windows.exe(上面已收录);Java 版是 javaw.exe,
             // 只能靠窗口标题认(见 FromWindow)。
             { "minecraft", "我的世界|Minecraft" },
-            { "minecraftlauncher", "我的世界启动器|Minecraft Launcher" }
+            { "minecraftlauncher", "我的世界启动器|Minecraft Launcher" },
+
+            // 2024-2026 CN & Global PC 游戏扩展
+            { "yanyun", "燕云十六声|Where Winds Meet" },
+            { "wwm", "燕云十六声|Where Winds Meet" },
+            { "yanyun-win64-shipping", "燕云十六声|Where Winds Meet" },
+            { "x6game-win64-shipping", "无限暖暖|Infinity Nikki" },
+            { "infinitynikki", "无限暖暖|Infinity Nikki" },
+            { "client-win64-shipping", "鸣潮|Wuthering Waves" },
+            { "wutheringwaves", "鸣潮|Wuthering Waves" },
+            { "mechabreak", "解限机|Mecha BREAK" },
+            { "zxworld", "诛仙世界|ZhuXian World" },
+            { "zxworld-win64-shipping", "诛仙世界|ZhuXian World" },
+            { "nsh", "逆水寒|Justice Online" },
+            { "nishuihan", "逆水寒|Justice Online" },
+            { "jx3client", "剑网3|JX3" },
+            { "jx3clientx64", "剑网3|JX3" },
+            { "calabiyau-win64-shipping", "卡拉彼丘|Strinova" },
+            { "strinova", "卡拉彼丘|Strinova" },
+            { "game-win64-shipping", "尘白禁区|Snowbreak: Containment Zone" },
+            { "snowbreak", "尘白禁区|Snowbreak: Containment Zone" },
+            { "gf2_exilium", "少女前线2：追放|Girls' Frontline 2: Exilium" },
+            { "uagame", "暗区突围：无限|Arena Breakout: Infinite" },
+            { "uagame-win64-shipping", "暗区突围：无限|Arena Breakout: Infinite" },
+            { "deltaforce_x64", "三角洲行动|Delta Force" },
+            { "valorant_cn", "无畏契约|VALORANT" },
+            { "tarisland", "塔瑞斯世界|Tarisland" },
+            { "qnyh", "倩女幽魂|A Chinese Ghost Story" },
+            { "tianyu", "天谕|Revelation Online" },
+            { "wuxia_client", "天涯明月刀|Moonlight Blade" },
+            { "mhxy", "梦幻西游|Fantasy Westward Journey" },
+            { "gujian3", "古剑奇谭三|Gujian3" },
+            { "brightmemoryinfinite", "光明记忆：无限|Bright Memory: Infinite" },
+            { "ailimit", "无限机兵|AI LIMIT" },
+            { "wuchang", "明末：渊虚之羽|WUCHANG: Fallen Feathers" },
+            { "wuchang-win64-shipping", "明末：渊虚之羽|WUCHANG: Fallen Feathers" },
+            { "lostsoulaside", "失落之魂|Lost Soul Aside" },
+            { "phantombladezero", "影之刃零|Phantom Blade Zero" },
+            { "ananta", "无限大|Ananta" },
+            { "azurpromilia", "蓝色星原：旅谣|Azur Promilia" },
+            { "arknights_endfield", "明日方舟：终末地|Arknights: Endfield" },
+            { "endfield", "明日方舟：终末地|Arknights: Endfield" },
+            { "nte", "异环|Neverness to Everness" },
+            { "duetnightabyss", "二重螺旋|Duet Night Abyss" },
+            { "em-win64-shipping", "二重螺旋|Duet Night Abyss" },
+            { "p5x", "女神异闻录：夜幕魅影|Persona 5: The Phantom X" },
+            { "reverse1999", "重返未来：1999|Reverse: 1999" },
+            { "arknights", "明日方舟|Arknights" },
+            { "supervive", "SUPERVIVE|SUPERVIVE" },
+            { "thefirstdescendant", "第一后裔|The First Descendant" },
+            { "m1-win64-shipping", "第一后裔|The First Descendant" },
+            { "throneandliberty", "王权与自由|THRONE AND LIBERTY" },
+            { "tl-win64-shipping", "王权与自由|THRONE AND LIBERTY" },
+            { "kingdomcome2", "天国：拯救2|Kingdom Come: Deliverance II" },
+            { "civ7", "文明7|Sid Meier's Civilization VII" },
+            { "civilizationvii", "文明7|Sid Meier's Civilization VII" },
+            { "acshadows", "刺客信条：影|Assassin's Creed Shadows" },
+            { "sandfall-win64-shipping", "光与影：33号远征队|Clair Obscur: Expedition 33" },
+            { "nightreign", "艾尔登法环：黑夜君临|Elden Ring Nightreign" },
+            { "eldenringnightreign", "艾尔登法环：黑夜君临|Elden Ring Nightreign" },
+            { "pathofexile2", "流放之路2|Path of Exile 2" },
+            { "pathofexile2steam", "流放之路2|Path of Exile 2" },
+            { "shproto-win64-shipping", "寂静岭2 重制版|SILENT HILL 2" },
+            { "silenthill2", "寂静岭2 重制版|SILENT HILL 2" },
+            { "mgsdelta", "合金装备Δ：食蛇者|METAL GEAR SOLID Δ: SNAKE EATER" },
+            { "doomthedarkages", "毁灭战士：黑暗时代|DOOM: The Dark Ages" },
+            { "borderlands4", "无主之地4|Borderlands 4" },
+            { "gtavi", "侠盗猎车手6|Grand Theft Auto VI" },
+            { "mafia_the_old_country", "四海兄弟：故乡|Mafia: The Old Country" },
+            { "outerworlds2", "天外世界2|The Outer Worlds 2" },
+            { "subnautica2", "深海迷航2|Subnautica 2" },
+            { "slaythespire2", "杀戮尖塔2|Slay the Spire 2" },
+            { "silksong", "空洞骑士：丝之歌|Hollow Knight: Silksong" },
+            { "hollow knight silksong", "空洞骑士：丝之歌|Hollow Knight: Silksong" },
+            { "oblivionremastered", "上古卷轴4：湮灭 重制版|The Elder Scrolls IV: Oblivion Remastered" },
+            { "kunitsugami", "祇：女神之路|Kunitsu-Gami: Path of the Goddess" },
+            { "dragonage_the_veilguard", "龙腾世纪：影障守护者|Dragon Age: The Veilguard" },
+            { "metaphor", "暗喻幻想：ReFantazio|Metaphor: ReFantazio" },
+            { "p3r", "女神异闻录3 Reload|Persona 3 Reload" },
+            { "likeadragon8", "如龙8|Like a Dragon: Infinite Wealth" },
+            { "likeadragonpirate", "如龙8外传|Like a Dragon: Pirate Yakuza in Hawaii" },
+            { "ff7rebirth", "最终幻想7：重生|FINAL FANTASY VII REBIRTH" },
+            { "ff16", "最终幻想16|FINAL FANTASY XVI" },
+            { "granblue_fantasy_relink", "碧蓝幻想：Relink|Granblue Fantasy: Relink" },
+            { "dragonsdogma2", "龙之信条2|Dragon's Dogma 2" },
+            { "dd2", "龙之信条2|Dragon's Dogma 2" },
+            { "riseoftheronin", "浪人崛起|Rise of the Ronin" },
+            { "dynastywarriorsorigins", "真·三国无双 起源|DYNASTY WARRIORS: ORIGINS" },
+            { "khazan", "第一狂战士：卡赞|The First Berserker: Khazan" },
+            { "bleach_rebirth_of_souls", "死神：魂魄觉醒|BLEACH Rebirth of Souls" },
+            { "sparkingzero", "七龙珠 电光炸裂！ZERO|DRAGON BALL: Sparking! ZERO" },
+            { "tekken8", "铁拳8|TEKKEN 8" },
+            { "sf6", "街头霸王6|Street Fighter 6" },
+            { "inzoigame", "inZOI|inZOI" },
+            { "inzoi-win64-shipping", "inZOI|inZOI" },
+            { "manorlords", "庄园领主|Manor Lords" },
+            { "schedule i", "Schedule I|Schedule I" },
+            { "repo", "R.E.P.O.|R.E.P.O." },
+            { "content warning", "内容警告|Content Warning" },
+            { "grayzonewarfare", "灰区战争|Gray Zone Warfare" },
+            { "gzwclientsteam-win64-shipping", "灰区战争|Gray Zone Warfare" },
+            { "bodycam", "Bodycam|Bodycam" },
+            { "enshrouded", "雾锁王国|Enshrouded" },
+            { "nightingale", "夜莺传说|Nightingale" },
+            { "vrising", "夜族崛起|V Rising" },
+            { "duneawakening", "沙丘：觉醒|Dune: Awakening" },
+            { "dunessandbox-win64-shipping", "沙丘：觉醒|Dune: Awakening" },
+            { "killingfloor3", "杀戮空间3|Killing Floor 3" },
+            { "arcraiders", "ARC Raiders|ARC Raiders" },
+            { "marathon", "失落星船：马拉松|Marathon" },
+            { "fc26", "EA SPORTS FC 26|EA SPORTS FC 26" },
+            { "nba2k26", "NBA 2K26|NBA 2K26" },
+            { "atomfall", "原子陨落|Atomfall" },
+            { "southofmidnight", "午夜之南|South of Midnight" },
+            { "indianajones", "夺宝奇兵：古老之圈|Indiana Jones and the Great Circle" },
+            { "thegreatcircle", "夺宝奇兵：古老之圈|Indiana Jones and the Great Circle" }
         };
 
         // 安装目录名 → 游戏名。用于 Client-Win64-Shipping.exe 这类所有 Unreal 游戏共用的进程名。
@@ -263,7 +378,49 @@ namespace FrameForge.Sys
             { "once human", "七日世界|Once Human" },
             { "thenightreign", "艾尔登法环：黑夜君临|Elden Ring Nightreign" },
             { "minecraft.windows", "我的世界|Minecraft" },
-            { "minecraft", "我的世界|Minecraft" }
+            { "minecraft", "我的世界|Minecraft" },
+            // 通用 UE 二进制目录映射 (Client-Win64-Shipping / Game-Win64-Shipping / X6Game-Win64-Shipping / SandFall-Win64-Shipping / Marvel-Win64-Shipping / SHProto-Win64-Shipping)
+            { "x6game", "无限暖暖|Infinity Nikki" },
+            { "infinitynikki", "无限暖暖|Infinity Nikki" },
+            { "snowbreak", "尘白禁区|Snowbreak: Containment Zone" },
+            { "snowbreak containment zone", "尘白禁区|Snowbreak: Containment Zone" },
+            { "尘白禁区", "尘白禁区|Snowbreak: Containment Zone" },
+            { "sandfall", "光与影：33号远征队|Clair Obscur: Expedition 33" },
+            { "clair obscur expedition 33", "光与影：33号远征队|Clair Obscur: Expedition 33" },
+            { "光与影：33号远征队", "光与影：33号远征队|Clair Obscur: Expedition 33" },
+            { "marvel rivals", "漫威争锋|Marvel Rivals" },
+            { "漫威争锋", "漫威争锋|Marvel Rivals" },
+            { "shproto", "寂静岭2 重制版|SILENT HILL 2" },
+            { "silent hill 2", "寂静岭2 重制版|SILENT HILL 2" },
+            { "寂静岭2", "寂静岭2 重制版|SILENT HILL 2" },
+            { "where winds meet", "燕云十六声|Where Winds Meet" },
+            { "yanyun", "燕云十六声|Where Winds Meet" },
+            { "燕云十六声", "燕云十六声|Where Winds Meet" },
+            { "strinova", "卡拉彼丘|Strinova" },
+            { "calabiyau", "卡拉彼丘|Strinova" },
+            { "卡拉彼丘", "卡拉彼丘|Strinova" },
+            { "duet night abyss", "二重螺旋|Duet Night Abyss" },
+            { "二重螺旋", "二重螺旋|Duet Night Abyss" },
+            { "the first descendant", "第一后裔|The First Descendant" },
+            { "第一后裔", "第一后裔|The First Descendant" },
+            { "mechabreak", "解限机|Mecha BREAK" },
+            { "mecha break", "解限机|Mecha BREAK" },
+            { "解限机", "解限机|Mecha BREAK" },
+            { "zhuxian world", "诛仙世界|ZhuXian World" },
+            { "zxworld", "诛仙世界|ZhuXian World" },
+            { "诛仙世界", "诛仙世界|ZhuXian World" },
+            { "justice online", "逆水寒|Justice Online" },
+            { "逆水寒", "逆水寒|Justice Online" },
+            { "jx3", "剑网3|JX3" },
+            { "剑网3", "剑网3|JX3" },
+            { "girls frontline 2", "少女前线2：追放|Girls' Frontline 2: Exilium" },
+            { "gf2_exilium", "少女前线2：追放|Girls' Frontline 2: Exilium" },
+            { "arena breakout infinite", "暗区突围：无限|Arena Breakout: Infinite" },
+            { "暗区突围：无限", "暗区突围：无限|Arena Breakout: Infinite" },
+            { "inzoi", "inZOI|inZOI" },
+            { "dune awakening", "沙丘：觉醒|Dune: Awakening" },
+            { "gray zone warfare", "灰区战争|Gray Zone Warfare" },
+            { "wuchang", "明末：渊虚之羽|WUCHANG: Fallen Feathers" }
         };
 
         // P1-4：监控线程与 UI 线程会同时查询，全部换成并发字典，读改写不再互相撕裂。
@@ -447,10 +604,22 @@ namespace FrameForge.Sys
             string pair = "";
             ConcurrentDictionary<string, string> u = LoadUser();
             if (u.TryGetValue(key, out pair)) { cache[key] = pair; return pair; }
-            if (Map.TryGetValue(key, out pair)) { cache[key] = pair; return pair; }
 
             string path = ProcessPath(pid);
             if (path.Length > 0) paths[key] = path;
+
+            // 通用 UE 二进制名（如 Client-Win64-Shipping / Game-Win64-Shipping）优先按目录名识别，避免被单一默认条目覆盖。
+            if (IsGeneric(key))
+            {
+                pair = FolderHint(path);
+                if (pair.Length > 0) return pair;
+            }
+
+            if (Map.TryGetValue(key, out pair))
+            {
+                if (!IsGeneric(key)) cache[key] = pair;
+                return pair;
+            }
 
             pair = FolderHint(path);
             if (pair.Length > 0) { if (!IsGeneric(key)) cache[key] = pair; return pair; }
@@ -740,8 +909,7 @@ namespace FrameForge.Sys
                 return false;
             // 反作弊组件同样装在游戏目录下(如 steamapps\common\PUBG\BattlEye\),
             // 不能因为"在游戏目录里"就当成游戏本体。
-            if (p.IndexOf("\\battleye\\") >= 0 || p.IndexOf("\\easyanticheat") >= 0
-                || p.IndexOf("\\anticheatexpert\\") >= 0 || p.IndexOf("\\easy anti-cheat\\") >= 0)
+            if (ProcessGuardList.IsAntiCheatPath(path))
                 return false;
             for (int i = 0; i < Libraries.Length; i++)
                 if (p.IndexOf(Libraries[i], StringComparison.Ordinal) >= 0) return true;
@@ -749,27 +917,11 @@ namespace FrameForge.Sys
         }
 
         /// <summary>
-        /// 反作弊 / 防护组件的进程名。它们由游戏拉起,也会自己弹窗(BattlEye 的报错框、
-        /// EAC 的安装界面),以前会被当成游戏本体记进战绩、还会被自动加速。
+        /// 反作弊 / 防护组件的进程名。统一委托给 ProcessGuardList。
         /// </summary>
         public static bool AntiCheatName(string name)
         {
-            if (name == null) return false;
-            string n = name.Trim().ToLowerInvariant();
-            if (n.EndsWith(".exe", StringComparison.Ordinal)) n = n.Substring(0, n.Length - 4);
-            if (n.Length == 0) return false;
-            // Vanguard 只有这几个固定名字,按关键词匹配太容易误伤。
-            if (n == "vgc" || n == "vgtray") return true;
-
-            string[] words =
-            {
-                "battleye", "beservice", "easyanticheat", "anticheatexpert",
-                "ace-guard", "ace-helper", "ace-tray", "sguard", "tenprotect",
-                "tensafe", "qqprotect", "gameguard", "nprotect", "xigncode", "krsdk"
-            };
-            for (int i = 0; i < words.Length; i++)
-                if (n.IndexOf(words[i], StringComparison.Ordinal) >= 0) return true;
-            return false;
+            return ProcessGuardList.IsAntiCheat(name);
         }
 
         /// <summary>

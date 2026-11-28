@@ -190,6 +190,14 @@ namespace FrameForge
             public ulong Used;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        public struct PROCESS_POWER_THROTTLING_STATE
+        {
+            public uint Version;
+            public uint ControlMask;
+            public uint StateMask;
+        }
+
         // ---------------- 常量 ----------------
 
         public const uint TH32CS_SNAPPROCESS = 0x00000002;
@@ -202,6 +210,13 @@ namespace FrameForge
         public const uint PROCESS_SUSPEND_RESUME = 0x0800;
         public const uint SYNCHRONIZE = 0x00100000;   // 看门狗等待父进程句柄
         public const uint THREAD_SET_INFORMATION = 0x0020;
+        public const uint THREAD_QUERY_INFORMATION = 0x0040;
+        public const uint THREAD_QUERY_LIMITED_INFORMATION = 0x0800;
+
+        public const int ProcessPowerThrottling = 4;
+        public const uint PROCESS_POWER_THROTTLING_CURRENT_VERSION = 1;
+        public const uint PROCESS_POWER_THROTTLING_EXECUTION_SPEED = 0x1;
+        public const uint PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION = 0x4;
 
         // WaitForSingleObject 返回值 / 超时
         public const uint WAIT_OBJECT_0 = 0x00000000;
@@ -333,6 +348,17 @@ namespace FrameForge
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern uint SetThreadIdealProcessor(IntPtr hThread, uint dwIdealProcessor);
 
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool GetThreadTimes(IntPtr hThread, out long creationTime, out long exitTime,
+            out long kernelTime, out long userTime);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool SetProcessInformation(IntPtr hProcess, int processInformationClass,
+            ref PROCESS_POWER_THROTTLING_STATE info, int size);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern IntPtr LocalFree(IntPtr hMem);
+
         [DllImport("kernel32.dll")]
         public static extern void GetSystemTimes(out long idle, out long kernel, out long user);
 
@@ -405,6 +431,26 @@ namespace FrameForge
 
         [DllImport("ntdll.dll")]
         public static extern int NtQuerySystemInformation(int cls, IntPtr info, int length, out int returnLength);
+
+        [DllImport("ntdll.dll")]
+        public static extern int NtQueryTimerResolution(out uint minRes, out uint maxRes, out uint curRes);
+
+        [DllImport("ntdll.dll")]
+        public static extern int NtSetTimerResolution(uint desiredRes, bool setRes, out uint curRes);
+
+        // ---------------- powrprof ----------------
+
+        [DllImport("powrprof.dll")]
+        public static extern uint PowerGetActiveScheme(IntPtr userRootPowerKey, out IntPtr activePolicyGuid);
+
+        [DllImport("powrprof.dll")]
+        public static extern uint PowerSetActiveScheme(IntPtr userRootPowerKey, ref Guid schemeGuid);
+
+        [DllImport("powrprof.dll")]
+        public static extern uint PowerGetEffectiveOverlayScheme(out Guid effectiveOverlayPolicyGuid);
+
+        [DllImport("powrprof.dll")]
+        public static extern uint PowerSetActiveOverlayScheme(Guid overlaySchemeGuid);
 
         // ---------------- advapi32 ----------------
 

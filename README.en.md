@@ -13,17 +13,17 @@ One-Click Reversible Boost · PresentMon / RTSS Modern HUD · Hardware Screen Fi
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
   <img src="https://img.shields.io/badge/size-7%20MB-brightgreen" alt="size 7 MB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.6.6-orange" alt="1.6.6">
+  <img src="https://img.shields.io/badge/version-1.7.0-orange" alt="1.7.0">
 </p>
 
 <p align="center">
-  <a href="https://github.com/caijun-1/frameforge/releases/latest">Download Latest (v1.6.6)</a> ·
+  <a href="https://github.com/caijun-1/frameforge/releases/latest">Download Latest (v1.7.0)</a> ·
   <a href="https://caijun-1.github.io/frameforge/">Website</a> ·
   <a href="#why-frameforge">Why FrameForge</a> ·
   <a href="README.md">简体中文</a>
 </p>
 
-<p align="center"><img src="docs/social-preview.png" width="840" alt="FrameForge v1.6.6"></p>
+<p align="center"><img src="docs/social-preview.png" width="840" alt="FrameForge v1.7.0"></p>
 
 ---
 
@@ -114,6 +114,14 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 ---
 
 ## Recent Changelog
+
+### v1.7.0
+
+> Milestone release introducing sub-millisecond 0.5ms timer resolution, ISLC-grade standby list memory guarding, EcoQoS non-freezing background throttling, native powrprof.dll power management, live frametime sparklines, in-game OSD toast notifications, 6 major launcher scanners, and full per-game automation (bilingual parity at 691/691 keys).
+
+- **Performance Engine**: Win11 0.5ms timer resolution with tray-throttling bypass; ISLC-grade standby list purge based on true free memory; EcoQoS background throttling without app freezing; native powrprof.dll power engine supporting Win11 Modern Standby laptops and handhelds; real hot-thread CPU steering; anti-cheat friendly IFEO priority tuning.
+- **Overlay, Telemetry & OSD**: Live 90-sample frametime sparkline with stutter spike highlighting; 0.1% Low and discrete stutter count; in-game OSD toast confirmations for hotkeys and auto-boost; GPU thermal/power throttle indicators (`THRM`/`PWR`); full per-game automated filter/overlay/core-policy switching.
+- **Desktop UX & Ecosystem**: Home readiness banner; quantified boost results; 6-item tray quick console; unified `ProcessGuardList` anti-cheat & peripheral protection; 95+ new 2024–2026 game entries; native scanning for Xbox (PC Game Pass), HoYoPlay, Battle.net, Riot, EA App, Ubisoft Connect, and WeGame with `LaunchUri` execution; in-place Health page revert; 10-match historical baseline comparisons in post-match reports.
 
 ### v1.6.6
 

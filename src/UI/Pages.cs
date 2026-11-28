@@ -42,6 +42,10 @@ namespace FrameForge.UI
         private const int OptCount = 8;
 
         private readonly HeroCard hero;
+        private readonly Card readyCard;
+        private readonly StatusDot readyDot;
+        private readonly TextLabel readyLbl;
+        private readonly FlatButton readyBtn, readyDismiss;
         private readonly Card cpuCard, gpuCard, radarCard, ramCard, stripCard, modeCard;
         private readonly TextLabel stateLbl, gameLbl, gameSub, hint;
         private readonly TabBar modes;
@@ -66,10 +70,42 @@ namespace FrameForge.UI
         private string lastSub = "";
         private string lastReal = "";
         private bool lastBoosted;
+        private BoostResult lastChipResult;
+        private string readyAction = "";
+        private bool readyDismissed;
         private int modeIndex;
 
         public BoostPage(MainForm host) : base(host)
         {
+            readyCard = NewCard();
+            readyCard.Visible = false;
+            readyDot = new StatusDot();
+            readyDot.Dot = Theme.Warn;
+            readyLbl = new TextLabel();
+            readyLbl.Size = 8.8f;
+            readyLbl.ForeColor = Theme.Text;
+            readyLbl.Ellipsis = true;
+            readyBtn = new FlatButton();
+            readyBtn.FontPt = 8.5f;
+            readyBtn.Radius = 4;
+            readyBtn.Click += delegate { OnReadyAction(); };
+            readyDismiss = new FlatButton();
+            readyDismiss.Primary = false;
+            readyDismiss.FontPt = 8.5f;
+            readyDismiss.Radius = 4;
+            readyDismiss.Text = "×";
+            readyDismiss.Click += delegate
+            {
+                readyDismissed = true;
+                readyCard.Visible = false;
+                LayoutCards();
+                Invalidate();
+            };
+            readyCard.Controls.Add(readyDot);
+            readyCard.Controls.Add(readyLbl);
+            readyCard.Controls.Add(readyBtn);
+            readyCard.Controls.Add(readyDismiss);
+
             hero = new HeroCard();
             // 卡片色要和子标签的继承底色一致,否则标签会在卡片上铺出一个个灰块。
             hero.BackColor = Theme.Card;
@@ -179,6 +215,8 @@ namespace FrameForge.UI
             // 参考图里实时加速状态紧跟在「未加速」右侧,同一行左对齐。
             realLbl.Align = ContentAlignment.MiddleLeft;
             realLbl.Text = I18n.T("boost.real.off");
+            realLbl.Cursor = Cursors.Hand;
+            realLbl.Click += delegate { ToggleRealBoost(); };
             lastReal = realLbl.Text;
 
             cpuRing = new RingGauge();
@@ -250,6 +288,7 @@ namespace FrameForge.UI
             modeCard.Controls.Add(editBtn);
             modeCard.Controls.Add(modes);
 
+            Controls.Add(readyCard);
             Controls.Add(hero);
             Controls.Add(cpuCard);
             Controls.Add(gpuCard);
@@ -262,6 +301,7 @@ namespace FrameForge.UI
             SyncPin();
             ApplyAccent();
             RefreshModeText();
+            SyncReadiness();
             LayoutCards();
             SyncEditButton();
         }
@@ -340,11 +380,51 @@ namespace FrameForge.UI
         private void SyncChips()
         {
             BoostPlan p = Host.St.Plan();
-            chips.On[0] = p.Priority;
-            chips.On[1] = p.PowerPlan;
-            chips.On[2] = p.Timer;
-            chips.On[3] = p.Dvr;
+            chips.On = new bool[] { p.Priority, p.PowerPlan, p.Timer, p.Dvr };
+            bool boosting = Host.Boost != null && Host.Boost.Active;
+            chips.Boosting = boosting;
+            BoostResult res = ReadLastBoostResult(Host.StateHub);
+            lastChipResult = res;
+            if (boosting && res != null)
+            {
+                chips.Active = new bool[]
+                {
+                    res.PriorityOk > 0,
+                    res.PowerOk > 0,
+                    res.TimerOk > 0,
+                    res.DvrOk > 0
+                };
+            }
+            else if (boosting)
+            {
+                chips.Active = new bool[] { p.Priority, p.PowerPlan, p.Timer, p.Dvr };
+            }
+            else
+            {
+                chips.Active = new bool[4];
+            }
             chips.Invalidate();
+        }
+
+        private static BoostResult ReadLastBoostResult(PagesStateHub hub)
+        {
+            if (hub == null) return null;
+            Type t = hub.GetType();
+            var prop = t.GetProperty("LastBoostResult",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            if (prop != null)
+            {
+                try { return prop.GetValue(hub, null) as BoostResult; }
+                catch { return null; }
+            }
+            var field = t.GetField("LastBoostResult",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            if (field != null)
+            {
+                try { return field.GetValue(hub) as BoostResult; }
+                catch { return null; }
+            }
+            return null;
         }
 
         public void SetBusy(bool busy)
@@ -408,13 +488,15 @@ namespace FrameForge.UI
                 p.Memory, p.Background, p.Affinity, p.Irq, p.IdealCpu
             };
             int cores, level;
+            string corePolicy;
             bool[] r = BoostDialog.Edit(FindForm(), v, Host.St.AffinityCores,
-                Host.St.BoostPriorityLevel, out cores, out level);
+                Host.St.BoostPriorityLevel, Host.St.CorePolicy, out cores, out level, out corePolicy);
             if (r == null) return;
 
             Host.St.AffinityCores = cores;
             Host.St.ApplyCustom(r);
             Host.St.BoostPriorityLevel = level;
+            Host.St.CorePolicy = corePolicy;
             Host.SaveSettingsSoon();
 
             // 手动挑完选项就落到自定义模式,配色同步转紫。
@@ -434,6 +516,8 @@ namespace FrameForge.UI
 
             bool active = Host.Boost != null && Host.Boost.Active;
             if (active != lastBoosted) { lastBoosted = active; SyncState(); }
+            else if (ReadLastBoostResult(Host.StateHub) != lastChipResult) SyncChips();
+            SyncReadiness();
 
             // 优先用识别出来的游戏名,识别不到再退回进程名,绝不留空。
             string det = s.GameTitle.Length > 0 ? s.GameTitle : s.GameName;
@@ -526,6 +610,90 @@ namespace FrameForge.UI
             lastReal = text;
             realLbl.Text = text;
             realLbl.ForeColor = !on ? Theme.Faint : (degraded ? Theme.Warn : Theme.Accent);
+        }
+
+        private void ToggleRealBoost()
+        {
+            if (Host == null || Host.St == null) return;
+            bool next = !Host.St.RealBoost;
+            Host.St.RealBoost = next;
+            Host.SaveSettingsSoon();
+            if (Host.RealBoost != null)
+            {
+                if (next) Host.RealBoost.Start();
+                else Host.RealBoost.Stop();
+            }
+            foreach (Control c in Host.Controls)
+            {
+                var sp = c as SettingsPage;
+                if (sp != null) { sp.SyncRealBoost(); break; }
+            }
+            if (Host.StateHub != null) Host.StateHub.RefreshFromEngines(Host);
+            lastReal = "";
+            SyncRealBoost();
+        }
+
+        private void SyncReadiness()
+        {
+            string act = "";
+            string msg = "";
+            string btn = "";
+            if (!MemEngine.IsAdmin)
+            {
+                act = "admin";
+                msg = I18n.T("boost.ready_admin");
+                btn = I18n.T("boost.ready_admin_btn");
+            }
+            else if (!FpsEngine.Installed)
+            {
+                act = "fps";
+                msg = I18n.T("boost.ready_fps");
+                btn = I18n.T("boost.ready_fps_btn");
+            }
+            else if (Host != null && Host.St != null && Host.St.MyGames.Count == 0)
+            {
+                act = "games";
+                msg = I18n.T("boost.ready_games");
+                btn = I18n.T("boost.ready_games_btn");
+            }
+
+            if (act != readyAction)
+            {
+                readyAction = act;
+                readyDismissed = false;
+            }
+            bool show = act.Length > 0 && !readyDismissed;
+            if (show)
+            {
+                if (readyLbl.Text != msg) readyLbl.Text = msg;
+                if (readyBtn.Text != btn) readyBtn.Text = btn;
+            }
+            if (readyCard.Visible != show)
+            {
+                readyCard.Visible = show;
+                LayoutCards();
+            }
+        }
+
+        private void OnReadyAction()
+        {
+            if (readyAction == "admin") MemEngine.RestartElevated("");
+            else if (readyAction == "fps") Host.DownloadPresentMon();
+            else if (readyAction == "games") JumpToGames();
+        }
+
+        private void JumpToGames()
+        {
+            if (Host == null) return;
+            foreach (Control c in Host.Controls)
+            {
+                var seg = c as Segmented;
+                if (seg != null && seg.Items != null && seg.Items.Length >= 2)
+                {
+                    seg.Selected = 1;
+                    return;
+                }
+            }
         }
 
         /// <summary>
@@ -642,6 +810,23 @@ namespace FrameForge.UI
             int bodyW = Width - pad * 2;
             int y = pad;
 
+            if (readyCard.Visible)
+            {
+                int readyH = Ui.Px(38);
+                readyCard.SetBounds(pad, y, bodyW, readyH);
+                int rp = Ui.Px(14);
+                int dotSz = Ui.Px(7);
+                int closeW = Ui.Px(26);
+                int btnW0 = Math.Max(Ui.Px(88),
+                    TextRenderer.MeasureText(readyBtn.Text, Theme.F(8.5f, FontStyle.Bold)).Width + Ui.Px(24));
+                readyDot.SetBounds(rp, (readyH - dotSz) / 2, dotSz, dotSz);
+                readyDismiss.SetBounds(bodyW - rp - closeW, (readyH - Ui.Px(24)) / 2, closeW, Ui.Px(24));
+                readyBtn.SetBounds(readyDismiss.Left - Ui.Px(8) - btnW0, (readyH - Ui.Px(26)) / 2, btnW0, Ui.Px(26));
+                int lblX = readyDot.Right + Ui.Px(8);
+                readyLbl.SetBounds(lblX, 0, Math.Max(Ui.Px(60), readyBtn.Left - lblX - Ui.Px(8)), readyH);
+                y += readyH + Ui.Px(10);
+            }
+
             hero.SetBounds(pad, y, bodyW, heroH);
             y += heroH + heroGap;
 
@@ -742,6 +927,8 @@ namespace FrameForge.UI
         {
             public string[] Labels = new string[0];
             public bool[] On = new bool[0];
+            public bool[] Active = new bool[0];
+            public bool Boosting;
             public Color Accent = Color.Empty;
 
             protected override void OnPaint(PaintEventArgs e)
@@ -760,22 +947,41 @@ namespace FrameForge.UI
 
                 for (int i = 0; i < Labels.Length; i++)
                 {
-                    bool on = i < On.Length && On[i];
+                    bool planned = i < On.Length && On[i];
+                    bool active = Boosting && i < Active.Length && Active[i];
+                    bool skipped = Boosting && planned && !active;
                     System.Drawing.Size tsz = TextRenderer.MeasureText(Labels[i], f);
                     float w = tsz.Width + dot + Ui.Fp(22);
                     if (x + w > Width) break;
 
                     var r = new RectangleF(x, y, w, h);
-                    // 参考图里标签没有底框,只有朱砂小方块 + 文字。
-                    using (var b = new SolidBrush(on ? acc : Theme.Faint))
+                    float dy = r.Y + (h - dot) / 2f;
+                    if (active)
                     {
-                        float dy = r.Y + (h - dot) / 2f;
-                        g.FillRectangle(b, r.X + Ui.Fp(4), dy, dot, dot);
+                        using (var b = new SolidBrush(acc))
+                            g.FillRectangle(b, r.X + Ui.Fp(4), dy, dot, dot);
+                    }
+                    else if (skipped)
+                    {
+                        using (var b = new SolidBrush(Theme.Warn))
+                            g.FillRectangle(b, r.X + Ui.Fp(4), dy, dot, dot);
+                    }
+                    else if (planned)
+                    {
+                        using (var pen = new Pen(Theme.Mix(acc, Theme.Sub, 0.45f), 1.2f))
+                            g.DrawRectangle(pen, r.X + Ui.Fp(4), dy, dot, dot);
+                    }
+                    else
+                    {
+                        using (var b = new SolidBrush(Theme.Faint))
+                            g.FillRectangle(b, r.X + Ui.Fp(4), dy, dot, dot);
                     }
 
+                    Color fg = active ? Theme.Mix(Theme.Sub, acc, 0.55f)
+                        : (skipped ? Theme.Warn : (planned ? Theme.Sub : Theme.Faint));
                     TextRenderer.DrawText(g, Labels[i], f,
                         Rectangle.Round(new RectangleF(r.X + Ui.Fp(4) + dot + Ui.Fp(6), r.Y, r.Width - (Ui.Fp(4) + dot + Ui.Fp(6)) - Ui.Fp(8), h)),
-                        on ? Theme.Mix(Theme.Sub, acc, 0.55f) : Theme.Faint,
+                        fg,
                         TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
 
                     x += w + gap;
@@ -1887,7 +2093,7 @@ namespace FrameForge.UI
     {
         private readonly Card genCard, memCard, fpsCard, rtssCard, adminCard, aboutCard, hotCard;
         private readonly Segmented segLang, segTheme;
-        private readonly Toggle tgAuto, tgTray, tgMemAuto, tgBoostProfile, tgUpdates, tgRealBoost;
+        private readonly Toggle tgAuto, tgTray, tgMemAuto, tgBoostProfile, tgUpdates, tgRealBoost, tgShowGraph, tgOsdToast;
         private readonly Segmented segMemMode;
         private readonly Slider sldThreshold;
         private readonly TextLabel memInfo, fpsStatus, fpsNote, adminStatus, adminNote, aboutName, aboutNotice, aboutEnv;
@@ -1898,7 +2104,9 @@ namespace FrameForge.UI
         private readonly TextLabel langTitle, themeTitle, autoTitle, autoSub, trayTitle, traySub;
         private readonly TextLabel boostProfileTitle, boostProfileSub;
         private readonly TextLabel realBoostTitle, realBoostSub;
+        private readonly TextLabel showGraphTitle, osdToastTitle;
         private readonly TextLabel updateTitle, updateSub;
+        private readonly ToolTip tips = new ToolTip();
         private readonly TextLabel memAutoTitle;
         private readonly TextLabel rtssTitle, rtssSub;
         private readonly TextLabel hotOvTitle, hotOvKey, hotBoostTitle, hotBoostKey, hotFlTitle, hotFlKey;
@@ -2034,6 +2242,36 @@ namespace FrameForge.UI
             genCard.Controls.Add(realBoostTitle);
             genCard.Controls.Add(realBoostSub);
             genCard.Controls.Add(tgRealBoost);
+
+            // HUD 帧时间曲线与游戏内 OSD 提示
+            showGraphTitle = RowTitle(I18n.T("hud.show_graph"));
+            tgShowGraph = new Toggle();
+            tgShowGraph.SetSilent(host.St.ShowFrameGraph);
+            tgShowGraph.CheckedChanged += delegate
+            {
+                Host.St.ShowFrameGraph = tgShowGraph.Checked;
+                Host.SaveSettingsSoon();
+                Host.SyncOverlay();
+            };
+            tips.SetToolTip(showGraphTitle, I18n.T("hud.show_graph_sub"));
+            tips.SetToolTip(tgShowGraph, I18n.T("hud.show_graph_sub"));
+
+            osdToastTitle = RowTitle(I18n.T("hud.osd_toast"));
+            tgOsdToast = new Toggle();
+            tgOsdToast.SetSilent(host.St.InGameOsdToast);
+            tgOsdToast.CheckedChanged += delegate
+            {
+                Host.St.InGameOsdToast = tgOsdToast.Checked;
+                Host.SaveSettingsSoon();
+                Host.SyncOverlay();
+            };
+            tips.SetToolTip(osdToastTitle, I18n.T("hud.osd_toast_sub"));
+            tips.SetToolTip(tgOsdToast, I18n.T("hud.osd_toast_sub"));
+
+            genCard.Controls.Add(showGraphTitle);
+            genCard.Controls.Add(tgShowGraph);
+            genCard.Controls.Add(osdToastTitle);
+            genCard.Controls.Add(tgOsdToast);
 
             // 内存
             memAutoTitle = RowTitle(I18n.T("set.memauto"));
@@ -2249,6 +2487,12 @@ namespace FrameForge.UI
             UpdateStatus();
         }
 
+        public void SyncRealBoost()
+        {
+            if (tgRealBoost != null && Host != null && Host.St != null)
+                tgRealBoost.SetSilent(Host.St.RealBoost);
+        }
+
         public void SetDownloadState(bool busy, int pct)
         {
             btnFps.Busy = busy;
@@ -2292,6 +2536,7 @@ namespace FrameForge.UI
             }
 
             UpdateRtssStatus();
+            SyncRealBoost();
         }
 
         /// <summary>
@@ -2559,6 +2804,7 @@ namespace FrameForge.UI
             rtssStage = stage;
             rtssPercent = percent < 0 ? 0 : (percent > 100 ? 100 : percent);
             UpdateRtssStatus();
+            SyncRealBoost();
         }
 
         /// <summary>切换触发方式:按阈值看占用,按时间看间隔。</summary>
@@ -2587,6 +2833,7 @@ namespace FrameForge.UI
             memInfo.Text = Fmt.Pair(s.RamUsed, s.RamTotal) + (s.RamPct >= 0 ? "   ·   " + s.RamPct.ToString("0") + "%" : "");
             // RTSS 也可能在托盘里被手动开关,每秒对一次,按钮文案不会和实际状态脱节。
             UpdateRtssStatus();
+            SyncRealBoost();
         }
 
         // ---------------- 布局 ----------------
@@ -2663,16 +2910,14 @@ namespace FrameForge.UI
             int rightX = colW + gap;
             int rightW = Width - rightX;
 
-            int genH = Ui.Px(300);
-            int hotH = Ui.Px(152);
+            int genH = Ui.Px(342);
+            int hotH = Ui.Px(148);
             int aboutH = Height - genH - hotH - gap * 2;
-            if (aboutH < Ui.Px(166))
+            if (aboutH < Ui.Px(164))
             {
-                // 关于卡最小 164:版本、声明、环境三行加上底部按钮正好占 158,再留 6 的呼吸。
-                // 高度不够时先让热键卡(三行 142)和常规卡(292)收,别让"打开日志"被卡片下沿切掉。
                 aboutH = Ui.Px(164);
-                hotH = Math.Max(Ui.Px(142), Height - genH - aboutH - gap * 2);
-                genH = Math.Max(Ui.Px(292), Height - hotH - aboutH - gap * 2);
+                hotH = Math.Max(Ui.Px(136), Height - genH - aboutH - gap * 2);
+                genH = Math.Max(Ui.Px(326), Height - hotH - aboutH - gap * 2);
             }
 
             int memH = Ui.Px(160);
@@ -2709,21 +2954,27 @@ namespace FrameForge.UI
             boostProfileSub.Visible = false;
             updateSub.Visible = false;
 
-            autoTitle.SetBounds(pad, Ui.Px(112), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(24));
-            tgAuto.SetBounds(colW - pad - toggleW, Ui.Px(112), toggleW, Ui.Px(24));
+            autoTitle.SetBounds(pad, Ui.Px(110), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(22));
+            tgAuto.SetBounds(colW - pad - toggleW, Ui.Px(110), toggleW, Ui.Px(22));
 
-            trayTitle.SetBounds(pad, Ui.Px(146), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(24));
-            tgTray.SetBounds(colW - pad - toggleW, Ui.Px(146), toggleW, Ui.Px(24));
+            trayTitle.SetBounds(pad, Ui.Px(138), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(22));
+            tgTray.SetBounds(colW - pad - toggleW, Ui.Px(138), toggleW, Ui.Px(22));
 
-            boostProfileTitle.SetBounds(pad, Ui.Px(180), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(24));
-            tgBoostProfile.SetBounds(colW - pad - toggleW, Ui.Px(180), toggleW, Ui.Px(24));
+            boostProfileTitle.SetBounds(pad, Ui.Px(166), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(22));
+            tgBoostProfile.SetBounds(colW - pad - toggleW, Ui.Px(166), toggleW, Ui.Px(22));
 
-            updateTitle.SetBounds(pad, Ui.Px(214), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(24));
-            tgUpdates.SetBounds(colW - pad - toggleW, Ui.Px(214), toggleW, Ui.Px(24));
+            updateTitle.SetBounds(pad, Ui.Px(194), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(22));
+            tgUpdates.SetBounds(colW - pad - toggleW, Ui.Px(194), toggleW, Ui.Px(22));
 
-            realBoostTitle.SetBounds(pad, Ui.Px(248), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(20));
-            realBoostSub.SetBounds(pad, Ui.Px(270), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(16));
-            tgRealBoost.SetBounds(colW - pad - toggleW, Ui.Px(250), toggleW, Ui.Px(24));
+            showGraphTitle.SetBounds(pad, Ui.Px(222), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(22));
+            tgShowGraph.SetBounds(colW - pad - toggleW, Ui.Px(222), toggleW, Ui.Px(22));
+
+            osdToastTitle.SetBounds(pad, Ui.Px(250), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(22));
+            tgOsdToast.SetBounds(colW - pad - toggleW, Ui.Px(250), toggleW, Ui.Px(22));
+
+            realBoostTitle.SetBounds(pad, Ui.Px(280), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(20));
+            realBoostSub.SetBounds(pad, Ui.Px(301), colW - pad * 2 - toggleW - Ui.Px(10), Ui.Px(16));
+            tgRealBoost.SetBounds(colW - pad - toggleW, Ui.Px(282), toggleW, Ui.Px(24));
 
             PlaceHeader(memCard, pad);
             // 模式选择放在标题下方左侧,右侧留给开关,两者不再抢同一块位置。
@@ -4821,9 +5072,28 @@ namespace FrameForge.UI
         private void Launch()
         {
             InstalledGame g = list.Selected;
-            if (g == null || string.IsNullOrEmpty(g.ExePath)) return;
+            if (g == null) return;
+            string uri = (g.LaunchUri ?? "").Trim();
+            if (uri.Length == 0 && string.IsNullOrEmpty(g.ExePath)) return;
             try
             {
+                if (uri.Length > 0)
+                {
+                    try
+                    {
+                        var uriPsi = new System.Diagnostics.ProcessStartInfo();
+                        uriPsi.FileName = uri;
+                        uriPsi.UseShellExecute = true;
+                        System.Diagnostics.Process.Start(uriPsi);
+                        Host.Toast(I18n.T("games.launching", g.Name));
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Write("launch uri: " + ex.Message);
+                        if (string.IsNullOrEmpty(g.ExePath)) throw;
+                    }
+                }
                 var psi = new System.Diagnostics.ProcessStartInfo();
                 psi.FileName = g.ExePath;
                 string dir = "";
@@ -4920,11 +5190,11 @@ namespace FrameForge.UI
 
         private int RowH() { return Ui.Px(56); }
 
-        /// <summary>§3.5：状态徽标数据源统一按显示名查 ProfileStore，ProcName 只用于 pin。</summary>
+        /// <summary>§3.5：状态徽标数据源统一按三段式键查 ProfileStore，ProcName 只用于 pin。</summary>
         private GameProfile ProfileOf(InstalledGame g)
         {
             return g != null && host != null && host.Profiles != null
-                ? host.Profiles.Find(g.Name) : null;
+                ? host.Profiles.Find(g.ProcName, g.ExePath, g.Name) : null;
         }
 
         /// <summary>换一批数据,尽量把选中项留在原来那一款上。</summary>

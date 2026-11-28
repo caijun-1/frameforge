@@ -76,6 +76,7 @@ namespace FrameForge.Sys
     {
         public const string SchemeHigh = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
         public const string SchemeBalanced = "381b4222-f694-41f0-9685-ff5bb260df2e";
+        public const string OverlayHigh = "ded574b5-45a0-4f42-8737-46345c09c238";
 
         private const string GameConfigStore = @"System\GameConfigStore";
         private const string GameDvrKey = @"Software\Microsoft\Windows\CurrentVersion\GameDVR";
@@ -86,12 +87,18 @@ namespace FrameForge.Sys
 
         private readonly List<RegSaved> regSaved = new List<RegSaved>();
         private readonly List<Suspended> suspended = new List<Suspended>();
+        private readonly List<TamedProc> tamed = new List<TamedProc>();
+        private readonly List<int> steeredTids = new List<int>();
         private readonly AffinityEngine affinity = new AffinityEngine();
         private readonly InterruptEngine irq = new InterruptEngine();
 
         private string prevScheme = "";
+        private Guid prevOverlayGuid = Guid.Empty;
+        private bool overlayApplied;
         private uint prevPriority;
         private bool timerSet;
+        private static readonly object timerStateGate = new object();
+        private static bool ntTimerAcquired;
 
         // SCTL v2 / boost-core §A3：本引擎对全局资源的持有标记与仲裁回调。
         private bool powerAcquired;
@@ -383,6 +390,7 @@ namespace FrameForge.Sys
         {
             if (string.IsNullOrEmpty(name)) return true;
             if (Protected.Contains(name) || MemEngine.IsProtectedName(name)) return true;
+            if (ProcessGuardList.IsAntiCheat(name) || ProcessGuardList.IsProtectedBackground(name)) return true;
             RefreshPermanent();
             lock (permGate) { return permNames.Contains(name); }
         }
@@ -912,6 +920,8 @@ namespace FrameForge.Sys
             {
                 try { r.Suspended = SuspendBackground(gamePid, suspendCandidates, tx); }
                 catch (Exception ex) { Log.Write("boost suspend: " + ex.Message); }
+                try { TameBackground(gamePid); }
+                catch (Exception ex) { Log.Write("boost tame: " + ex.Message); }
             }
 
             r.Ok = r.PriorityOk + r.PowerOk + r.TimerOk + r.DvrOk + r.MemoryOk + r.AffinityOk + r.IrqOk > 0
@@ -1598,20 +1608,203 @@ namespace FrameForge.Sys
 
         private int SteerOnce(int pid, int cores, CorePolicy policy, Transaction expectedTx)
         {
-            int cpu = PickIdleCore(cores, policy);
+            int[] cpus;
+            int[] hotTids;
+            SampleAndPickHotThreadsAndCores(pid, cores, policy, out cpus, out hotTids);
             // P0-B：>64 核或采样失败时返回 -1（跳过），不再退化成 CPU 0。
-            if (cpu < 0) return -1;
-            // 若在 400ms 采样期间用户已还原加速，绝不回写幽灵日志或改线程理想核。
+            if (cpus.Length == 0 || cpus[0] < 0) return -1;
+            // 若在 220ms 采样期间用户已还原加速，绝不回写幽灵日志或改线程理想核。
             if (expectedTx != null && (!Active || currentTx != expectedTx)) return -1;
-            int tid = MainThreadId(pid);
-            if (tid <= 0) return -1;
-            NoteIdealAttempt(expectedTx, pid, tid, cpu);
-            if (!SetIdeal(tid, cpu)) return -1;
+            if (hotTids.Length == 0)
+            {
+                int fallbackTid = MainThreadId(pid);
+                if (fallbackTid <= 0) return -1;
+                hotTids = new int[] { fallbackTid };
+            }
 
-            if (SteerCpu != cpu) Log.Write("boost steer pid=" + pid + " cpu=" + cpu);
-            SteerCpu = cpu;
+            NoteIdealAttempt(expectedTx, pid, hotTids[0], cpus[0]);
+            int steered = 0;
+            steeredTids.Clear();
+            int pairCount = Math.Min(hotTids.Length, cpus.Length);
+            for (int i = 0; i < pairCount; i++)
+            {
+                if (SetIdeal(hotTids[i], cpus[i]))
+                {
+                    steered++;
+                    steeredTids.Add(hotTids[i]);
+                }
+            }
+            if (steered == 0) return -1;
+
+            if (SteerCpu != cpus[0]) Log.Write("boost steer pid=" + pid + " cpu=" + cpus[0] + " threads=" + steered);
+            SteerCpu = cpus[0];
             IdealApplied = true;
-            return cpu;
+            return cpus[0];
+        }
+
+        private sealed class ThreadCpuSample
+        {
+            public int Tid;
+            public long TotalTime1;
+            public long Delta;
+        }
+
+        /// <summary>
+        /// 在同一次 SteerSampleMs 采样窗口内同时测量各逻辑核负载与游戏各线程 GetThreadTimes 增量，
+        /// 识别最繁忙的 1-2 个线程（主线程 + 渲染/RHI）并配对到最空闲的 1-2 颗 P 核。
+        /// </summary>
+        private static void SampleAndPickHotThreadsAndCores(int pid, int cores, CorePolicy policy,
+            out int[] idlestCores, out int[] hotTids)
+        {
+            idlestCores = new int[0];
+            hotTids = new int[0];
+
+            long[] idle1, busy1, idle2, busy2;
+            if (Native.CpuCoreTimes(out idle1, out busy1) <= 0) return;
+
+            Dictionary<int, ThreadCpuSample> samples = SnapshotThreadTimes(pid);
+            try { Thread.Sleep(SteerSampleMs); } catch { }
+            if (Native.CpuCoreTimes(out idle2, out busy2) <= 0) return;
+
+            hotTids = PickHotThreadIds(samples, 2);
+            idlestCores = PickIdlestCores(idle1, busy1, idle2, busy2, cores, policy, Math.Max(1, hotTids.Length));
+        }
+
+        private static Dictionary<int, ThreadCpuSample> SnapshotThreadTimes(int pid)
+        {
+            var map = new Dictionary<int, ThreadCpuSample>();
+            IntPtr snap = Native.CreateToolhelp32Snapshot(Native.TH32CS_SNAPTHREAD, 0);
+            if (snap == IntPtr.Zero || snap == new IntPtr(-1)) return map;
+            try
+            {
+                var e = new Native.THREADENTRY32();
+                e.dwSize = (uint)Marshal.SizeOf(typeof(Native.THREADENTRY32));
+                if (!Native.Thread32First(snap, ref e)) return map;
+                do
+                {
+                    if (e.th32OwnerProcessID != (uint)pid) continue;
+                    int tid = (int)e.th32ThreadID;
+                    if (map.ContainsKey(tid)) continue;
+                    long t1;
+                    if (ReadThreadCpuTime(tid, out t1))
+                    {
+                        var s = new ThreadCpuSample();
+                        s.Tid = tid;
+                        s.TotalTime1 = t1;
+                        map[tid] = s;
+                    }
+                }
+                while (Native.Thread32Next(snap, ref e));
+            }
+            catch { }
+            finally { Native.CloseHandle(snap); }
+            return map;
+        }
+
+        private static bool ReadThreadCpuTime(int tid, out long totalTime)
+        {
+            totalTime = 0;
+            IntPtr th = Native.OpenThread(Native.THREAD_QUERY_LIMITED_INFORMATION, false, tid);
+            if (th == IntPtr.Zero) th = Native.OpenThread(Native.THREAD_QUERY_INFORMATION, false, tid);
+            if (th == IntPtr.Zero) return false;
+            try
+            {
+                long c, ex, k, u;
+                if (!Native.GetThreadTimes(th, out c, out ex, out k, out u)) return false;
+                totalTime = k + u;
+                return true;
+            }
+            catch { return false; }
+            finally { Native.CloseHandle(th); }
+        }
+
+        private static int[] PickHotThreadIds(Dictionary<int, ThreadCpuSample> samples, int maxCount)
+        {
+            if (samples == null || samples.Count == 0) return new int[0];
+            var active = new List<ThreadCpuSample>();
+            foreach (KeyValuePair<int, ThreadCpuSample> kv in samples)
+            {
+                long t2;
+                if (!ReadThreadCpuTime(kv.Key, out t2)) continue;
+                long delta = t2 - kv.Value.TotalTime1;
+                if (delta > 0)
+                {
+                    kv.Value.Delta = delta;
+                    active.Add(kv.Value);
+                }
+            }
+            if (active.Count == 0) return new int[0];
+            active.Sort(delegate(ThreadCpuSample a, ThreadCpuSample b)
+            {
+                int cmp = b.Delta.CompareTo(a.Delta);
+                return cmp != 0 ? cmp : a.Tid.CompareTo(b.Tid);
+            });
+            int take = Math.Min(maxCount, active.Count);
+            int[] result = new int[take];
+            for (int i = 0; i < take; i++) result[i] = active[i].Tid;
+            return result;
+        }
+
+        private static int[] PickIdlestCores(long[] idle1, long[] busy1, long[] idle2, long[] busy2,
+            int cores, CorePolicy policy, int maxCores)
+        {
+            int n = Math.Min(Math.Min(idle1.Length, busy1.Length), Math.Min(idle2.Length, busy2.Length));
+            if (n <= 0) return new int[0];
+
+            long gameMask = 0;
+            CpuCore[] all = CpuTopology.Cores();
+            if (cores > 0)
+            {
+                int used;
+                gameMask = CpuTopology.GameMask(cores, out used);
+            }
+
+            double hysteresis = CoreConfig.Hysteresis();
+            var candidates = new List<KeyValuePair<int, double>>();
+            for (int i = 0; i < all.Length; i++)
+            {
+                CpuCore c = all[i];
+                if (c.Parked) continue;
+                if (policy == CorePolicy.PCoreFirst && c.Efficient) continue;
+                if (gameMask != 0 && (c.Mask & gameMask) == 0) continue;
+                int idx = c.Index;
+                if (idx < 0 || idx >= n || idx >= 64) continue;
+
+                long di = idle2[idx] - idle1[idx];
+                long db = busy2[idx] - busy1[idx];
+                long total = di + db;
+                if (total <= 0) total = 1;
+                double load = (double)db / total;
+                candidates.Add(new KeyValuePair<int, double>(idx, load));
+            }
+            if (candidates.Count == 0) return new int[0];
+
+            // 若存在 P 核候选且当前未限定单核，优先把热点线程排到 P 核上。
+            bool hasPCore = false;
+            var pCoreSet = new HashSet<int>();
+            for (int i = 0; i < all.Length; i++)
+            {
+                if (!all[i].Efficient && !all[i].Parked) { hasPCore = true; pCoreSet.Add(all[i].Index); }
+            }
+
+            candidates.Sort(delegate(KeyValuePair<int, double> a, KeyValuePair<int, double> b)
+            {
+                if (hasPCore)
+                {
+                    bool pa = pCoreSet.Contains(a.Key);
+                    bool pb = pCoreSet.Contains(b.Key);
+                    if (pa != pb) return pa ? -1 : 1;
+                }
+                if (Math.Abs(a.Value - b.Value) > hysteresis) return a.Value.CompareTo(b.Value);
+                if (a.Key == 0 && b.Key != 0) return 1;
+                if (b.Key == 0 && a.Key != 0) return -1;
+                return a.Key.CompareTo(b.Key);
+            });
+
+            int take = Math.Min(maxCores, candidates.Count);
+            int[] result = new int[take];
+            for (int i = 0; i < take; i++) result[i] = candidates[i].Key;
+            return result;
         }
 
         /// <summary>
@@ -1626,47 +1819,11 @@ namespace FrameForge.Sys
         private static int PickIdleCore(int cores, CorePolicy policy)
         {
             long[] idle1, busy1, idle2, busy2;
-            // P0-B：Native.CpuCoreTimes 已改为动态容量；任一次采样失败即放弃本轮引导。
             if (Native.CpuCoreTimes(out idle1, out busy1) <= 0) return -1;
             try { Thread.Sleep(SteerSampleMs); } catch { }
             if (Native.CpuCoreTimes(out idle2, out busy2) <= 0) return -1;
-
-            int n = Math.Min(Math.Min(idle1.Length, busy1.Length), Math.Min(idle2.Length, busy2.Length));
-            if (n <= 0) return -1;
-
-            // 启用核心独占时只在游戏自己的核里挑,不会把主线程送到被排除的核上。
-            long gameMask = 0;
-            CpuCore[] all = CpuTopology.Cores();
-            if (cores > 0)
-            {
-                int used;
-                gameMask = CpuTopology.GameMask(cores, out used);
-            }
-
-            double hysteresis = CoreConfig.Hysteresis();
-            int best = -1;
-            double bestLoad = 2;
-            for (int i = 0; i < all.Length; i++)
-            {
-                CpuCore c = all[i];
-                if (c.Parked) continue;
-                // P1-A：PCoreFirst 只在 P 核候选中挑最闲核。
-                if (policy == CorePolicy.PCoreFirst && c.Efficient) continue;
-                if (gameMask != 0 && (c.Mask & gameMask) == 0) continue;
-                int idx = c.Index;
-                // SetThreadIdealProcessor 只支持 0..63；>63 的核不参与本轮引导。
-                if (idx < 0 || idx >= n || idx >= 64) continue;
-
-                long di = idle2[idx] - idle1[idx];
-                long db = busy2[idx] - busy1[idx];
-                long total = di + db;
-                if (total <= 0) total = 1;
-                double load = (double)db / total;
-
-                if (best < 0 || load < bestLoad - hysteresis) { best = idx; bestLoad = load; }
-                else if (best == 0 && idx != 0 && Math.Abs(load - bestLoad) <= hysteresis) best = idx;
-            }
-            return best < 0 ? -1 : best;
+            int[] picked = PickIdlestCores(idle1, busy1, idle2, busy2, cores, policy, 1);
+            return picked.Length > 0 ? picked[0] : -1;
         }
 
         /// <summary>进程里 TID 最小的线程就是主线程(游戏逻辑与渲染提交都压在它上面)。</summary>
@@ -1715,7 +1872,24 @@ namespace FrameForge.Sys
                 AcquireResult ar = SystemResourceArbiter.Instance.Acquire(this, ResourceKind.PowerScheme,
                     delegate { return captured; },
                     delegate { return SetScheme(SchemeHigh); });
-                if (!ar.Ok) return false;
+                if (!ar.Ok)
+                {
+                    // Win11 Modern Standby 笔记本/掌机往往只有平衡方案而无传统高性能方案，
+                    // 此时回退到 Power Overlay Scheme (Best Performance)。
+                    Guid origOverlay;
+                    if (Native.PowerGetEffectiveOverlayScheme(out origOverlay) == 0)
+                    {
+                        Guid highOverlay = new Guid(OverlayHigh);
+                        if (Native.PowerSetActiveOverlayScheme(highOverlay) == 0)
+                        {
+                            prevOverlayGuid = origOverlay;
+                            overlayApplied = true;
+                            Log.Write("boost power: SchemeHigh unavailable, applied overlay BestPerformance");
+                            return true;
+                        }
+                    }
+                    return false;
+                }
                 // SHARED 同样持有一个引用，停止时必须对称 Release。
                 powerAcquired = true;
                 if (ar.State == AcquireState.GRANTED) prevScheme = ar.Old;
@@ -1737,6 +1911,83 @@ namespace FrameForge.Sys
             catch (Exception ex) { Log.Write("boost power: " + ex.Message); return false; }
         }
 
+        internal static void DisableSelfTimerThrottling()
+        {
+            try
+            {
+                var state = new Native.PROCESS_POWER_THROTTLING_STATE();
+                state.Version = Native.PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+                state.ControlMask = Native.PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION;
+                state.StateMask = 0;
+                Native.SetProcessInformation(Native.GetCurrentProcess(), Native.ProcessPowerThrottling,
+                    ref state, Marshal.SizeOf(typeof(Native.PROCESS_POWER_THROTTLING_STATE)));
+            }
+            catch { }
+        }
+
+        internal static bool AcquireHighResTimer()
+        {
+            DisableSelfTimerThrottling();
+            lock (timerStateGate)
+            {
+                try
+                {
+                    uint cur;
+                    if (Native.NtSetTimerResolution(5000, true, out cur) == 0)
+                    {
+                        ntTimerAcquired = true;
+                        return true;
+                    }
+                }
+                catch { }
+                ntTimerAcquired = false;
+                return Native.timeBeginPeriod(1) == 0;
+            }
+        }
+
+        internal static void ReleaseHighResTimer()
+        {
+            lock (timerStateGate)
+            {
+                if (ntTimerAcquired)
+                {
+                    try
+                    {
+                        uint cur;
+                        Native.NtSetTimerResolution(5000, false, out cur);
+                    }
+                    catch { }
+                    ntTimerAcquired = false;
+                }
+                else
+                {
+                    try { Native.timeEndPeriod(1); } catch { }
+                }
+            }
+        }
+
+        internal static bool SetProcessEcoQoS(IntPtr hProcess, bool enable)
+        {
+            try
+            {
+                var state = new Native.PROCESS_POWER_THROTTLING_STATE();
+                state.Version = Native.PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+                if (enable)
+                {
+                    state.ControlMask = Native.PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+                    state.StateMask = Native.PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+                }
+                else
+                {
+                    state.ControlMask = 0;
+                    state.StateMask = 0;
+                }
+                return Native.SetProcessInformation(hProcess, Native.ProcessPowerThrottling,
+                    ref state, Marshal.SizeOf(typeof(Native.PROCESS_POWER_THROTTLING_STATE)));
+            }
+            catch { return false; }
+        }
+
         private bool ApplyTimer()
         {
             try
@@ -1744,7 +1995,7 @@ namespace FrameForge.Sys
                 // §A2/A3：timer 引用计数收敛到仲裁者，Begin/End 严格配对。
                 AcquireResult ar = SystemResourceArbiter.Instance.Acquire(this, ResourceKind.TimerResolution,
                     delegate { return "1"; },
-                    delegate { return Native.timeBeginPeriod(1) == 0; });
+                    delegate { return AcquireHighResTimer(); });
                 if (!ar.Ok) return false;
                 timerAcquired = true;
                 timerSet = ar.State == AcquireState.GRANTED;
@@ -1865,13 +2116,13 @@ namespace FrameForge.Sys
             {
                 // I3：只有 holder 且引用计数归零时才 End；幂等由仲裁者保证。
                 SystemResourceArbiter.Instance.Release(this, ResourceKind.TimerResolution,
-                    delegate(string old) { Native.timeEndPeriod(1); timerEnded = true; return true; });
+                    delegate(string old) { ReleaseHighResTimer(); timerEnded = true; return true; });
                 timerAcquired = false;
                 timerSet = false;
             }
             else if (timerSet)
             {
-                try { Native.timeEndPeriod(1); timerEnded = true; }
+                try { ReleaseHighResTimer(); timerEnded = true; }
                 catch (Exception ex) { clean = false; Log.Write("boost restore timer: " + ex.Message); }
                 timerSet = false;
             }
@@ -1904,6 +2155,15 @@ namespace FrameForge.Sys
                 catch (Exception ex) { clean = false; Log.Write("boost restore power plan: " + ex.Message); }
                 prevScheme = "";
             }
+            if (overlayApplied)
+            {
+                try { Native.PowerSetActiveOverlayScheme(prevOverlayGuid); }
+                catch (Exception ex) { clean = false; Log.Write("boost restore overlay: " + ex.Message); }
+                overlayApplied = false;
+                prevOverlayGuid = Guid.Empty;
+            }
+
+            RestoreTamed();
 
             if (prevPriority != 0 && GamePid > 0)
             {
@@ -1922,7 +2182,10 @@ namespace FrameForge.Sys
                 prevPriority = 0;
             }
 
-            // 软引导只是调度提示,进程退出就没了;还原时主动把主线程指回「任意核心」。
+            // 软引导只是调度提示,进程退出就没了;还原时主动把已引导线程与主线程指回「任意核心」。
+            for (int i = 0; i < steeredTids.Count; i++)
+                SetIdeal(steeredTids[i], (int)Native.MAXIMUM_PROCESSORS);
+            steeredTids.Clear();
             if (GamePid > 0)
             {
                 int tid = MainThreadId(GamePid);
@@ -2139,11 +2402,121 @@ namespace FrameForge.Sys
         }
 
         // =================================================================
+        //  EcoQoS 后台降噪（非冻结）
+        // =================================================================
+
+        private void TameBackground(int gamePid)
+        {
+            var suspendedSet = new HashSet<int>();
+            for (int i = 0; i < suspended.Count; i++) suspendedSet.Add(suspended[i].Pid);
+
+            int self = Process.GetCurrentProcess().Id;
+            Process[] procs;
+            try { procs = Process.GetProcesses(); }
+            catch { return; }
+
+            var firstTicks = new Dictionary<int, long>();
+            var candidates = new List<Process>();
+            for (int i = 0; i < procs.Length; i++)
+            {
+                Process p = procs[i];
+                try
+                {
+                    int pid = p.Id;
+                    if (pid <= 4 || pid == self || pid == gamePid || suspendedSet.Contains(pid)) { p.Dispose(); continue; }
+                    if (p.SessionId == 0 || p.MainWindowHandle != IntPtr.Zero) { p.Dispose(); continue; }
+                    string name = p.ProcessName;
+                    if (string.IsNullOrEmpty(name) || IsPermanent(name) || UserWhitelist.Contains(name)) { p.Dispose(); continue; }
+                    firstTicks[pid] = p.TotalProcessorTime.Ticks;
+                    candidates.Add(p);
+                }
+                catch { try { p.Dispose(); } catch { } }
+            }
+
+            if (candidates.Count == 0) return;
+            try { Thread.Sleep(150); } catch { }
+
+            long thresholdTicks = 150L * 10000L * Math.Max(1, Environment.ProcessorCount) / 20; // >5% CPU
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                Process p = candidates[i];
+                try
+                {
+                    int pid = p.Id;
+                    long prev;
+                    if (!firstTicks.TryGetValue(pid, out prev)) continue;
+                    long delta = p.TotalProcessorTime.Ticks - prev;
+                    if (delta < thresholdTicks) continue;
+
+                    string name = p.ProcessName;
+                    long startTicks = 0;
+                    try { startTicks = p.StartTime.Ticks; } catch { }
+
+                    IntPtr h = Native.OpenProcess(Native.PROCESS_SET_INFORMATION | Native.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+                    if (h == IntPtr.Zero) continue;
+                    try
+                    {
+                        uint curPrio = Native.GetPriorityClass(h);
+                        if (curPrio == 0) continue;
+                        if (curPrio == Native.NORMAL_PRIORITY_CLASS || curPrio == Native.ABOVE_NORMAL_PRIORITY_CLASS)
+                            Native.SetPriorityClass(h, Native.BELOW_NORMAL_PRIORITY_CLASS);
+                        SetProcessEcoQoS(h, true);
+                        tamed.Add(new TamedProc { Pid = pid, Name = name, PrevPriority = curPrio, StartTime = startTicks });
+                    }
+                    finally { Native.CloseHandle(h); }
+                }
+                catch { }
+                finally { try { p.Dispose(); } catch { } }
+            }
+        }
+
+        private void RestoreTamed()
+        {
+            for (int i = tamed.Count - 1; i >= 0; i--)
+            {
+                TamedProc t = tamed[i];
+                IntPtr h = IntPtr.Zero;
+                try
+                {
+                    using (Process p = Process.GetProcessById(t.Pid))
+                    {
+                        if (!string.Equals(p.ProcessName, t.Name, StringComparison.OrdinalIgnoreCase)) continue;
+                        if (t.StartTime > 0 && p.StartTime.Ticks != t.StartTime) continue;
+                    }
+                    h = Native.OpenProcess(Native.PROCESS_SET_INFORMATION | Native.PROCESS_QUERY_LIMITED_INFORMATION, false, t.Pid);
+                    if (h == IntPtr.Zero) continue;
+                    SetProcessEcoQoS(h, false);
+                    uint cur = Native.GetPriorityClass(h);
+                    if (cur == Native.BELOW_NORMAL_PRIORITY_CLASS && t.PrevPriority != 0)
+                        Native.SetPriorityClass(h, t.PrevPriority);
+                }
+                catch { }
+                finally { if (h != IntPtr.Zero) Native.CloseHandle(h); }
+            }
+            tamed.Clear();
+        }
+
+        // =================================================================
         //  电源计划
         // =================================================================
 
         public static string ActiveSchemeGuid()
         {
+            try
+            {
+                IntPtr ptr;
+                if (Native.PowerGetActiveScheme(IntPtr.Zero, out ptr) == 0 && ptr != IntPtr.Zero)
+                {
+                    try
+                    {
+                        Guid g = (Guid)Marshal.PtrToStructure(ptr, typeof(Guid));
+                        return g.ToString("D").ToLowerInvariant();
+                    }
+                    finally { Native.LocalFree(ptr); }
+                }
+            }
+            catch { }
+
             try
             {
                 string outp = Run(Native.System32("powercfg.exe"), "/getactivescheme");
@@ -2166,6 +2539,16 @@ namespace FrameForge.Sys
 
         public static bool SetScheme(string guid)
         {
+            try
+            {
+                Guid g;
+                if (Guid.TryParse(guid, out g))
+                {
+                    if (Native.PowerSetActiveScheme(IntPtr.Zero, ref g) == 0) return true;
+                }
+            }
+            catch { }
+
             try
             {
                 var psi = new ProcessStartInfo(Native.System32("powercfg.exe"), "/setactive " + guid);
@@ -2264,6 +2647,14 @@ namespace FrameForge.Sys
             public int Pid;
             public string Name = "";
             public ulong WorkingSet;
+        }
+
+        private sealed class TamedProc
+        {
+            public int Pid;
+            public string Name = "";
+            public uint PrevPriority;
+            public long StartTime;
         }
     }
 }

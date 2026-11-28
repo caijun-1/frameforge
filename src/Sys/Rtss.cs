@@ -73,6 +73,29 @@ namespace FrameForge.Sys
             }
         }
 
+        /// <summary>生成带 RTSS 颜色标签的文本片段，严格以 &lt;C&gt; 闭合。</summary>
+        public static string ColorTag(string text, string rgbHex)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            if (string.IsNullOrEmpty(rgbHex) || rgbHex.Length != 6) rgbHex = "FFFFFF";
+            return "<C=FF" + rgbHex + ">" + text + "<C>";
+        }
+
+        /// <summary>生成 0.1% Low 文本片段；未就绪时返回空串。</summary>
+        public static string Low01Tag(double low01, string rgbHex)
+        {
+            if (low01 <= 0) return "";
+            return ColorTag("0.1% " + low01.ToString("0", System.Globalization.CultureInfo.InvariantCulture), rgbHex);
+        }
+
+        /// <summary>生成 GPU 节流状态徽章（THRM 告警红 / PWR 琥珀黄）；无节流返回空串。</summary>
+        public static string ThrottleBadge(string throttle)
+        {
+            if (string.IsNullOrEmpty(throttle)) return "";
+            string hex = string.Equals(throttle, "THRM", StringComparison.OrdinalIgnoreCase) ? "FF5252" : "FFD166";
+            return ColorTag("[" + throttle + "]", hex);
+        }
+
         /// <summary>RTSS 主进程在不在。1 秒缓存,界面每秒查也不心疼。</summary>
         private static bool ProcAlive()
         {

@@ -35,6 +35,9 @@ namespace FrameForge.UI
             private readonly Toggle[] sw = new Toggle[Keys.Length];
             private readonly Segmented coreSeg;
             private readonly Segmented prioSeg;
+            private readonly Segmented policySeg;
+            private readonly ComboBox filterCombo;
+            private readonly Segmented overlaySeg;
             private readonly int[] coreVals;
             private readonly ToolTip tips = new ToolTip();
             private readonly FlatButton btnSave;
@@ -63,7 +66,7 @@ namespace FrameForge.UI
                 KeyPreview = true;
 
                 float s = Ui.S;
-                ClientSize = new Size((int)(720 * s), (int)(672 * s));
+                ClientSize = new Size((int)(720 * s), (int)(792 * s));
 
                 // 未配置时把全局计划当作"继承值"展示，让用户看清当前生效的是什么。
                 BoostPlan seed = existing != null ? existing.Plan()
@@ -118,6 +121,44 @@ namespace FrameForge.UI
                 prioSeg.Items = prioItems;
                 prioSeg.SetSilent(Math.Max(0, Math.Min(4, seed.PriorityLevel)));
                 Controls.Add(prioSeg);
+
+                policySeg = new Segmented();
+                policySeg.Items = new string[]
+                {
+                    I18n.T("prof.follow_global"),
+                    SafeT("core.policy.auto", "Auto"),
+                    SafeT("core.policy.pcorefirst", "P-Core"),
+                    SafeT("core.policy.singleccd", "Single CCD")
+                };
+                policySeg.SetSilent(CorePolicyIndex(existing != null ? existing.CorePolicy : ""));
+                Controls.Add(policySeg);
+
+                filterCombo = new ComboBox();
+                filterCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+                filterCombo.FlatStyle = FlatStyle.Flat;
+                filterCombo.BackColor = Theme.Bg;
+                filterCombo.ForeColor = Theme.Text;
+                filterCombo.Font = Theme.F(9f, FontStyle.Regular);
+                filterCombo.Items.Add(I18n.T("prof.follow_global"));
+                filterCombo.Items.Add(I18n.T("prof.force_off"));
+                for (int i = 1; i < Filter.PresetKeys.Length; i++)
+                    filterCombo.Items.Add(I18n.T(Filter.PresetKeys[i]));
+                int fp = existing != null ? existing.FilterPreset : -1;
+                if (fp < -1 || fp > Filter.PresetKeys.Length - 1) fp = -1;
+                filterCombo.SelectedIndex = fp + 1;
+                Controls.Add(filterCombo);
+
+                overlaySeg = new Segmented();
+                overlaySeg.Items = new string[]
+                {
+                    I18n.T("prof.follow_global"),
+                    I18n.T("prof.force_off"),
+                    I18n.T("prof.force_on")
+                };
+                int om = existing != null ? existing.OverlayMode : -1;
+                if (om < -1 || om > 1) om = -1;
+                overlaySeg.SetSilent(om + 1);
+                Controls.Add(overlaySeg);
 
                 btnSave = NewButton(I18n.T("games.opt.save"), true, 118);
                 btnFill = NewButton(I18n.T("games.opt.fill"), false, 118);
@@ -215,6 +256,9 @@ namespace FrameForge.UI
                 });
                 coreSeg.SetSilent(CoreIndex(p.Cores));
                 prioSeg.SetSilent(Math.Max(0, Math.Min(4, p.PriorityLevel)));
+                policySeg.SetSilent(0);
+                filterCombo.SelectedIndex = 0;
+                overlaySeg.SetSilent(0);
                 Invalidate();
             }
 
@@ -224,6 +268,9 @@ namespace FrameForge.UI
                 SetToggles(new bool[] { true, true, true, true, true, false, false, false, false });
                 coreSeg.SetSilent(coreVals.Length - 1);
                 prioSeg.SetSilent(4);
+                policySeg.SetSilent(0);
+                filterCombo.SelectedIndex = 0;
+                overlaySeg.SetSilent(0);
                 Invalidate();
             }
 
@@ -253,6 +300,9 @@ namespace FrameForge.UI
                 // sw[8] (IdealCpu) 按方案 P0 不落库：自动路径强制 false，避免"设了没效果"。
                 p.Cores = Cores;
                 p.PriorityLevel = Level;
+                p.CorePolicy = SelectedCorePolicy();
+                p.FilterPreset = filterCombo.SelectedIndex - 1;
+                p.OverlayMode = overlaySeg.Selected - 1;
                 host.Profiles.Save(p);
                 host.Profiles.RemoveLegacy(p.Name, game.Name);
                 host.Toast(I18n.T("games.opt.toast.saved", name));
@@ -292,8 +342,11 @@ namespace FrameForge.UI
                 }
 
                 int segW = Ui.Px(330);
-                coreSeg.SetBounds(Width - pad - segW, DividerY + Ui.Px(16), segW, Ui.Px(32));
-                prioSeg.SetBounds(Width - pad - segW, DividerY + Ui.Px(60), segW, Ui.Px(32));
+                coreSeg.SetBounds(Width - pad - segW, DividerY + Ui.Px(14), segW, Ui.Px(32));
+                prioSeg.SetBounds(Width - pad - segW, DividerY + Ui.Px(54), segW, Ui.Px(32));
+                policySeg.SetBounds(Width - pad - segW, DividerY + Ui.Px(94), segW, Ui.Px(32));
+                filterCombo.SetBounds(Width - pad - segW, DividerY + Ui.Px(136), segW, Ui.Px(28));
+                overlaySeg.SetBounds(Width - pad - segW, DividerY + Ui.Px(174), segW, Ui.Px(32));
 
                 int footerH = Ui.Px(36);
                 int footerY = Height - pad - footerH;
@@ -420,20 +473,54 @@ namespace FrameForge.UI
                 if (coreSeg.Visible)
                     DrawSettingRow(g, I18n.T("boost.dialog.cores"), coreSeg);
                 DrawSettingRow(g, I18n.T("boost.dialog.priority"), prioSeg);
+                DrawSettingRow(g, I18n.T("prof.core_policy"), policySeg);
+                DrawSettingRowBounds(g, I18n.T("prof.filter_preset"), filterCombo.Left, filterCombo.Top, filterCombo.Height);
+                DrawSettingRow(g, I18n.T("prof.overlay_mode"), overlaySeg);
 
                 // 固定两行边界说明，英文与低优先级警告都不会侵入工具栏。
                 bool low = prioSeg.Selected <= 1;
                 string boundary = low ? I18n.T("boost.prio.warn") : I18n.T("games.opt.boundary");
                 TextRenderer.DrawText(g, boundary, Theme.F(8.8f, FontStyle.Regular),
-                    new Rectangle(pad, DividerY + Ui.Px(112), Width - pad * 2, Ui.Px(52)),
+                    new Rectangle(pad, DividerY + Ui.Px(218), Width - pad * 2, Ui.Px(46)),
                     low ? Theme.Warn : Theme.Sub, Ui.Flags(ContentAlignment.TopLeft, true));
             }
 
             private void DrawSettingRow(Graphics g, string label, Segmented seg)
             {
+                DrawSettingRowBounds(g, label, seg.Left, seg.Top, seg.Height);
+            }
+
+            private void DrawSettingRowBounds(Graphics g, string label, int ctrlLeft, int ctrlTop, int ctrlHeight)
+            {
                 TextRenderer.DrawText(g, label, Theme.F(9.5f, FontStyle.Bold),
-                    new Rectangle(Pad, seg.Top, seg.Left - Pad - Ui.Px(16), seg.Height),
+                    new Rectangle(Pad, ctrlTop, ctrlLeft - Pad - Ui.Px(16), ctrlHeight),
                     Theme.Text, Ui.Flags(ContentAlignment.MiddleLeft, false));
+            }
+
+            private string SelectedCorePolicy()
+            {
+                switch (policySeg.Selected)
+                {
+                    case 1: return "auto";
+                    case 2: return "pcore";
+                    case 3: return "singleccd";
+                    default: return "";
+                }
+            }
+
+            private static int CorePolicyIndex(string policy)
+            {
+                string s = (policy ?? "").Trim().ToLowerInvariant();
+                if (s == "auto") return 1;
+                if (s == "pcore" || s == "pcorefirst") return 2;
+                if (s == "singleccd") return 3;
+                return 0;
+            }
+
+            private static string SafeT(string key, string fallback)
+            {
+                string v = I18n.T(key);
+                return v == key ? fallback : v;
             }
 
             private static string SourceLabel(string src)

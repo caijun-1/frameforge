@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Net.NetworkInformation;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
@@ -41,6 +42,7 @@ namespace FrameForge.Sys
         public bool GameRecent;
 
         public string GpuName = "";
+        public string GpuThrottle = "";
         public bool GpuFromNvml;
         public bool GpuFromAmd;
     }
@@ -57,6 +59,11 @@ namespace FrameForge.Sys
         private readonly List<NetworkInterface> nics = new List<NetworkInterface>();
         private int nicsDirty;
         private Thread thread;
+        private Thread winEventThread;
+        private uint winEventThreadId;
+        private WinEventNative.WinEventDelegate winEventDelegate;
+        private IntPtr winEventHook;
+        private readonly AutoResetEvent wakeEvent = new AutoResetEvent(false);
         private volatile bool running;
         private long lastIdle, lastKernel, lastUser;
         private long lastRx, lastTx;
@@ -154,6 +161,7 @@ namespace FrameForge.Sys
         {
             lastScan = DateTime.MinValue;
             lastForegroundPid = -1;
+            try { wakeEvent.Set(); } catch { }
         }
 
         public volatile SysSample Current = new SysSample();
@@ -189,6 +197,12 @@ namespace FrameForge.Sys
         {
             if (running) return;
             running = true;
+            winEventDelegate = OnWinEvent;
+            winEventThread = new Thread(WinEventLoop);
+            winEventThread.IsBackground = true;
+            winEventThread.Name = "FrameForge.WinEvent";
+            winEventThread.Start();
+
             thread = new Thread(Loop);
             thread.IsBackground = true;
             thread.Name = "FrameForge.Monitor";
@@ -199,12 +213,66 @@ namespace FrameForge.Sys
         public void Stop()
         {
             running = false;
+            try { wakeEvent.Set(); } catch { }
+            uint wetId = winEventThreadId;
+            if (wetId != 0)
+            {
+                try { WinEventNative.PostThreadMessage(wetId, WinEventNative.WM_QUIT, IntPtr.Zero, IntPtr.Zero); }
+                catch { }
+            }
+            Thread wt = winEventThread;
+            winEventThread = null;
+            if (wt != null)
+            {
+                try { wt.Join(600); }
+                catch { }
+            }
             Thread t = thread;
             thread = null;
             if (t != null)
             {
                 try { t.Join(1200); }
                 catch { }
+            }
+        }
+
+        private void OnWinEvent(IntPtr hWinEventHook, uint eventType, IntPtr hwnd,
+            int idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
+        {
+            try { wakeEvent.Set(); } catch { }
+        }
+
+        private void WinEventLoop()
+        {
+            winEventThreadId = WinEventNative.GetCurrentThreadId();
+            IntPtr hook = IntPtr.Zero;
+            try
+            {
+                hook = WinEventNative.SetWinEventHook(
+                    WinEventNative.EVENT_SYSTEM_FOREGROUND,
+                    WinEventNative.EVENT_SYSTEM_FOREGROUND,
+                    IntPtr.Zero,
+                    winEventDelegate,
+                    0, 0,
+                    WinEventNative.WINEVENT_OUTOFCONTEXT);
+                winEventHook = hook;
+                if (hook == IntPtr.Zero) return;
+                WinEventNative.MSG msg;
+                while (running && WinEventNative.GetMessage(out msg, IntPtr.Zero, 0, 0) > 0)
+                {
+                    WinEventNative.TranslateMessage(ref msg);
+                    WinEventNative.DispatchMessage(ref msg);
+                }
+            }
+            catch { }
+            finally
+            {
+                if (hook != IntPtr.Zero)
+                {
+                    try { WinEventNative.UnhookWinEvent(hook); } catch { }
+                }
+                winEventHook = IntPtr.Zero;
+                winEventThreadId = 0;
             }
         }
 
@@ -216,7 +284,9 @@ namespace FrameForge.Sys
                 catch (Exception ex) { Log.Write("monitor: " + ex.Message); }
                 Action<SysSample> cb = Updated;
                 if (cb != null) { try { cb(Current); } catch { } }
-                for (int i = 0; i < 10 && running; i++) Thread.Sleep(100);
+                if (!running) break;
+                try { wakeEvent.WaitOne(1000); }
+                catch { break; }
             }
         }
 
@@ -252,6 +322,8 @@ namespace FrameForge.Sys
                 s.GpuPowerLimit = g.PowerLimit;
                 s.VramUsed = g.MemUsed;
                 s.VramTotal = g.MemTotal;
+                if (g.ThrottleThermal) s.GpuThrottle = "THRM";
+                else if (g.ThrottlePower) s.GpuThrottle = "PWR";
             }
             else if (amd.Available)
             {
@@ -652,8 +724,8 @@ namespace FrameForge.Sys
         {
             // 手动锁定优先级最高:用户说了算,不再和启发式评分讨价还价。
             if (wi.Pinned) return 1000;
-            // 「我的游戏」里的程序:用户扫描或手动添加过,直接按游戏处理。
-            if (wi.Known) return 900;
+            // 「我的游戏」里的程序:用户扫描或手动添加过,直接按游戏处理;前台游戏优先于后台挂机游戏。
+            if (wi.Known) return 900 + (wi.Foreground ? 20 : 0);
 
             int score = 0;
             int level = KnownGameLevel(wi.Pid, wi.Name);
@@ -663,7 +735,7 @@ namespace FrameForge.Sys
 
             if (IsGameClass(wi.Class)) score += 30;
             if (wi.Covers) score += 20;
-            if (wi.Foreground) score += 10;
+            if (wi.Foreground) score += 60;
             if (wi.Width >= 640 && wi.Height >= 360) score += 5;
 
             double gpu = GpuPid3D(wi.Pid);
@@ -1330,12 +1402,64 @@ namespace FrameForge.Sys
             try { NetworkChange.NetworkAddressChanged -= OnNetworkAddressChanged; }
             catch { }
             Stop();
+            try { wakeEvent.Dispose(); } catch { }
             cpuUtil.Dispose();
             cpuUtility.Dispose();
             gpuEngine.Dispose();
             gpuMem.Dispose();
             nvml.Dispose();
             amd.Dispose();
+        }
+
+        private static class WinEventNative
+        {
+            public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
+            public const uint WINEVENT_OUTOFCONTEXT = 0x0000;
+            public const uint WM_QUIT = 0x0012;
+
+            public delegate void WinEventDelegate(IntPtr hWinEventHook, uint eventType,
+                IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
+
+            [StructLayout(LayoutKind.Sequential)]
+            public struct POINT
+            {
+                public int X;
+                public int Y;
+            }
+
+            [StructLayout(LayoutKind.Sequential)]
+            public struct MSG
+            {
+                public IntPtr hwnd;
+                public uint message;
+                public IntPtr wParam;
+                public IntPtr lParam;
+                public uint time;
+                public POINT pt;
+            }
+
+            [DllImport("user32.dll")]
+            public static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax,
+                IntPtr hmodWinEventProc, WinEventDelegate lpfnWinEventProc,
+                uint idProcess, uint idThread, uint dwFlags);
+
+            [DllImport("user32.dll")]
+            public static extern bool UnhookWinEvent(IntPtr hWinEventHook);
+
+            [DllImport("user32.dll")]
+            public static extern int GetMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+
+            [DllImport("user32.dll")]
+            public static extern bool TranslateMessage(ref MSG lpMsg);
+
+            [DllImport("user32.dll")]
+            public static extern IntPtr DispatchMessage(ref MSG lpMsg);
+
+            [DllImport("user32.dll")]
+            public static extern bool PostThreadMessage(uint idThread, uint msg, IntPtr wParam, IntPtr lParam);
+
+            [DllImport("kernel32.dll")]
+            public static extern uint GetCurrentThreadId();
         }
     }
 }

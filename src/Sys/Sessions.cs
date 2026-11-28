@@ -22,6 +22,8 @@ namespace FrameForge.Sys
         public double FpsMax;
         public double FpsMin;
         public double Low1;
+        public double Low01;
+        public int StutterCount;
         public double CpuAvg;
         public double CpuMax;
         public double GpuAvg;
@@ -119,6 +121,7 @@ namespace FrameForge.Sys
                 sb.Append(FpsSeries[i].ToString("0.#", CultureInfo.InvariantCulture));
             }
             sb.Append('|').Append(Safe(ExePath));
+            sb.Append('|').Append(N(Low01)).Append('|').Append(StutterCount.ToString(CultureInfo.InvariantCulture));
             return sb.ToString();
         }
 
@@ -153,6 +156,8 @@ namespace FrameForge.Sys
                     for (int i = 0; i < parts.Length; i++) r.FpsSeries[i] = D(parts[i]);
                 }
                 if (p.Length > 21) r.ExePath = p[21];
+                if (p.Length > 22) r.Low01 = D(p[22]);
+                if (p.Length > 23) r.StutterCount = I(p[23]);
                 if (r.Title.Length == 0) r.Title = r.Exe;
                 return r;
             }
@@ -241,6 +246,45 @@ namespace FrameForge.Sys
             return null;
         }
 
+        public SessionBaseline BaselineFor(string exe, string excludeId, int maxRecent)
+        {
+            var b = new SessionBaseline();
+            if (string.IsNullOrEmpty(exe) || maxRecent <= 0) return b;
+            string target = NormalizeExe(exe);
+            if (target.Length == 0) return b;
+
+            double fpsSum = 0, lowSum = 0, tempSum = 0, stutterSum = 0;
+            int fpsN = 0, lowN = 0, tempN = 0;
+            for (int i = 0; i < all.Count && b.Count < maxRecent; i++)
+            {
+                SessionRecord r = all[i];
+                if (r == null) continue;
+                if (!string.IsNullOrEmpty(excludeId) && r.Id == excludeId) continue;
+                if (r.Seconds < 60) continue;
+                if (!string.Equals(NormalizeExe(r.Exe), target, StringComparison.OrdinalIgnoreCase)) continue;
+
+                b.Count++;
+                if (r.FpsAvg > 0) { fpsSum += r.FpsAvg; fpsN++; }
+                if (r.Low1 > 0) { lowSum += r.Low1; lowN++; }
+                if (r.GpuTempAvg > 0) { tempSum += r.GpuTempAvg; tempN++; }
+                stutterSum += r.StutterCount;
+            }
+            if (fpsN > 0) b.AvgFps = fpsSum / fpsN;
+            if (lowN > 0) b.AvgLow1 = lowSum / lowN;
+            if (tempN > 0) b.AvgTemp = tempSum / tempN;
+            if (b.Count > 0) b.AvgStutters = stutterSum / b.Count;
+            return b;
+        }
+
+        private static string NormalizeExe(string exe)
+        {
+            if (string.IsNullOrEmpty(exe)) return "";
+            string s = exe.Trim();
+            if (s.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                s = s.Substring(0, s.Length - 4);
+            return s;
+        }
+
         private void Sort()
         {
             all.Sort(delegate(SessionRecord a, SessionRecord b) { return b.Start.CompareTo(a.Start); });
@@ -263,7 +307,7 @@ namespace FrameForge.Sys
         public void Export(string path)
         {
             var sb = new StringBuilder();
-            sb.AppendLine("game,exe,start,seconds,fps_avg,fps_max,fps_min,fps_1low,cpu_avg,cpu_max,gpu_avg,gpu_max,gpu_temp_avg,gpu_temp_max,ram_avg_mb,ram_max_mb,vram_max_mb,power_w,wh,co2_g,fps_series");
+            sb.AppendLine("game,exe,start,seconds,fps_avg,fps_max,fps_min,fps_1low,cpu_avg,cpu_max,gpu_avg,gpu_max,gpu_temp_avg,gpu_temp_max,ram_avg_mb,ram_max_mb,vram_max_mb,power_w,wh,co2_g,fps_series,fps_01low,stutters");
             for (int i = 0; i < all.Count; i++)
             {
                 SessionRecord r = all[i];
@@ -276,7 +320,8 @@ namespace FrameForge.Sys
                   .Append(N(r.GpuTempAvg)).Append(',').Append(N(r.GpuTempMax)).Append(',')
                   .Append(N(r.RamAvg)).Append(',').Append(N(r.RamMax)).Append(',').Append(N(r.VramMax)).Append(',')
                   .Append(N(r.Power)).Append(',').Append(N(r.Wh)).Append(',').Append(N(r.Co2)).Append(',')
-                  .Append(Csv(SeriesText(r.FpsSeries)));
+                  .Append(Csv(SeriesText(r.FpsSeries))).Append(',')
+                  .Append(N(r.Low01)).Append(',').Append(r.StutterCount);
                 sb.AppendLine();
             }
             File.WriteAllText(path, sb.ToString(), new UTF8Encoding(true));
@@ -307,6 +352,15 @@ namespace FrameForge.Sys
         }
     }
 
+    public class SessionBaseline
+    {
+        public int Count;
+        public double AvgFps;
+        public double AvgLow1;
+        public double AvgTemp;
+        public double AvgStutters;
+    }
+
     /// <summary>把每秒采样攒成一局:检测到游戏开始计时,进程退出后完成记录并触发回调。</summary>
     public sealed class SessionTracker
     {
@@ -321,6 +375,9 @@ namespace FrameForge.Sys
         private int fpsN;
         private double lowSum;
         private int lowN;
+        private double low01Sum;
+        private int low01N;
+        private int stutterCount;
         private double cpuSum, cpuMax, gpuSum, gpuMax;
         private int loadN;
         private double tempSum, tempMax;
@@ -354,6 +411,11 @@ namespace FrameForge.Sys
         public TimeSpan Elapsed { get { return pid > 0 ? DateTime.Now - start : TimeSpan.Zero; } }
 
         public void Feed(SysSample s, double fps, double low1)
+        {
+            Feed(s, fps, low1, -1, 0);
+        }
+
+        public void Feed(SysSample s, double fps, double low1, double low01, int stutterCount)
         {
             if (s == null) return;
             DateTime now = DateTime.Now;
@@ -397,6 +459,8 @@ namespace FrameForge.Sys
                 }
             }
             if (low1 > 0) { lowSum += low1; lowN++; }
+            if (low01 > 0) { low01Sum += low01; low01N++; }
+            if (stutterCount > this.stutterCount) this.stutterCount = stutterCount;
 
             if (s.Cpu >= 0) { cpuSum += s.Cpu; if (s.Cpu > cpuMax) cpuMax = s.Cpu; loadN++; }
             if (s.Gpu >= 0) { gpuSum += s.Gpu; if (s.Gpu > gpuMax) gpuMax = s.Gpu; }
@@ -434,6 +498,8 @@ namespace FrameForge.Sys
             lastSeenAt = now;
             fpsSum = fpsMax = fpsMin = 0; fpsN = 0;
             lowSum = 0; lowN = 0;
+            low01Sum = 0; low01N = 0;
+            stutterCount = 0;
             cpuSum = cpuMax = gpuSum = gpuMax = 0; loadN = 0;
             tempSum = tempMax = 0; tempN = 0;
             ramSum = ramMax = vramMax = 0; ramN = 0;
@@ -460,6 +526,8 @@ namespace FrameForge.Sys
             r.FpsMax = fpsMax;
             r.FpsMin = fpsMin;
             if (lowN > 0) r.Low1 = lowSum / lowN;
+            if (low01N > 0) r.Low01 = low01Sum / low01N;
+            r.StutterCount = stutterCount;
             if (loadN > 0) { r.CpuAvg = cpuSum / loadN; r.GpuAvg = gpuSum / loadN; }
             r.CpuMax = cpuMax;
             r.GpuMax = gpuMax;

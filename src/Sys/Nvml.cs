@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.ExceptionServices;
+using System.Runtime.InteropServices;
 using System.Security;
 using System.Text;
 
@@ -8,9 +9,13 @@ namespace FrameForge.Sys
     /// <summary>NVML 封装:NVIDIA 显卡的温度 / 占用 / 频率 / 功耗 / 显存。</summary>
     public sealed class Nvml : IDisposable
     {
+        [DllImport("nvml.dll", CallingConvention = CallingConvention.Cdecl)]
+        private static extern int nvmlDeviceGetCurrentClocksThrottleReasons(IntPtr device, out ulong reasons);
+
         private IntPtr device = IntPtr.Zero;
         private bool ready;
         private bool broken;
+        private bool throttleSupported = true;
 
         public string DeviceName = "";
         public bool Available { get { return ready; } }
@@ -83,6 +88,23 @@ namespace FrameForge.Sys
                     g.MemTotal = mem.Total;
                     g.MemUsed = mem.Used;
                 }
+                if (throttleSupported)
+                {
+                    try
+                    {
+                        ulong reasons;
+                        if (nvmlDeviceGetCurrentClocksThrottleReasons(device, out reasons) == 0)
+                        {
+                            // 0x04 = SwPowerCap, 0x20 = SwThermalSlowdown, 0x40 = HwThermalSlowdown
+                            g.ThrottlePower = (reasons & 0x04UL) != 0;
+                            g.ThrottleThermal = (reasons & (0x20UL | 0x40UL)) != 0;
+                        }
+                    }
+                    catch (EntryPointNotFoundException)
+                    {
+                        throttleSupported = false;
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -114,5 +136,7 @@ namespace FrameForge.Sys
         public double Fan;
         public ulong MemUsed;
         public ulong MemTotal;
+        public bool ThrottleThermal;
+        public bool ThrottlePower;
     }
 }

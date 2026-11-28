@@ -23,16 +23,25 @@ namespace FrameForge.UI
         public static bool[] Edit(IWin32Window owner, bool[] initial, int cores, int level,
             out int newCores, out int newLevel)
         {
-            using (var box = new Box(initial, cores, level))
+            string unused;
+            return Edit(owner, initial, cores, level, "auto", out newCores, out newLevel, out unused);
+        }
+
+        public static bool[] Edit(IWin32Window owner, bool[] initial, int cores, int level,
+            string corePolicy, out int newCores, out int newLevel, out string newCorePolicy)
+        {
+            using (var box = new Box(initial, cores, level, corePolicy))
             {
                 if (box.ShowDialog(owner) == DialogResult.OK)
                 {
                     newCores = box.Cores;
                     newLevel = box.Level;
+                    newCorePolicy = box.CorePolicy;
                     return box.Values;
                 }
                 newCores = cores;
                 newLevel = level;
+                newCorePolicy = Settings.CorePolicyKey(corePolicy);
                 return null;
             }
         }
@@ -43,6 +52,8 @@ namespace FrameForge.UI
             private readonly bool[] init = new bool[Keys.Length];
             private readonly Segmented coreSeg;
             private readonly Segmented prioSeg;
+            private readonly Segmented policySeg;
+            private readonly string topoHint;
             private readonly int[] coreVals;
             private readonly ToolTip tips = new ToolTip();
             private FlatButton btnOk, btnCancel, btnReset;
@@ -66,6 +77,16 @@ namespace FrameForge.UI
                 }
             }
 
+            public string CorePolicy
+            {
+                get
+                {
+                    if (policySeg.Selected == 1) return "pcorefirst";
+                    if (policySeg.Selected == 2) return "singleccd";
+                    return "auto";
+                }
+            }
+
             public bool[] Values
             {
                 get
@@ -76,7 +97,7 @@ namespace FrameForge.UI
                 }
             }
 
-            public Box(bool[] initial, int cores, int level)
+            public Box(bool[] initial, int cores, int level, string corePolicy)
             {
                 FormBorderStyle = FormBorderStyle.None;
                 StartPosition = FormStartPosition.CenterParent;
@@ -86,7 +107,7 @@ namespace FrameForge.UI
                 KeyPreview = true;
 
                 float s = Ui.S;
-                ClientSize = new Size((int)(720 * s), (int)(600 * s));
+                ClientSize = new Size((int)(720 * s), (int)(668 * s));
 
                 for (int i = 0; i < Keys.Length; i++)
                 {
@@ -132,6 +153,17 @@ namespace FrameForge.UI
                 prioSeg.Visible = Keys.Length > 0;
                 Controls.Add(prioSeg);
 
+                policySeg = new Segmented();
+                policySeg.Items = new string[]
+                {
+                    SafeT("core.policy.auto", "Auto"),
+                    SafeT("core.policy.pcorefirst", "P-Core"),
+                    SafeT("core.policy.singleccd", "Single CCD")
+                };
+                policySeg.SetSilent(PolicyIndex(corePolicy));
+                Controls.Add(policySeg);
+                topoHint = BuildTopoHint();
+
                 btnReset = new FlatButton();
                 btnReset.Primary = false;
                 btnReset.Text = I18n.T("boost.dialog.reset");
@@ -142,6 +174,7 @@ namespace FrameForge.UI
                     for (int i = 0; i < sw.Length && i < rec.Length; i++) sw[i].SetSilent(rec[i]);
                     coreSeg.Selected = coreVals.Length - 1;
                     prioSeg.Selected = 4;
+                    policySeg.Selected = 0;
                     Invalidate();
                 };
                 Controls.Add(btnReset);
@@ -191,6 +224,7 @@ namespace FrameForge.UI
                 int segW = Ui.Px(330);
                 coreSeg.SetBounds(Width - pad - segW, dividerY + Ui.Px(16), segW, Ui.Px(32));
                 prioSeg.SetBounds(Width - pad - segW, dividerY + Ui.Px(60), segW, Ui.Px(32));
+                policySeg.SetBounds(Width - pad - segW, dividerY + Ui.Px(104), segW, Ui.Px(32));
 
                 int bh = Ui.Px(36);
                 int bottom = Height - pad - bh;
@@ -289,6 +323,13 @@ namespace FrameForge.UI
                 if (coreSeg.Visible)
                     DrawSettingLabel(g, I18n.T("boost.dialog.cores"), coreSeg);
                 DrawSettingLabel(g, I18n.T("boost.dialog.priority"), prioSeg);
+                DrawSettingLabel(g, I18n.T("prof.core_policy"), policySeg);
+                if (topoHint.Length > 0)
+                {
+                    TextRenderer.DrawText(g, topoHint, Theme.F(8.3f, FontStyle.Regular),
+                        new Rectangle(pad, policySeg.Bottom + Ui.Px(4), Width - pad * 2, Ui.Px(18)),
+                        Theme.Sub, Ui.Flags(ContentAlignment.MiddleLeft, false) | TextFormatFlags.EndEllipsis);
+                }
 
                 int count = 0;
                 for (int i = 0; i < sw.Length; i++) if (sw[i].Checked) count++;
@@ -304,6 +345,40 @@ namespace FrameForge.UI
                 TextRenderer.DrawText(g, label, Theme.F(9.5f, FontStyle.Bold),
                     new Rectangle(Ui.Px(24), seg.Top, seg.Left - Ui.Px(40), seg.Height),
                     Theme.Text, Ui.Flags(ContentAlignment.MiddleLeft, false));
+            }
+
+            private static int PolicyIndex(string policy)
+            {
+                string s = (policy ?? "").Trim().ToLowerInvariant();
+                if (s == "pcorefirst" || s == "pcore") return 1;
+                if (s == "singleccd") return 2;
+                return 0;
+            }
+
+            private static string SafeT(string key, string fallback)
+            {
+                string v = I18n.T(key);
+                return v == key ? fallback : v;
+            }
+
+            private static string BuildTopoHint()
+            {
+                try
+                {
+                    CpuCore[] cores = CpuTopology.Cores();
+                    if (cores == null || cores.Length == 0) return "";
+                    int p = 0, e = 0;
+                    var llcs = new HashSet<int>();
+                    for (int i = 0; i < cores.Length; i++)
+                    {
+                        if (cores[i].Efficient) e++; else p++;
+                        if (cores[i].LlcKnown) llcs.Add(cores[i].Llc);
+                    }
+                    string s = e > 0 ? I18n.T("core.summary", p, e) : I18n.T("core.summary.plain", p);
+                    if (llcs.Count > 1) s += " · " + llcs.Count + " CCD";
+                    return s;
+                }
+                catch { return ""; }
             }
         }
     }

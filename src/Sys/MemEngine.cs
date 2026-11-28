@@ -20,6 +20,7 @@ namespace FrameForge.Sys
         public ulong TotalPhys;
         public ulong AvailPhys;
         public ulong SystemCache;
+        public long FreeBytes;
         public ulong StandbyBytes;
         public uint LoadPercent;
         public int ProcessCount;
@@ -116,13 +117,19 @@ namespace FrameForge.Sys
                 if (s.AvailPhys == 0) s.AvailPhys = Native.PagesToBytes(pi.PhysicalAvailable, pageSize);
             }
 
-            s.StandbyBytes = ReadStandbyBytes(pageSize);
+            long freeBytes;
+            ulong standbyBytes;
+            ReadMemoryListInfo(pageSize, out freeBytes, out standbyBytes);
+            s.FreeBytes = freeBytes;
+            s.StandbyBytes = standbyBytes;
             return s;
         }
 
-        /// <summary>SYSTEM_MEMORY_LIST_INFORMATION 前 5 个字段是各类页数,紧跟 8 个 standby 优先级桶。</summary>
-        private static ulong ReadStandbyBytes(ulong pageSize)
+        /// <summary>SYSTEM_MEMORY_LIST_INFORMATION 前 5 个字段是各类页数(0=Zero, 1=Free),紧跟 8 个 standby 优先级桶。</summary>
+        private static void ReadMemoryListInfo(ulong pageSize, out long freeBytes, out ulong standbyBytes)
         {
+            freeBytes = 0;
+            standbyBytes = 0;
             int count = 13;
             int cb = IntPtr.Size * count;
             IntPtr buf = IntPtr.Zero;
@@ -139,16 +146,22 @@ namespace FrameForge.Sys
                     for (int i = 0; i < len / IntPtr.Size; i++) Marshal.WriteIntPtr(buf, i * IntPtr.Size, IntPtr.Zero);
                     ret = Native.NtQuerySystemInformation(Native.SystemMemoryListInformation, buf, len, out len);
                 }
-                if (ret != 0) return 0;
-                ulong pages = 0;
+                if (ret != 0) return;
+
+                long zeroPages = Marshal.ReadIntPtr(buf, 0).ToInt64();
+                long freePages = Marshal.ReadIntPtr(buf, IntPtr.Size).ToInt64();
+                long totalFreePages = (zeroPages > 0 ? zeroPages : 0) + (freePages > 0 ? freePages : 0);
+                if (totalFreePages > 0) freeBytes = totalFreePages * (long)pageSize;
+
+                ulong standbyPages = 0;
                 for (int i = 5; i < 13; i++)
                 {
                     long v = Marshal.ReadIntPtr(buf, i * IntPtr.Size).ToInt64();
-                    if (v > 0) pages += (ulong)v;
+                    if (v > 0) standbyPages += (ulong)v;
                 }
-                return pages * pageSize;
+                standbyBytes = standbyPages * pageSize;
             }
-            catch { return 0; }
+            catch { freeBytes = 0; standbyBytes = 0; }
             finally { if (buf != IntPtr.Zero) Marshal.FreeHGlobal(buf); }
         }
 
@@ -227,6 +240,17 @@ namespace FrameForge.Sys
             }
             catch { return false; }
             finally { if (buf != IntPtr.Zero) Marshal.FreeHGlobal(buf); }
+        }
+
+        /// <summary>仅清理待命列表(MemoryPurgeStandbyList=4),绝不刷新已修改列表。</summary>
+        public static bool PurgeStandbyOnly()
+        {
+            try
+            {
+                EnablePrivilege("SeProfileSingleProcessPrivilege");
+                return SetMemoryList(Native.MemoryPurgeStandbyList);
+            }
+            catch { return false; }
         }
 
         // ---------------- 进程枚举 ----------------

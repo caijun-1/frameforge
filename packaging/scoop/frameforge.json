@@ -1,11 +1,11 @@
 {
-    "version": "1.6.6",
+    "version": "1.7.0",
     "description": "Lightweight 7 MB portable Windows FPS booster, PresentMon/RTSS modern HUD overlay & non-invasive screen filter (100% reversible, zero DLL injection).",
     "homepage": "https://caijun-1.github.io/frameforge/",
     "license": "MIT",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/caijun-1/frameforge/releases/download/v1.6.6/FrameForge.exe",
+            "url": "https://github.com/caijun-1/frameforge/releases/download/v1.7.0/FrameForge.exe",
             "hash": "853b334877b2edcd8116594255f2afe9e1ea1cc3e99f295f7d4af1715ee33979"
         }
     },

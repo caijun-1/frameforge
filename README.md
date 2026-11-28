@@ -13,12 +13,12 @@
   <img src="https://img.shields.io/badge/.NET%20Framework-4.8-512BD4" alt=".NET Framework 4.8">
   <img src="https://img.shields.io/badge/size-7%20MB-brightgreen" alt="size 7 MB">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-1.6.6-orange" alt="1.6.6">
+  <img src="https://img.shields.io/badge/version-1.7.0-orange" alt="1.7.0">
 </p>
 
-<p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版 (v1.6.6)</a> · <a href="https://caijun-1.github.io/frameforge/">项目主页</a> · <a href="#为什么选择-frameforge">对比优势</a> · <a href="README.en.md">English</a></p>
+<p align="center"><a href="https://github.com/caijun-1/frameforge/releases/latest">下载最新版 (v1.7.0)</a> · <a href="https://caijun-1.github.io/frameforge/">项目主页</a> · <a href="#为什么选择-frameforge">对比优势</a> · <a href="README.en.md">English</a></p>
 
-<p align="center"><img src="docs/social-preview.zh-CN.png" width="840" alt="FrameForge v1.6.6"></p>
+<p align="center"><img src="docs/social-preview.zh-CN.png" width="840" alt="FrameForge v1.7.0"></p>
 
 ---
 
@@ -308,6 +308,14 @@ frameforge/
 - 仅支持 Windows；Linux / macOS 不在计划内。
 
 ## 更新日志
+
+### v1.7.0
+
+> 里程碑体验与性能引擎革命版本：引入 Win11 0.5ms 亚毫秒计时器、ISLC 级 Standby List 智能内存守卫、EcoQoS 无冻结后台驯服、powrprof.dll 原生电源引擎、实时帧时间波形图、全屏游戏内 OSD 通知、6 大主流启动器扫描与单游戏自动化全链路，中英词条扩充至 691/691 键一致。
+
+- **性能引擎革命**：解决 Win11 托盘忽略计时器精度缺陷并升级 0.5ms；解析真实空闲内存页仅清理待机缓存；以 EcoQoS 压制后台高负载应用至 E 核与低优先级 I/O；原生 powrprof.dll 支持 Win11 Modern Standby 笔记本/掌机电源方案；热点线程识别与分别分派 P 核；反作弊友好型 IFEO 优先级配置。
+- **游戏内叠加层与 OSD**：实时 90 格零分配帧时间波形图（卡顿尖峰朱砂红着色）；0.1% Low 极低帧与卡顿事件计数器；全屏游戏内电竞风热键/加速 OSD 轻量通知；GPU 硬件级热降频（THRM）与功耗墙（PWR）指示器；单游戏专属滤镜、叠加层与核心策略自动化联动。
+- **桌面交互与生态扫描**：首页顶部就绪检查条；量化加速战报与实效胶囊；6 项托盘右键快捷控制台；统一反作弊保护中心；扩充 95+ 款热门游戏并补齐 Xbox、HoYoPlay、Riot、Battle.net、EA App、Ubisoft、WeGame 原生扫描与 LaunchUri 协议启动；系统诊断页一键撤销；赛后战报近 10 局历史基线对比。
 
 ### v1.6.6
 
